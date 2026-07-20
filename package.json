@@ -1,0 +1,23 @@
+{
+  "name": "personal-os-worker",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit",
+    "smoke": "tsx test/smoke.ts",
+    "front": "node test/front.mjs"
+  },
+  "dependencies": {
+    "hono": "^4"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5",
+    "@types/node": "^22",
+    "jsdom": "^29.1.1",
+    "tsx": "^4",
+    "typescript": "^5",
+    "wrangler": "^4"
+  }
+}

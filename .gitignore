@@ -1,0 +1,22 @@
+# 의존성 — package-lock.json 으로 복원하므로 커밋하지 않는다
+node_modules/
+
+# wrangler 로컬 상태 (로컬 D1 DB·캐시·임시파일) — 로컬 전용
+.wrangler/
+
+# 로컬 시크릿 (혹시 생기면 절대 커밋 금지)
+.dev.vars
+.dev.vars.*
+.env
+.env.*
+
+# 빌드 산출물
+dist/
+build/
+
+# 로그·OS·에디터 부산물
+*.log
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

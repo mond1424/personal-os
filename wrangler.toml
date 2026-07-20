@@ -1,0 +1,20 @@
+# Personal OS · Worker (구현 1)
+# 이미 만든 wrangler.toml이 있으면: main · [triggers] · migrations_dir만 합치면 된다.
+name = "personal-os"
+main = "src/index.ts"
+compatibility_date = "2026-07-01"
+
+[[d1_databases]]
+binding = "DB"                      # 코드는 env.DB로 접근
+database_name = "personal-os"
+database_id = "7cccf42a-42d5-4346-b661-656feeafb0c2"
+migrations_dir = "migrations"
+
+[triggers]
+crons = ["*/30 * * * *"]            # 자동 마감(H) — 경계 시각 설정과 무관하게 멱등
+
+[assets]
+directory = "public"
+
+# 인증(선택): wrangler secret put API_TOKEN
+# 설정하면 모든 /api 요청에 Authorization: Bearer <토큰> 필요. 없으면 열림(로컬 개발용).

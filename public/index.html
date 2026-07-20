@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Personal OS</title>
+<meta name="theme-color" content="#FBFAF7">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Personal OS">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon.svg">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="phone" id="phone" data-tab="today">
+<main class="screens">
+
+<!-- ══════════ TODAY ══════════ -->
+<section class="screen on" id="scr-today">
+  <div class="kicker serif" id="td-month"></div>
+  <header class="dhead">
+    <div class="dnum"><span class="big serif" id="td-day"></span><span class="dow" id="td-dow"></span></div>
+    <span class="cap" id="td-boundary"></span>
+  </header>
+  <div class="dchips" id="td-chips"></div>
+
+  <div class="sec">
+    <div class="sec-h"><span class="sec-t">TODO</span><span class="cnt" id="td-cnt"></span></div>
+    <div class="card" style="padding:4px 14px" id="td-list"></div>
+    <p class="cap" style="margin-top:8px">행 탭 → task 상세 시트 · 미루기는 캘린더에서 날짜 선택</p>
+    <button class="card" id="today-wait" style="margin-top:10px;width:100%;display:none;align-items:center;gap:10px;padding:11px 14px" onclick="goInbox()">
+      <span style="font-size:12.5px;color:var(--sub)" id="tw-text"></span>
+      <span style="margin-left:auto;font-size:12px;color:var(--faint);flex:none">일정 정하기 ›</span>
+    </button>
+  </div>
+
+  <div class="sec">
+    <div class="sec-h"><span class="sec-t">FEELINGS</span>
+      <span class="seg" style="margin-left:auto"><button class="on" data-f="s">슬라이더</button><button data-f="m">서술</button></span></div>
+    <div class="card" id="feel-s"></div>
+    <div class="card" id="feel-m" style="display:none">
+      <textarea rows="3" id="feel-text" placeholder="오늘 상태를 자유롭게 — AI가 분류해요"></textarea>
+      <button class="btn ghost" style="margin-top:10px" id="feel-classify">지금 분류 — 소형 모델</button>
+      <p class="cap" style="margin-top:8px">분류 결과는 하루 마감 시 자동 확정돼요. 미리 보고 싶을 때만 눌러요.</p>
+    </div>
+  </div>
+
+  <div class="sec">
+    <div class="sec-h"><span class="sec-t">LOG</span><span class="cnt" id="log-cap"></span></div>
+    <div class="notice" id="td-notice" style="display:none"><span id="td-notice-text"></span> <button id="td-notice-btn">memo 남기기</button></div>
+    <div class="card" style="padding:8px 14px" id="td-logs"></div>
+  </div>
+
+  <div class="sec">
+    <div class="sec-h"><span class="sec-t">SELF-DAILY SCORE</span></div>
+    <div class="card">
+      <div class="scorehead"><span class="cap">오늘에 점수를 매긴다면</span><b class="serif" id="sc-num">—</b></div>
+      <div class="bchart" id="bchart"></div>
+      <p class="cap" style="margin-top:6px">가로로 밀면 최근 2주 — 오늘 칸은 눌러서, 또는 끌어서 높이로 매겨요.</p>
+      <button class="btn" style="margin-top:12px" id="btn-close">하루 마감</button>
+      <div class="closerow">
+        <button class="linklike" id="btn-close-brief">간략히 마감 — Feelings만</button>
+        <span class="cap" id="close-cap"></span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════ CALENDAR ══════════ -->
+<section class="screen" id="scr-cal">
+  <div class="mhead">
+    <button class="mnav" id="cal-prev">‹</button>
+    <div class="mtitle serif" id="cal-title"></div>
+    <span class="seg"><button class="on" data-cv="grid">월간</button><button data-cv="list">목록</button></span>
+    <button class="mnav" id="cal-next">›</button>
+  </div>
+  <div class="pickbar" id="pick-banner">
+    <span>날짜를 탭해 일정 정하기 — <b id="pick-title"></b> <span class="cap" id="pick-note"></span></span>
+    <button class="x" onclick="cancelPick()">취소</button>
+  </div>
+
+  <div id="cal-grid">
+    <div class="wkdays"><span>일</span><span>월</span><span>화</span><span>수</span><span>목</span><span>금</span><span>토</span></div>
+    <div id="cal-rows"></div>
+    <div class="leg" id="cal-leg"></div>
+    <p class="cap" style="margin-top:6px">겹침 규칙: 활성 기간이 n개인 구간은 밴드를 n등분(위→아래 = created_at 순). 경계는 기간의 시작·끝 전환점에서만 반 칸 폭으로 가파르게 이동하고 나머지는 수평 — 얇은 구간은 전환부에만. 셀 = 구석 숫자 · 글줄 = task · 밑줄 = 일기.</p>
+
+    <div class="sec">
+      <div class="sec-h"><span class="sec-t">기간</span><span class="cnt" id="p-cnt"></span>
+        <button class="chip" style="margin-left:auto;font-weight:600" id="btn-add-period">+ 기간 추가</button></div>
+      <div class="card" style="padding:4px 14px" id="p-list"></div>
+    </div>
+  </div>
+
+  <div id="cal-list" style="display:none">
+    <div class="dlist" style="margin-top:14px" id="diary-list"></div>
+    <p class="cap" style="margin-top:12px">몰아 읽기 뷰 — 탭하면 같은 날짜 팝업이 열려요.</p>
+  </div>
+</section>
+
+<!-- ══════════ WORKS ══════════ -->
+<section class="screen" id="scr-works">
+  <div class="kicker">WORKS</div>
+  <p class="cap" style="margin:6px 0 14px">tasks 원본의 관리 뷰 — 저장은 entity, 화면은 뷰</p>
+  <div class="wsegs">
+    <button class="wseg on" data-w="sched">예정</button>
+    <button class="wseg" data-w="inbox" id="seg-wait">대기</button>
+    <button class="wseg" data-w="defer" id="seg-defer">이월 중</button>
+    <button class="wseg" data-w="period">기간별</button>
+    <button class="wseg" data-w="done">완료</button>
+  </div>
+
+  <div class="wview on" id="w-sched"></div>
+
+  <div class="wview" id="w-inbox">
+    <div id="inbox-lock" class="lockbar" style="display:none">21일이 지났어요 — 일정을 정하거나 연장해야 나갈 수 있어요.</div>
+    <div class="card" style="padding:2px 14px;margin-top:14px" id="wait-list"></div>
+    <p class="cap" style="margin-top:10px">대기 최대 3주(21일). 다가갈수록 일수 표시가 붉어지고(원색 아님 — 탁한 계열), 넘기면 앱 실행 시 결정 팝업이 떠요. 연장하면 21일이 다시 시작.</p>
+  </div>
+
+  <div class="wview" id="w-defer">
+    <div class="card" style="padding:2px 14px;margin-top:14px" id="defer-list"></div>
+    <p class="cap" style="margin-top:10px">이월 횟수는 데이터로만 기록 — 화면엔 경고 배지와 횟수 텍스트. 많은 순 정렬. 세그먼트 색은 건수에 따라 진해져요(0건 = 흰색).</p>
+  </div>
+
+  <div class="wview" id="w-period"><div id="pgroups"></div></div>
+
+  <div class="wview" id="w-done">
+    <div class="card" style="padding:2px 14px;margin-top:14px" id="done-list"></div>
+  </div>
+</section>
+
+<!-- ══════════ ANALYSIS ══════════ -->
+<section class="screen" id="scr-anal">
+  <div class="kicker">ANALYSIS</div>
+  <p class="cap" style="margin:6px 0 14px">대화가 아니라 요청 단위 문서 — analysis/에 영구 저장</p>
+
+  <div class="card">
+    <b style="font-size:14.5px">새 분석</b>
+    <textarea rows="2" id="anal-q" style="margin-top:10px" placeholder="무엇이 궁금해? 예: 이번 주 리듬이 왜 무너졌는지"></textarea>
+    <div class="ctxbox">
+      <div class="kicker" style="font-size:10px;margin-bottom:4px">조립될 컨텍스트 — 자동</div>
+      <div id="ctx-lines"></div>
+    </div>
+    <button class="btn" style="margin-top:12px" id="btn-run-anal">분석 실행</button>
+  </div>
+
+  <div class="sec">
+    <div class="sec-h"><span class="sec-t">지난 분석</span><span class="cnt" id="ana-cnt"></span></div>
+    <div id="ana-list"></div>
+    <button class="btn ghost" style="margin-top:10px;display:none" id="btn-board" onclick="openBoard()">더보기</button>
+  </div>
+</section>
+
+<!-- ══════════ ME ══════════ -->
+<section class="screen" id="scr-me">
+  <div id="me-main">
+    <div class="mehead"><h1>Me</h1><button class="gear" onclick="toggleSet(true)">⚙</button></div>
+    <p class="cap" style="margin:4px 0 14px">모든 분석의 장기 맥락 프레임 — 오염 주의</p>
+    <div class="card" id="me-fields"></div>
+    <button class="linklike" style="margin-top:10px;display:inline-block" id="me-add">+ 필드 추가</button>
+    <div class="sec">
+      <div class="sec-h"><span class="sec-t">변경 이력</span><span class="cnt">이력 자체가 분석 입력</span></div>
+      <div class="card" style="padding:8px 14px" id="me-history"></div>
+    </div>
+  </div>
+
+  <div id="me-set" style="display:none">
+    <div class="mehead">
+      <button onclick="toggleSet(false)" style="font-size:15px;color:var(--sub)">‹ Me</button>
+      <h1 style="font-size:18px">설정</h1><span style="width:34px"></span>
+    </div>
+    <div class="card" style="margin-top:14px;padding:2px 16px" id="set-list"></div>
+    <p class="cap" style="margin-top:10px">Guard 규칙 평가는 서버(Cron)가 주기 실행하고 Web Push로 도달해요 — 앱이 닫혀 있어도. (구현 3)</p>
+  </div>
+</section>
+</main>
+
+<!-- log input bar (Today 전용) -->
+<div class="logbar">
+  <span class="ts mono" id="log-ts"></span>
+  <input type="text" id="log-input" placeholder="지금 기록…">
+  <button class="send" id="log-send">기록</button>
+</div>
+
+<button class="fab" onclick="openSheet('sh-add')">+</button>
+
+<!-- ══════════ NAV ══════════ -->
+<nav>
+  <button class="on" data-go="today"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="1.6" fill="currentColor"/></svg>Today</button>
+  <button data-go="cal"><svg viewBox="0 0 24 24"><rect x="4" y="5.5" width="16" height="14.5" rx="2.5"/><path d="M4 10h16M8 3.5v3M16 3.5v3"/></svg>Calendar</button>
+  <button data-go="works"><svg viewBox="0 0 24 24"><path d="M5 7.5h9M5 12h9M5 16.5h6M17 11l2 2 3.5-4"/></svg>Works</button>
+  <button data-go="anal"><svg viewBox="0 0 24 24"><path d="M3.5 13h4l2.5-6 4 11 2.5-5h4"/></svg>Analysis</button>
+  <button data-go="me"><svg viewBox="0 0 24 24"><circle cx="12" cy="8.5" r="3.6"/><path d="M5 20c1.2-4 4-5.5 7-5.5s5.8 1.5 7 5.5"/></svg>Me</button>
+</nav>
+
+<div class="backdrop" id="bk" onclick="closeAll()"></div>
+
+<!-- 날짜 팝업 -->
+<div class="sheet" id="sh-day"><div class="grip"></div><div id="day-body"></div></div>
+
+<!-- task 상세 -->
+<div class="sheet" id="sh-task">
+  <div class="grip"></div>
+  <input type="text" id="tk-title" style="font-size:16px;font-weight:700">
+  <p class="cap" style="margin-top:7px" id="tk-id"></p>
+  <div class="kicker" style="margin-top:16px;font-size:10px">SCHEDULE 이력 — 읽기 전용</div>
+  <div class="tl" id="tk-timeline"></div>
+  <div class="kicker" style="margin-top:16px;font-size:10px">완료율 — 오늘 항목의 다이얼 값</div>
+  <div class="rates" id="tk-rates"></div>
+  <div class="actrow">
+    <button class="btn ghost" style="flex:1" id="tk-defer">미루기</button>
+    <button class="btn ghost" style="flex:1" id="tk-extend">기간 연장</button>
+    <button class="btn" style="flex:1.2" id="tk-complete">완료 100%</button>
+  </div>
+  <button class="linklike" style="margin-top:12px;color:var(--brick)" id="tk-delete">이 일정 삭제</button>
+</div>
+
+<!-- 빠른 추가 -->
+<div class="sheet" id="sh-add">
+  <div class="grip"></div>
+  <div class="sh-t">새 task</div>
+  <input type="text" id="add-title" placeholder="제목만 적어도 돼요" style="margin-top:12px">
+  <div class="actrow">
+    <button class="btn ghost" style="flex:1" id="add-wait">대기에 담기</button>
+    <button class="btn" style="flex:1" id="add-date">날짜 지정…</button>
+  </div>
+  <p class="cap" style="margin-top:10px">제목만 → schedule 빈 task, 대기(미배정)로. 날짜를 붙이면 첫 schedule 항목이 생겨요.</p>
+</div>
+
+<!-- 기간 추가·편집 -->
+<div class="sheet" id="sh-period">
+  <div class="grip"></div>
+  <div class="sh-t" id="pd-head">기간</div>
+  <input type="text" id="pd-title" placeholder="이름 — 예: 정처기 재도전" style="margin-top:12px">
+  <div class="frow" style="margin-top:12px">
+    <span class="fl">시작</span><input type="date" id="pd-start">
+    <span class="fl" style="text-align:right">끝</span><input type="date" id="pd-end">
+  </div>
+  <div class="kicker" style="margin-top:14px;font-size:10px">색 — 캘린더 형광펜</div>
+  <div class="swatches" id="pd-colors"></div>
+  <div class="kicker" style="margin-top:14px;font-size:10px">목표 — 한 줄에 하나 (Me의 '지금'에 조인돼요)</div>
+  <textarea rows="2" id="pd-goals" style="margin-top:6px" placeholder="예: 실기 합격"></textarea>
+  <div class="actrow">
+    <button class="btn ghost" style="flex:1" id="pd-delete">삭제</button>
+    <button class="btn" style="flex:1.4" id="pd-save">저장</button>
+  </div>
+  <p class="cap" style="margin-top:9px">기간은 상태(state) — 기록과 달리 언제든 편집할 수 있어요. task가 참조 중이면 삭제는 거부돼요.</p>
+</div>
+
+<!-- Me 필드 편집 -->
+<div class="sheet" id="sh-me">
+  <div class="grip"></div>
+  <div class="sh-t" id="me-head">방향</div>
+  <p class="cap" style="margin-top:4px">Me 오염 = 이후 분석 전체의 오염. 신중히.</p>
+  <textarea rows="4" id="me-value" style="margin-top:10px"></textarea>
+  <div class="actrow"><button class="btn" style="flex:1" id="me-save">저장</button></div>
+  <p class="cap" style="margin-top:9px">저장하면 변경 이력에 남아요 — 이력 자체가 분석 입력이에요.</p>
+</div>
+
+<!-- 설정 값 편집 -->
+<div class="sheet" id="sh-setting">
+  <div class="grip"></div>
+  <div class="sh-t" id="st-head">설정</div>
+  <p class="cap" style="margin-top:4px" id="st-desc"></p>
+  <div id="st-options" style="margin-top:12px"></div>
+  <div class="tokrow">
+    <input type="text" id="st-value" style="margin-top:0">
+    <button class="btn ghost" id="st-unlock" style="width:auto;padding:10px 14px;display:none;flex:none">변경</button>
+  </div>
+  <div class="actrow"><button class="btn" style="flex:1" id="st-save">저장</button></div>
+</div>
+
+<!-- Log 수정 -->
+<div class="sheet" id="sh-log">
+  <div class="grip"></div>
+  <div class="sh-t">기록 수정</div>
+  <div class="memobox" style="margin-top:12px">
+    <input type="text" id="lg-ts" class="mtime mono" style="flex:none;width:64px">
+    <input type="text" id="lg-text">
+  </div>
+  <div class="actrow"><button class="btn" style="flex:1" id="lg-save">저장</button></div>
+  <p class="cap" style="margin-top:9px">열린 날의 기록만 수정할 수 있어요 — 마감 후에는 memo만.</p>
+</div>
+
+<!-- 분석 목록 게시판 -->
+<div class="board" id="aboard">
+  <div class="bh"><b style="font-size:16px">분석 목록 <span class="cnt" id="board-cnt"></span></b>
+    <button class="linklike" onclick="closeBoard()">닫기</button></div>
+  <div class="bs" id="board-list"></div>
+</div>
+
+<!-- 대기 21일 초과 — 차단 팝업 -->
+<div class="modal" id="stale">
+  <div class="mbox">
+    <div class="kicker" style="font-size:10px;color:var(--brick)">대기 21일 초과</div>
+    <h3 style="margin:10px 0 6px;font-size:18px">3주 넘게 대기 중이에요</h3>
+    <p class="abody" style="color:var(--sub)" id="stale-text"></p>
+    <button class="btn" style="margin-top:14px" id="stale-go">지금 정하기</button>
+    <button class="linklike" style="margin-top:10px;display:block;width:100%;text-align:center" onclick="staleClose()">닫기</button>
+  </div>
+</div>
+
+<!-- 공용 확인 모달 -->
+<div class="modal" id="confirm">
+  <div class="mbox">
+    <h3 style="margin:2px 0 6px;font-size:18px" id="cf-title"></h3>
+    <p class="abody" style="color:var(--sub)" id="cf-text"></p>
+    <div class="actrow">
+      <button class="btn ghost" style="flex:1" id="cf-no">취소</button>
+      <button class="btn" style="flex:1.2" id="cf-yes">확인</button>
+    </div>
+  </div>
+</div>
+
+<!-- 첫 실행 튜토리얼 -->
+<div class="tut" id="tut">
+  <div class="tutbox">
+    <h3 id="tut-h"></h3>
+    <p id="tut-p"></p>
+    <div class="tutdots" id="tut-dots"></div>
+    <div class="actrow">
+      <button class="btn ghost" style="flex:1" id="tut-skip">건너뛰기</button>
+      <button class="btn" style="flex:1.4" id="tut-next">다음</button>
+    </div>
+  </div>
+</div>
+
+<!-- 부팅 / 연결 실패 -->
+<div class="boot on" id="boot">
+  <div>
+    <span class="spinner"></span>
+    <p id="boot-msg">불러오는 중…</p>
+    <button class="btn ghost" id="boot-retry" style="display:none">다시 시도</button>
+    <button class="linklike" id="boot-token" style="display:none;margin-top:12px">API 토큰 입력</button>
+  </div>
+</div>
+
+<div class="lockbar toast" id="toast" style="display:none"></div>
+
+</div>
+<script src="api.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
