@@ -7,7 +7,9 @@
     "deploy": "wrangler deploy",
     "typecheck": "tsc --noEmit",
     "smoke": "tsx test/smoke.ts",
-    "front": "node test/front.mjs"
+    "front": "node test/e2e.mjs",
+    "front:manual": "node test/front.mjs",
+    "verify": "npm run typecheck && npm run smoke && npm run front"
   },
   "dependencies": {
     "hono": "^4"

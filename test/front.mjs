@@ -1,6 +1,10 @@
 // 프론트 E2E — jsdom에 index.html + api.js + app.js를 올리고
-// 실행 중인 wrangler dev(기본 8788)에 실제 fetch로 붙는다.
-// 렌더 경로의 런타임 오류·조립 결과를 잡는 용도. 사용: node test/front.mjs [base]
+// 주어진 base(워커)에 실제 fetch로 붙어 렌더 경로의 런타임 오류·조립 결과를 잡는다.
+//
+// ⚠️ 이 스크립트는 대상 DB에 픽스처를 쓴다(오늘 task·log 등). 실제 dev DB와 섞지 않으려면
+//    `npm run front`(= test/e2e.mjs)로 실행할 것 — 일회용 임시 DB를 만들어 여기에 붙이고
+//    끝나면 폐기한다. 이 파일을 직접 돌리려면(npm run front:manual [base]) 반드시
+//    버릴/격리 DB를 띄운 서버에만 붙이고, 기간·Me direction 등은 미리 시드돼 있어야 한다.
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -266,3 +270,6 @@ ok("콘솔 오류 없음", errors.length === 0, errors.slice(0, 3).join(" / "));
 console.log(`\n${"=".repeat(46)}\n통과 ${passN} · 실패 ${fails.length}`);
 if (fails.length) { console.log("실패:\n  - " + fails.join("\n  - ")); process.exit(1); }
 console.log("프론트 렌더 경로 정상 — 실 API 응답으로 조립됨.");
+// jsdom(특히 pretendToBeVisual의 rAF 타이머)이 이벤트 루프를 붙잡아 자연 종료가
+// 안 되므로 명시적으로 끝낸다 — 안 그러면 부모(e2e.mjs)의 spawnSync가 무한 대기한다.
+process.exit(0);

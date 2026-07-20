@@ -35,8 +35,23 @@ npx wrangler deploy
 # 인증을 켜려면: npx wrangler secret put API_TOKEN
 ```
 
-로컬 검증(선택): `npm run typecheck` · `npm run smoke` — node:sqlite 셰임 위에서
-HTTP 계층까지 76개 항목 회귀.
+로컬 검증(선택):
+
+```bash
+npm run typecheck   # 타입
+npm run smoke       # 백엔드 90항목 — node:sqlite 셰임 위, 서버 불필요
+npm run front       # 프론트 E2E 71항목 — 아래 참고
+npm run verify      # 위 셋을 한 번에
+```
+
+`npm run front` 는 **격리 러너**(`test/e2e.mjs`)다. OS 임시폴더에 일회용 D1 을 만들어
+마이그레이션·픽스처를 넣고, 그 DB 로 워커를 띄워 검사한 뒤, 끝나면 워커를 끄고 임시폴더를
+통째로 지운다. 즉 **실제 로컬 dev DB(`.wrangler/state`)에는 테스트 데이터가 절대 섞이지 않는다.**
+픽스처 정의는 `test/seed.mjs`.
+
+> 외부에 이미 띄운 서버(반드시 버릴/격리 DB)에 직접 붙여 디버깅하려면
+> `npm run front:manual <base>` — 이 경우 기간·Me direction 등은 미리 시드돼 있어야 하고,
+> 대상 DB에 픽스처를 쓰므로 실제 dev 서버에는 쓰지 말 것.
 
 ## API
 
