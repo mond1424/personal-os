@@ -1750,7 +1750,8 @@ function bindCalendarDrag() {
  * 정통 러버밴드(preventDefault)가 아니다 — passive 유지, 네이티브 스크롤이 소비할 게 없는
  * '끝'에서만 관여한다. 가로 제스처(스와이프)·시트/보드·가로스크롤 영역은 건드리지 않는다.
  * ⚠️ 기기 실측 필요 — 이상하면 boot()의 bindEdgeStretch() 호출 한 줄만 지우면 꺼진다. */
-const STRETCH_MAX = 48, STRETCH_K = 0.3;
+const STRETCH_MAX = 90, STRETCH_K = 0.42;
+const STRETCH_BACK_MS = 460, STRETCH_BACK_EASE = "cubic-bezier(.22,1,.36,1)";
 function bindEdgeStretch() {
   const noStretch = (el) => !!(el && el.closest && el.closest(".bchart,.wsegs,.seg,.seg-mini,.likert,.dcol,input,textarea"));
   $$(".screen").forEach((sc) => {
@@ -1774,7 +1775,7 @@ function bindEdgeStretch() {
       if (!on) return;
       on = false;
       if (sc.style.transform) {
-        sc.style.transition = `transform ${TRACK_MS}ms ${TRACK_EASE}`;
+        sc.style.transition = `transform ${STRETCH_BACK_MS}ms ${STRETCH_BACK_EASE}`;
         sc.style.transform = "";
       }
     };

@@ -27,7 +27,7 @@ body{
 /* 탭 = 가로 트랙. 5개 화면이 늘 살아 있고 트랙만 미끄러진다 —
    display 전환은 애니메이션이 불가능하고, 화면마다의 스크롤 위치도 잃는다.
    위치는 %로 잡는다: 폭을 재지 않아도 되고 회전·리사이즈에 그대로 버틴다. */
-.screens{flex:1; position:relative; overflow:hidden}
+.screens{flex:1; position:relative; overflow:hidden; touch-action:pan-y}
 .track{display:flex; height:100%; will-change:transform}
 .screen{flex:0 0 100%; height:100%; overflow-y:auto; padding:20px 16px 150px}
 
@@ -334,6 +334,7 @@ body{background:var(--shell)}
   :root:not([data-theme="light"]) .wseg.hot1{background:#33232A;border-color:#4A303A;color:#D9A8B4}
   :root:not([data-theme="light"]) .wseg.hot2{background:#3D2630;border-color:#5A3743;color:#E6B5C0}
   :root:not([data-theme="light"]) .wseg.hot3{background:#4A2C36;border-color:#6B404E;color:#F0C2CC}
+  :root:not([data-theme="light"]) .wseg.on{background:var(--ink);color:var(--paper);border-color:var(--ink)}
   :root:not([data-theme="light"]) input[type=date]{color-scheme:dark}
 }
 :root[data-theme="dark"] .diff-new{background:#3A331C}
@@ -341,6 +342,7 @@ body{background:var(--shell)}
 :root[data-theme="dark"] .wseg.hot1{background:#33232A;border-color:#4A303A;color:#D9A8B4}
 :root[data-theme="dark"] .wseg.hot2{background:#3D2630;border-color:#5A3743;color:#E6B5C0}
 :root[data-theme="dark"] .wseg.hot3{background:#4A2C36;border-color:#6B404E;color:#F0C2CC}
+:root[data-theme="dark"] .wseg.on{background:var(--ink);color:var(--paper);border-color:var(--ink)}
 :root[data-theme="dark"] .guard{background:linear-gradient(180deg,#2A1C16 0%,var(--paper) 46%)}
 :root[data-theme="dark"] input[type=date]{color-scheme:dark}
 

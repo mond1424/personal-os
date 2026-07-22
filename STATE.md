@@ -1,4 +1,4 @@
-# STATE — 최종 갱신 2026-07-22
+# STATE — 최종 갱신 2026-07-23
 
 ## 저장소
 - repo: https://github.com/mond1424/personal-os
@@ -41,6 +41,15 @@ typecheck 통과 / smoke 124 / front 145 / 실패 0
 ## 마이그레이션
 최신: `0006_fix_model_high` (0001_init · 0002_models · 0003_ai_provider · 0004_events · 0005_delete_scope · 0006_fix_model_high)
 ⚠️ 0006은 라이브 DB에 **미적용** — 사용자가 `--local`→`--remote` 적용 + `deploy` 필요.
+
+## 이번 세션 (2026-07-23) — WORK-PLAN-0723 진행 중
+- **1단계 완료** (항목 1·2·3·5, 프런트 표시/모션만, 백엔드 무변경):
+  - [#1] `public/style.css` — 다크모드 `.wseg.on` 선택색 오버라이드 2곳 추가(미디어쿼리+data-theme). "이월 중" 세그가 hotN 명시도에 밀려 선택 시 배경이 안 바뀌던 것 수정.
+  - [#2] `public/style.css` — `.screens`에 `touch-action:pan-y` 추가. 탭 가로 스와이프가 네이티브 스크롤에 먹혀 무효화되던 것. **폰 실측 대기**.
+  - [#3] `public/app.js` — 경계 스트레치 진폭↑(`STRETCH_MAX 48→90`, `STRETCH_K 0.3→0.42`)+스냅백 전용 곡선 분리(`STRETCH_BACK_MS 460`/`cubic-bezier(.22,1,.36,1)`, 탭 전환 `TRACK_MS` 미접촉). **폰 실측 후 미세조정**.
+  - [#5] `public/index.html` — `#today-wait` 인라인 `width:100%→65%`+`margin-right:auto`(좌측 고정). 대기 행을 시각적으로 하위로.
+  - 검증: typecheck 통과 · smoke 124 · front 145 · 실패 0 (무회귀).
+- 2단계(완료율 화면 제거+미루기 사유 0007)·3단계(memo 통합)는 **미착수** — WORK-PLAN-0723.md 참조.
 
 ## 최근 세션에서 바뀐 것 (UX 개선 A-1~A-6)
 - A-1 [#3] `public/style.css` — 다크모드 캘린더 색: 다른 달 날짜 `var(--faint)`, 일요일 헤더 다크 오버라이드
