@@ -36,7 +36,7 @@
 - style.css      https://raw.githubusercontent.com/mond1424/personal-os/main/public/style.css
 
 ## 기준선
-typecheck 통과 / smoke 124 / front 147 / 실패 0
+typecheck 통과 / smoke 124 / front 145 / 실패 0
 
 ## 마이그레이션
 최신: `0006_fix_model_high` (0001_init · 0002_models · 0003_ai_provider · 0004_events · 0005_delete_scope · 0006_fix_model_high)

@@ -185,7 +185,7 @@ ok("오늘 팝업에서도 추가 가능", !!$("#day-add") && !!$("#ev-add"));
 ok("오늘 팝업 task = 편집 진입", $("#day-body").innerHTML.includes("openTask("));
 w.closeAll();
 await w.openTask(ev("S.today.todo[0].id")); await sleep(400);
-ok("task 시트 완료율 = 4칸 바", $("#tk-rates").querySelectorAll(".rbar.big button").length === 4);
+ok("task 시트 완료율 = 읽기전용(막대 없음)", $("#tk-rates").querySelectorAll(".rbar button").length === 0 && !!$("#tk-rates .ratebig"));
 ok("task 삭제 버튼", !!$("#tk-delete"));
 w.closeAll();
 
@@ -402,21 +402,14 @@ ok("취소 — 시트만 닫힘", !$("#sh-event").classList.contains("on"));
 w.closeAll(); await sleep(200);
 await ev(`Api.deleteEvent("${added.id}")`);
 
-// ③ 완료율 — 4칸 바, 같은 칸 다시 누르면 내려간다
+// ③ 완료율 — task 시트는 읽기전용(인라인 편집 걷어냄, 설계 §1.4). 편집은 미루기 시트에서만(④에서 검증).
 const T1 = ev("addDaysStr(S.today.date,1)");
 const tFut = (await ev(`Api.createTask({title:"내일 예정 완료율", date:"${T1}"})`)).id;
 await w.openTask(tFut); await sleep(500);
-ok("미래 예정 — 4칸 바 노출", $("#tk-rates").querySelectorAll(".rbar.big button").length === 4);
+ok("미래 예정 — 완료율 읽기전용(막대 없음)", $("#tk-rates").querySelectorAll(".rbar button").length === 0 && !!$("#tk-rates .ratebig"));
 ok("완료율 헤더에 대상 예정일 표기", txt("#tk-rate-head").includes("예정"), txt("#tk-rate-head"));
 ok("예정 task — '미루기' 라벨", txt("#tk-defer") === "미루기");
 ok("예정 task — 대기 연장 숨김", $("#tk-extend").style.display === "none");
-$("#tk-rates").querySelectorAll(".rbar button")[1].dispatchEvent(new w.Event("click"));
-await sleep(1000);
-ok("두 번째 칸 = 50%", (await ev(`Api.task("${tFut}")`)).entries[0].rate === 50);
-ok("칸 두 개가 켜짐", $("#tk-rates").querySelectorAll(".rbar button.on").length === 2);
-$("#tk-rates").querySelectorAll(".rbar button")[1].dispatchEvent(new w.Event("click"));
-await sleep(1000);
-ok("같은 칸 다시 = 25%로 내려감", (await ev(`Api.task("${tFut}")`)).entries[0].rate === 25);
 w.closeAll();
 
 // ④ 미루기 — 완료율을 물어보고 넘어간다
@@ -431,6 +424,9 @@ ok("확인 시트에 4칸 바", $("#dfx-rate").querySelectorAll(".rbar.big butto
 ok("어디로 가는지 표시", $("#dfx-what").textContent.includes("→") || $("#dfx-what").innerHTML.includes("→"));
 $("#dfx-rate").querySelectorAll(".rbar button")[2].dispatchEvent(new w.Event("click"));
 ok("고른 값이 바에 반영(아직 저장 전)", $("#dfx-rate").querySelectorAll(".rbar button.on").length === 3);
+$("#dfx-rate").querySelectorAll(".rbar button")[2].dispatchEvent(new w.Event("click"));   // 재탭 → 한 단계 내림
+ok("같은 칸 재탭 = 한 단계 내림(50%)", $("#dfx-rate").querySelectorAll(".rbar button.on").length === 2);
+$("#dfx-rate").querySelectorAll(".rbar button")[2].dispatchEvent(new w.Event("click"));   // 다시 75%로
 $("#dfx-ok").dispatchEvent(new w.Event("click"));
 await sleep(1500);
 const dfd = await ev(`Api.task("${tDf}")`);
@@ -448,7 +444,7 @@ w.closeAll();
 w.switchTab("works"); await sleep(1300);
 ok("대기 세그먼트 윤곽선 강조", $("#seg-wait").classList.contains("ring"));
 ok("대기 목록 — 21일 전엔 연장 칩 없음", !$("#wait-list").innerHTML.includes(">연장<"));
-ok("예정 행에서 바로 완료율(칸 클릭)", $("#w-sched").innerHTML.includes("rateSet("));
+ok("예정 행 완료율 인라인 제거(rateSet 없음, 읽기전용)", !$("#w-sched").innerHTML.includes("rateSet("));
 
 // ⑤ 삭제 거부 — 어떤 기록이 막는지 말해 준다
 const delMsg = await ev(`Api.deleteTask("${tFut}").then(()=>null, (e)=>e.message)`);

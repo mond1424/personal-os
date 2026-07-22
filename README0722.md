@@ -60,7 +60,7 @@ npx wrangler dev            # http://localhost:8787
 | `npm run verify` | 위 셋을 한 번에 |
 | `npm run dev` · `deploy` | wrangler dev · deploy |
 
-**현재 기준선: typecheck 통과 · smoke 124 · front 147 · 실패 0.**
+**현재 기준선: typecheck 통과 · smoke 124 · front 145 · 실패 0.**
 작업 후엔 이 숫자로 보고한다 — "통과했다"가 아니라 "smoke 124 → 127". 검사가 옛 동작을 검사하고 있으면 **검사를 고치고 그 사실을 말한다**.
 ※ 새 마이그레이션을 추가하면 `test/smoke.ts`의 스키마 목록에도 파일명을 넣어야 한다(하드코딩). `e2e.mjs`는 디렉터리 전체를 적용하므로 자동이다.
 

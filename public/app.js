@@ -301,13 +301,13 @@ function renderToday() {
       <button class="tbody" style="text-align:left" onclick="openTask('${t.id}')">
         <span class="tt">${esc(t.title)}${t.defer_count > 0 ? '<span class="warn">!</span>' : ""}</span>
         <span class="tmeta">${meta}</span></button>
-      ${rbar(t.rate, `rateSet('${t.id}','${d}',$K,${t.rate})`)}</div>`;
+      ${t.rate ? `<span class="ratepct">${t.rate}%</span>` : ""}</div>`;
   }).join("");
   if (T.done.length) {
     h += `<details class="fold" open><summary>Done ${T.done.length} — 오늘 완료</summary>` +
       T.done.map((t) =>
         `<div class="trow muted"><span class="tk done"></span>
-          <span class="tbody"><span class="tt">${esc(t.title)}</span></span>${rbar(100, null, "done")}</div>`).join("") +
+          <span class="tbody"><span class="tt">${esc(t.title)}</span></span></div>`).join("") +
       `</details>`;
   }
   h += T.reassign.map((r) =>
@@ -908,7 +908,7 @@ async function renderWorks() {
           <button class="tbody" style="text-align:left" onclick="openTask('${r.id}')">
             <span class="tt">${esc(r.title)}${r.defer_count > 0 ? '<span class="warn">!</span>' : ""}</span>
             <span class="tmeta">${r.color ? `<i class="pdot" style="background:${r.color}"></i>` : ""}${md(r.date)}${r.defer_count > 0 ? ` · ${r.defer_count}회 이월` : ""}</span></button>
-          ${rbar(r.rate, `rateSet('${r.id}','${r.date}',$K,${r.rate})`)}</div>`).join("") + `</div>`;
+          ${r.rate ? `<span class="ratepct">${r.rate}%</span>` : ""}</div>`).join("") + `</div>`;
   }).join("") || `<p class="cap" style="margin-top:14px">예정된 task가 없어요 — 아래 +로 추가.</p>`;
 
   // 대기
@@ -947,7 +947,7 @@ async function renderWorks() {
       ? `예정 ${md(r.planned_on)} · 완료 ${md(r.finished_on)}`
       : `${md(r.finished_on)} 완료`;
     return `<button class="trow muted" style="width:100%" onclick="openTask('${r.id}')"><span class="tk done"></span>
-      <span class="tbody"><span class="tt">${esc(r.title)}</span><span class="tmeta">${meta}</span></span>${rbar(100, null, "done")}</button>`;
+      <span class="tbody"><span class="tt">${esc(r.title)}</span><span class="tmeta">${meta}</span></span></button>`;
   }).join("") ||
     `<div class="trow"><span class="tbody"><span class="tmeta">아직 완료가 없어요</span></span></div>`;
 }
@@ -1001,14 +1001,17 @@ async function openTask(id) {
     const live = [...t.entries].reverse().find((e) => !e.deferred_to);
     const locked = !!live && live.day_status === "closed";
     $("#tk-rate-head").textContent = live ? `완료율 — ${md(live.date)} 예정` : "완료율";
+    // 완료율은 상시 인라인 입력을 걷어내고 읽기전용으로 표시한다(설계 §1.4 복귀).
+    // 값 변경은 '미루기'(defer sheet)와 '하루 마감'(구현 2)에서만, 완료는 완료 버튼.
     $("#tk-rates").innerHTML = t.status === "finished"
-      ? rbar(100, null, "big done")
+      ? `<span class="ratebig done">완료 · 100%</span>`
       : !live
-        ? `<span class="cap">대기 중이에요 — 일정을 정하면 완료율을 매길 수 있어요.</span>`
+        ? `<span class="cap">대기 중이에요 — 일정을 정하면 완료율이 생겨요.</span>`
         : locked
-          ? rbar(live.rate, null, "big lock") +
+          ? `<span class="ratebig">${live.rate}%</span>` +
             `<p class="cap" style="margin-top:8px">${md(live.date)}은 이미 마감됐어요 — 지난 기록은 고칠 수 없어요.</p>`
-          : rbar(live.rate, `setRateOn('${t.id}','${live.date}',$K,${live.rate})`, "big");
+          : `<span class="ratebig">${live.rate}%</span>` +
+            `<p class="cap" style="margin-top:8px">완료율은 <b>미루기</b>나 하루 마감 때 정해요. 다 했으면 아래 <b>완료</b>.</p>`;
 
     /* 버튼은 맥락에 맞는 것만 남긴다 —
      *  · 대기 중이면 미룰 예정 자체가 없다 → '미루기'가 아니라 '일정 정하기'

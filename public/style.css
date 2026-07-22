@@ -511,6 +511,12 @@ nav,.logbar{background:var(--bar)}
 .rbar button.on,.rbar i.on{background:var(--ink)}
 .rbar.done button,.rbar.done i{background:var(--mint)}
 .rbar.big{gap:5px}
-.rbar.big button,.rbar.big i{width:100%;height:34px;border-radius:9px}
-.rbar.big{display:flex;width:100%}
+.rbar.big button,.rbar.big i{width:100%;height:23px;border-radius:8px}
+.rbar.big{display:flex;width:64%}                       /* 편집은 미루기 시트에서만 — 과하지 않게 (A-3) */
+.rbar.big button{position:relative}
+.rbar.big button::after{content:"";position:absolute;inset:-11px -2px}  /* 터치 hit area 보강 */
 .rbar.lock button{opacity:.55}
+/* 완료율 읽기전용 표시 (인라인 편집 걷어냄 — 설계 §1.4) */
+.ratepct{font-size:11.5px;color:var(--faint);flex:none;font-variant-numeric:tabular-nums}
+.ratebig{display:inline-block;font-size:19px;font-weight:700;color:var(--ink);margin-top:2px}
+.ratebig.done{color:var(--mint)}
