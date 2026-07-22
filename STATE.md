@@ -36,11 +36,14 @@
 - style.css      https://raw.githubusercontent.com/mond1424/personal-os/main/public/style.css
 
 ## 기준선
-typecheck 통과 / smoke 124 / front 145 / 실패 0
+typecheck 통과 / smoke 127 / front 145 / 실패 0
+(2단계에서 smoke 124→127: 미루기 사유 저장 검사 3개 추가. front는 145 유지: 미루기 시트 완료율 바 검사→사유 입력 검사로 교체, 개수 동일.)
 
 ## 마이그레이션
-최신: `0006_fix_model_high` (0001_init · 0002_models · 0003_ai_provider · 0004_events · 0005_delete_scope · 0006_fix_model_high)
-⚠️ 0006은 라이브 DB에 **미적용** — 사용자가 `--local`→`--remote` 적용 + `deploy` 필요.
+최신: `0007_defer_reason` (0001_init · 0002_models · 0003_ai_provider · 0004_events · 0005_delete_scope · 0006_fix_model_high · 0007_defer_reason)
+로컬 D1: 0007 적용 완료(2026-07-23). 0006도 로컬 적용 상태.
+⚠️ 라이브(remote) DB에 **0006·0007 미적용** — 사용자가 `--remote` 적용 + `deploy` 필요.
+- `0007_defer_reason`: `schedule_entries`에 `defer_reason TEXT` 추가(미루기 사유). **WORK-PLAN의 `task_entries` 표기는 오기** — 실제 테이블은 `schedule_entries`(예정 항목·rate가 있는 곳).
 
 ## 이번 세션 (2026-07-23) — WORK-PLAN-0723 진행 중
 - **1단계 완료** (항목 1·2·3·5, 프런트 표시/모션만, 백엔드 무변경):
@@ -49,7 +52,12 @@ typecheck 통과 / smoke 124 / front 145 / 실패 0
   - [#3] `public/app.js` — 경계 스트레치 진폭↑(`STRETCH_MAX 48→90`, `STRETCH_K 0.3→0.42`)+스냅백 전용 곡선 분리(`STRETCH_BACK_MS 460`/`cubic-bezier(.22,1,.36,1)`, 탭 전환 `TRACK_MS` 미접촉). **폰 실측 후 미세조정**.
   - [#5] `public/index.html` — `#today-wait` 인라인 `width:100%→65%`+`margin-right:auto`(좌측 고정). 대기 행을 시각적으로 하위로.
   - 검증: typecheck 통과 · smoke 124 · front 145 · 실패 0 (무회귀).
-- 2단계(완료율 화면 제거+미루기 사유 0007)·3단계(memo 통합)는 **미착수** — WORK-PLAN-0723.md 참조.
+- **2단계 완료** (완료율 화면 제거 + 미루기 사유 `defer_reason`, migration 0007):
+  - 2-a 완료율 **화면만 제거**(DB 컬럼·완료 로직·`rate=100` 완료 신호는 유지): `app.js` 리스트 pct 배지 2곳·날짜 시트 tag/모노칸 제거·치환. `rbar`/`rateSet`/`rateOf`/`setRate`/`stSetRate` 등 함수·라우터는 그대로.
+  - 2-b `migrations/0007_defer_reason.sql`(`schedule_entries.defer_reason`) + `db.stSetDeferReason` + `tasks.deferTask(reason?)` + 라우터/`api.js` `defer(reason)` + 미루기 시트를 완료율 바→사유 `textarea`(#dfx-reason)로 교체. 사유는 도착지(새 예정) 항목에 저장.
+  - **범위 밖(유지)**: task 상세 시트 읽기전용 완료율(`#tk-rates`/`.ratebig`)은 WORK-PLAN 2-a 목록에 없어 **그대로 뒀다**(제거하려면 별도 지시 필요). `defer_reason` 분석 화면 노출은 향후.
+  - 검증: typecheck 통과 · smoke 124→127 · front 145 · 실패 0.
+- 3단계(memo 통합)는 **미착수** — WORK-PLAN-0723.md 참조.
 
 ## 최근 세션에서 바뀐 것 (UX 개선 A-1~A-6)
 - A-1 [#3] `public/style.css` — 다크모드 캘린더 색: 다른 달 날짜 `var(--faint)`, 일요일 헤더 다크 오버라이드
@@ -69,3 +77,5 @@ typecheck 통과 / smoke 124 / front 145 / 실패 0
 ## 설계와 어긋난 지점
 - **완료율 100%** — 지난 세션에 "인라인 100%=즉시 완료"로 이탈했으나, **A-3(#5 Phase1)에서 인라인 막대를 제거하며 폐기 → 완료는 완료 버튼 전용으로 설계 §1.4 재정합**(이제 설계와 일치). 완료율 편집은 미루기 시트에서만.
 - **events 마감일 추가** — 마감된 날에도 일정 추가 허용(1.3 "과거엔 추가만 가능"과 정합, 경고문 표시). 설계 위반 아님, 명시적 결정.
+- **완료율 화면 제거(2단계, 2026-07-23)** — 완료율 개념을 **화면에서** 없앰(리스트·날짜 시트·미루기 시트). DB `rate` 컬럼·`completeTask`의 `rate=100` 완료 신호·`setRate` 경로는 **물리적으로 유지**(되돌리기 쉽게, 완료 로직 안전). 물리적 소거는 향후 별도. task 상세 시트의 읽기전용 완료율은 이번 범위 밖이라 유지 중.
+- **미루기 사유 도착지 보존** — 사유(`defer_reason`)는 원 항목이 아니라 **도착지(새 예정) 항목**에 남긴다. 마감된 날의 원 항목은 트리거가 수정을 막으므로, 열린 날/재배정 두 갈래 모두 균일하게 도착지에 붙여 보존.

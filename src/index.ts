@@ -125,8 +125,8 @@ app.patch("/api/tasks/:id", async (c) => {
   return c.json(await tasks.updateTaskMeta(c.env, c.req.param("id"), b));
 });
 app.post("/api/tasks/:id/defer", async (c) => {
-  const b = await body<{ from: string; to: string; rate?: number }>(c);
-  return c.json(await tasks.deferTask(c.env, c.get("t"), c.req.param("id"), b.from, b.to, b.rate));
+  const b = await body<{ from: string; to: string; rate?: number; reason?: string }>(c);
+  return c.json(await tasks.deferTask(c.env, c.get("t"), c.req.param("id"), b.from, b.to, b.rate, b.reason));
 });
 app.post("/api/tasks/:id/schedule", async (c) => {
   const b = await body<{ date: string }>(c);

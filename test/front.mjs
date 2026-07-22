@@ -412,26 +412,24 @@ ok("예정 task — '미루기' 라벨", txt("#tk-defer") === "미루기");
 ok("예정 task — 대기 연장 숨김", $("#tk-extend").style.display === "none");
 w.closeAll();
 
-// ④ 미루기 — 완료율을 물어보고 넘어간다
+// ④ 미루기 — 사유(선택)를 받아 도착지(새 예정) 항목에 남긴다 (완료율 입력은 화면에서 제거됨)
 const T2 = ev("addDaysStr(S.today.date,3)");
-const tDf = (await ev(`Api.createTask({title:"미루면서 완료율", date:S.today.date})`)).id;
+const tDf = (await ev(`Api.createTask({title:"미루면서 사유", date:S.today.date})`)).id;
 await w.refreshToday(); await sleep(300);
-ev(`startPick({mode:"defer", id:"${tDf}", from:S.today.date, title:"미루면서 완료율"})`);
+ev(`startPick({mode:"defer", id:"${tDf}", from:S.today.date, title:"미루면서 사유"})`);
 await sleep(400);
 await w.assignDate(T2); await sleep(900);
 ok("미루기 확인 시트가 뜸", $("#sh-defer").classList.contains("on"));
-ok("확인 시트에 4칸 바", $("#dfx-rate").querySelectorAll(".rbar.big button").length === 4);
+ok("확인 시트에 사유칸 · 완료율 바 없음", !!$("#dfx-reason") && $("#sh-defer").querySelectorAll(".rbar").length === 0);
+ok("사유칸은 빈 값으로 열림", $("#dfx-reason").value === "");
 ok("어디로 가는지 표시", $("#dfx-what").textContent.includes("→") || $("#dfx-what").innerHTML.includes("→"));
-$("#dfx-rate").querySelectorAll(".rbar button")[2].dispatchEvent(new w.Event("click"));
-ok("고른 값이 바에 반영(아직 저장 전)", $("#dfx-rate").querySelectorAll(".rbar button.on").length === 3);
-$("#dfx-rate").querySelectorAll(".rbar button")[2].dispatchEvent(new w.Event("click"));   // 재탭 → 한 단계 내림
-ok("같은 칸 재탭 = 한 단계 내림(50%)", $("#dfx-rate").querySelectorAll(".rbar button.on").length === 2);
-$("#dfx-rate").querySelectorAll(".rbar button")[2].dispatchEvent(new w.Event("click"));   // 다시 75%로
+$("#dfx-reason").value = "다른 일이 급해서";
 $("#dfx-ok").dispatchEvent(new w.Event("click"));
 await sleep(1500);
 const dfd = await ev(`Api.task("${tDf}")`);
-ok("원래 예정일에 75%가 남음", dfd.entries.find((e) => e.deferred_to)?.rate === 75, JSON.stringify(dfd.entries));
+ok("옮겨 간 예정에 사유가 남음", dfd.entries.find((e) => e.date === T2)?.defer_reason === "다른 일이 급해서", JSON.stringify(dfd.entries));
 ok("옮겨 간 예정은 0%에서 시작", dfd.entries.find((e) => e.date === T2)?.rate === 0);
+ok("원래 예정일은 rate 무변경(0)", dfd.entries.find((e) => e.deferred_to)?.rate === 0);
 w.closeAll(); await sleep(200);
 
 // ⑤ 대기 — 21일 전에는 연장 버튼이 없다

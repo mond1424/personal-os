@@ -303,7 +303,7 @@ function renderToday() {
       <button class="tbody" style="text-align:left" onclick="openTask('${t.id}')">
         <span class="tt">${esc(t.title)}${t.defer_count > 0 ? '<span class="warn">!</span>' : ""}</span>
         <span class="tmeta">${meta}</span></button>
-      ${t.rate ? `<span class="ratepct">${t.rate}%</span>` : ""}</div>`;
+      </div>`;
   }).join("");
   if (T.done.length) {
     h += `<details class="fold" open><summary>Done ${T.done.length} — 오늘 완료</summary>` +
@@ -458,9 +458,9 @@ async function openDay(k) {
         const per = periodInfo(t.period_id);
         const tag = day.relation === "past"
           ? { done: "완료", deferred: `→ ${t.deferred_to ? md(t.deferred_to) : "미룸"}`, missed: "missed", todo: "" }[t.class]
-          : t.class === "done" ? "완료" : t.deferred_to ? `→ ${md(t.deferred_to)}` : `${t.rate ?? 0}%`;
+          : t.class === "done" ? "완료" : t.deferred_to ? `→ ${md(t.deferred_to)}` : "";
         const fin = t.class === "done" || t.status === "finished";
-        const inner = `<span class="ts mono">${t.rate != null && day.relation !== "past" ? "" : "—"}</span><span><i class="pdot" style="display:inline-block;background:${per ? per.color : "var(--faint)"};margin-right:6px"></i>${esc(t.title)}${tag ? ` <span class="cap">${tag}</span>` : ""}</span>`;
+        const inner = `<span class="ts mono">—</span><span><i class="pdot" style="display:inline-block;background:${per ? per.color : "var(--faint)"};margin-right:6px"></i>${esc(t.title)}${tag ? ` <span class="cap">${tag}</span>` : ""}</span>`;
         const cls = "lrow" + (fin ? " done-line" : "");
         return editable
           ? `<button class="${cls}" style="width:100%" onclick="closeAll();openTask('${t.id}')">${inner}</button>`
@@ -673,39 +673,29 @@ function completeRow(id) {
 }
 
 /* ── 미루기 확인 시트 ──────────────────────────────────────
- * 완료율은 '그 예정일까지 얼마나 갔나'라서, 미루는 순간이 그 값을 아는 유일한 시점이다.
- * 새 예정은 설계대로 0%에서 다시 시작한다 (v0.8). */
-let dfxCtx = null;   // { id, title, from, to, rate, frozen }
+ * 미루는 순간에 사유(선택)를 받아 도착지(새 예정) 항목에 남긴다.
+ * 완료율 입력은 화면에서 제거됨 — 내부 rate=100 완료 신호는 그대로 유지(2단계). */
+let dfxCtx = null;   // { id, title, from, to, frozen }
 
 function openDeferSheet(ctx) {
   dfxCtx = ctx;
   $("#dfx-what").innerHTML = `${esc(ctx.title)}<br>${md(ctx.from)} → <b style="color:var(--ink)">${md(ctx.to)}</b>`;
   $("#dfx-note").textContent = ctx.frozen
-    ? "이미 마감된 날이라 완료율은 그때 기록대로 남아요 — 새 예정만 만들어집니다."
-    : "여기서 정한 값은 원래 예정일에 남고, 옮겨 간 날은 0%에서 다시 시작해요.";
-  paintDfx();
+    ? "이미 마감된 날이라 원래 기록은 그대로 남고, 새 예정만 만들어져요."
+    : "옮겨 간 날로 새 예정이 생겨요.";
+  $("#dfx-reason").value = "";
   openSheet("sh-defer");
-}
-function paintDfx() {
-  if (!dfxCtx) return;
-  $("#dfx-rate").innerHTML = dfxCtx.frozen
-    ? rbar(dfxCtx.rate, null, "big lock")
-    : rbar(dfxCtx.rate, "dfxRate($K)", "big");
-}
-function dfxRate(k) {
-  if (!dfxCtx || dfxCtx.frozen) return;
-  dfxCtx.rate = rateOf(k, dfxCtx.rate);
-  paintDfx();
 }
 function bindDeferSheet() {
   $("#dfx-cancel").onclick = () => { closeSheet("sh-defer"); dfxCtx = null; };
   $("#dfx-ok").onclick = () => {
     const c = dfxCtx;
     if (!c) return;
+    const reason = $("#dfx-reason").value;
     closeSheet("sh-defer");
     dfxCtx = null;
     run(async () => {
-      await Api.defer(c.id, c.from, c.to, c.frozen ? undefined : c.rate);
+      await Api.defer(c.id, c.from, c.to, reason);
       exitPick();
       await Promise.all([refreshToday(), renderCalendar()]);
       openDay(c.to);
@@ -861,13 +851,12 @@ function assignDate(k) {
       openDay(k);
     });
   }
-  // 미루기는 한 단계 더 — 원래 예정일의 완료율을 여기서 확정한다
+  // 미루기는 한 단계 더 — 도착지와 사유(선택)를 확인 시트에서 받는다
   run(async () => {
     const t = await Api.task(p.id);
     const e = t.entries.find((x) => x.date === p.from);
     openDeferSheet({
       id: p.id, title: p.title || t.title, from: p.from, to: k,
-      rate: e ? (e.rate ?? 0) : 0,
       frozen: !e || e.day_status === "closed",   // 마감된 날은 고칠 수 없다 (1.3)
     });
   });
@@ -912,7 +901,7 @@ async function renderWorks() {
           <button class="tbody" style="text-align:left" onclick="openTask('${r.id}')">
             <span class="tt">${esc(r.title)}${r.defer_count > 0 ? '<span class="warn">!</span>' : ""}</span>
             <span class="tmeta">${r.color ? `<i class="pdot" style="background:${r.color}"></i>` : ""}${md(r.date)}${r.defer_count > 0 ? ` · ${r.defer_count}회 이월` : ""}</span></button>
-          ${r.rate ? `<span class="ratepct">${r.rate}%</span>` : ""}</div>`).join("") + `</div>`;
+          </div>`).join("") + `</div>`;
   }).join("") || `<p class="cap" style="margin-top:14px">예정된 task가 없어요 — 아래 +로 추가.</p>`;
 
   // 대기

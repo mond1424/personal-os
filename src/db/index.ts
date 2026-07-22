@@ -18,6 +18,7 @@ export interface TaskStats {
 export interface Entry {
   id: number; task_id: string; date: string; rate: number;
   deferred_to: string | null; deferred_at: string | null; created_at: string;
+  defer_reason?: string | null;   // 미루기 사유 (0007) — 도착지 항목에 남김
   day_status?: string;   // 'open' | 'closed' — 그 날이 마감됐는지 (완료율 편집 가능 여부)
 }
 export interface DailyRow {
@@ -216,6 +217,12 @@ export const stFinishTask = (env: Env, taskId: string, now: string, d: string) =
 export const stSetRate = (env: Env, taskId: string, date: string, rate: number) =>
   q(env, "UPDATE schedule_entries SET rate = ? WHERE task_id = ? AND date = ? AND deferred_to IS NULL")
     .bind(rate, taskId, date);
+
+// 미루기 사유 (0007): 도착지 항목에 남긴다. 같은 batch에서 stInsertEntry 직후 호출.
+// UNIQUE(task_id, date)라 도착지 한 행만 맞는다. 도착지는 열린 날이므로 frozen 트리거에 안 걸린다.
+export const stSetDeferReason = (env: Env, taskId: string, date: string, reason: string) =>
+  q(env, "UPDATE schedule_entries SET defer_reason = ? WHERE task_id = ? AND date = ?")
+    .bind(reason, taskId, date);
 
 export const stUpdateTaskMeta = (env: Env, taskId: string, title: string, periodId: string | null) =>
   q(env, "UPDATE tasks SET title = ?, period_id = ? WHERE id = ?").bind(title, periodId, taskId);

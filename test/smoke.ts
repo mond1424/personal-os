@@ -13,7 +13,7 @@ import type { Env } from "../src/types";
 import { makeD1, rawOf } from "./d1shim";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const schema = ["0001_init.sql", "0002_models.sql", "0003_ai_provider.sql", "0004_events.sql", "0005_delete_scope.sql", "0006_fix_model_high.sql"]
+const schema = ["0001_init.sql", "0002_models.sql", "0003_ai_provider.sql", "0004_events.sql", "0005_delete_scope.sql", "0006_fix_model_high.sql", "0007_defer_reason.sql"]
   .map((f) => readFileSync(join(here, "../migrations/" + f), "utf8")).join("\n");
 const env: Env = { DB: makeD1(schema) };
 const raw = rawOf(env.DB);
@@ -118,6 +118,16 @@ ok("rate 범위 밖이면 400",
   (await api("POST", `/api/tasks/${tR}/defer`, { from: N1, to: N2, rate: 130 })).status === 400);
 ok("rate 없이도 그대로 동작",
   (await api("POST", `/api/tasks/${tR}/defer`, { from: N1, to: N2 })).status === 200);
+
+// 미루기 사유 (0007) — 도착지(새 예정) 항목에만 남는다. trim 적용, 원 항목엔 안 남는다.
+const N3 = addDays(D, 3);
+const dfRe = await api("POST", `/api/tasks/${tR}/defer`, { from: N2, to: N3, reason: "  다른 일이 급해서  " });
+ok("미루기 사유와 함께 처리(200)", dfRe.status === 200);
+const reStats = (await api("GET", `/api/tasks/${tR}`)).json;
+ok("도착지 항목에 사유 저장(trim)",
+  reStats.entries.find((e: any) => e.date === N3)?.defer_reason === "다른 일이 급해서", JSON.stringify(reStats.entries));
+ok("원 항목(N2)엔 사유 없음",
+  (reStats.entries.find((e: any) => e.date === N2)?.defer_reason ?? null) === null);
 
 // ── 4. 하루 마감 (G) — todo → missed 확정 ────────────────────
 console.log("\n[4] 마감 — 물화 → close, 이후 동결");

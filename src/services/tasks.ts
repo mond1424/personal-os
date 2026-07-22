@@ -77,7 +77,7 @@ export async function updateTaskMeta(
  *     새 항목만 추가한다 — 이월 횟수(항목 수 − 1)는 두 경우 모두 +1.
  */
 export async function deferTask(
-  env: Env, t: TimeCtx, id: string, from: string, to: string, rate?: number,
+  env: Env, t: TimeCtx, id: string, from: string, to: string, rate?: number, reason?: string,
 ) {
   if (!isDate(from)) throw new ApiError(400, "from 형식은 YYYY-MM-DD");
   const entry = await db.taskEntryAt(env, id, from);
@@ -94,12 +94,15 @@ export async function deferTask(
   const setRate = !frozen && rate !== undefined;
   if (rate !== undefined && (!Number.isInteger(rate) || rate < 0 || rate > 100))
     throw new ApiError(400, "rate는 0~100 정수예요");
+  const trimmedReason = reason?.trim();
   await env.DB.batch([
     ...(setRate ? [db.stSetRate(env, id, from, rate!)] : []),  // deferred 표시보다 먼저
     ...(frozen ? [] : [db.stMarkDeferred(env, id, from, to, t.now)]),
     db.stInsertEntry(env, id, to, t.now), // 새 예정 — rate는 0에서 시작 (v0.8)
+    // 사유는 도착지(새 예정)에 남긴다 — insert 직후라야 그 행이 존재한다.
+    ...(trimmedReason ? [db.stSetDeferReason(env, id, to, trimmedReason)] : []),
   ]);
-  return { id, from, to, reassigned: frozen, rate: setRate ? rate : entry.rate };
+  return { id, from, to, reassigned: frozen, rate: setRate ? rate : entry.rate, reason: trimmedReason || undefined };
 }
 
 /** 대기 → 일정 확정: 첫 항목 생성. 예정이 이미 있으면 미루기를 쓴다. */

@@ -109,6 +109,8 @@ CREATE TABLE schedule_entries (
   deferred_to TEXT,                  -- 미루기 대상 날짜
   deferred_at TEXT,
   created_at  TEXT NOT NULL,
+  defer_reason TEXT,                  -- 미루기 사유 (0007) — 도착지(새 예정) 항목에 남김
+                                     -- ⚠️ 실제 ALTER ADD COLUMN은 테이블 끝에 붙는다. 세션 종료 시 재덤프로 정합.
   UNIQUE (task_id, date),
   CHECK ((deferred_to IS NULL) = (deferred_at IS NULL)),
   CHECK (deferred_to IS NULL OR deferred_to > date)
