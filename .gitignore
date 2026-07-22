@@ -3,6 +3,7 @@ node_modules/
 
 # wrangler 로컬 상태 (로컬 D1 DB·캐시·임시파일) — 로컬 전용
 .wrangler/
+*.sqlite*
 
 # 로컬 시크릿 (혹시 생기면 절대 커밋 금지)
 .dev.vars
@@ -20,3 +21,6 @@ build/
 Thumbs.db
 .idea/
 .vscode/
+
+# 일회성 작업 지시 파일 — 리포에 넣지 않음
+prompt.md

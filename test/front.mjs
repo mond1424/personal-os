@@ -1,10 +1,6 @@
 // 프론트 E2E — jsdom에 index.html + api.js + app.js를 올리고
-// 주어진 base(워커)에 실제 fetch로 붙어 렌더 경로의 런타임 오류·조립 결과를 잡는다.
-//
-// ⚠️ 이 스크립트는 대상 DB에 픽스처를 쓴다(오늘 task·log 등). 실제 dev DB와 섞지 않으려면
-//    `npm run front`(= test/e2e.mjs)로 실행할 것 — 일회용 임시 DB를 만들어 여기에 붙이고
-//    끝나면 폐기한다. 이 파일을 직접 돌리려면(npm run front:manual [base]) 반드시
-//    버릴/격리 DB를 띄운 서버에만 붙이고, 기간·Me direction 등은 미리 시드돼 있어야 한다.
+// 실행 중인 wrangler dev(기본 8788)에 실제 fetch로 붙는다.
+// 렌더 경로의 런타임 오류·조립 결과를 잡는 용도. 사용: node test/front.mjs [base]
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -47,20 +43,44 @@ const ok = (name, cond, detail = "") => {
   else { fails.push(name); console.log(`  ✗ ${name} ${detail}`); }
 };
 const $ = (s) => w.document.querySelector(s);
+// 캘린더는 이전·현재·다음 3-pane이라 같은 날짜 셀이 여러 개다 — 가운데(보고 있는 달)만 본다
+const CUR = "#cal-track .calpane.cur";
+const $cur = (s) => w.document.querySelector(`${CUR} ${s}`);
+const $$cur = (s) => [...w.document.querySelectorAll(`${CUR} ${s}`)];
 // const 선언은 window 프로퍼티가 아니다 — 전역 렉시컬 바인딩은 eval로 읽는다
 const ev = (code) => w.eval(code);
 const txt = (s) => ($(s)?.textContent ?? "").trim();
 
-await sleep(2500);
+// 부팅 완료를 기다린다 (고정 대기는 느린 기기·큰 DB에서 깨진다)
+const ev0 = (code) => w.eval(code);
+let ready = false;
+for (let i = 0; i < 40; i++) {
+  await sleep(400);
+  try { if (ev0("!!S.today")) { ready = true; break; } } catch { /* 아직 스크립트 평가 전 */ }
+}
+if (!ready) {
+  console.log("✗ 부팅 실패 — 서버가 켜져 있는지, 토큰이 필요한지 확인하세요.");
+  console.log("  화면 메시지:", w.document.querySelector("#boot-msg")?.textContent);
+  process.exit(1);
+}
 
 // 픽스처 — 날짜가 바뀌어도 재현되도록 오늘 항목·기록을 보장한다
-const ev0 = (code) => w.eval(code);
 if (ev0("S.today.todo.length") === 0) {
   await ev0(`Api.createTask({ title: "프론트 픽스처 task", date: S.today.date })`);
   await w.refreshToday(); await sleep(400);
 }
 if (ev0("S.today.logs.length") === 0) {
   await ev0(`Api.addLog("픽스처 로그")`);
+  await w.refreshToday(); await sleep(400);
+}
+if (ev0("S.periods.length") === 0) {
+  await ev0(`Api.createPeriod({title:"프론트 픽스처 기간", start_date:S.today.date, end_date:addDaysStr(S.today.date,10), color:"#7ED4A9", goals:["픽스처"]})`);
+  ev0("Api.periods()"); // 캐시 갱신은 renderCalendar에서
+  await ev0(`(async()=>{ S.periods = await Api.periods(); })()`);
+  await w.refreshToday(); await sleep(500);
+}
+if (ev0("S.today.waiting.n") === 0) {
+  await ev0(`Api.createTask({ title: "프론트 픽스처 대기" })`);
   await w.refreshToday(); await sleep(400);
 }
 
@@ -77,9 +97,10 @@ ok("대기 상시 행", $("#today-wait").style.display !== "none");
 console.log("\n[Calendar]");
 w.switchTab("cal"); await sleep(1200);
 ok("월 타이틀", /\d{4} · \d+월/.test(txt("#cal-title")), txt("#cal-title"));
-ok("주 행 5~6개", [5, 6].includes($("#cal-rows").querySelectorAll(".cal-row").length));
-ok("셀 7의 배수", $("#cal-rows").querySelectorAll(".c").length % 7 === 0);
-ok("밴드 path 생성", $("#cal-rows").querySelectorAll("svg.band path").length >= 1);
+ok("한 달 = 항상 6주 (높이 고정 — 캐러셀의 전제)", $$cur(".cal-row").length === 6, String($$cur(".cal-row").length));
+ok("셀 7의 배수", $$cur(".c").length % 7 === 0);
+ok("3-pane 조립 (이전·현재·다음)", w.document.querySelectorAll("#cal-track .calpane").length === 3);
+ok("밴드 path 생성", $$cur("svg.band path").length >= 1);
 ok("기간 카드", $("#p-list").querySelectorAll(".prow").length >= 1);
 await w.openDay(ev("S.today.date")); await sleep(600);
 ok("날짜 팝업 조립", $("#day-body").textContent.includes("작성 중"), $("#day-body").textContent.slice(0, 40));
@@ -103,14 +124,18 @@ ok("'지금' 파생 표시", $("#me-fields").textContent.includes("지금"));
 ok("이력 렌더", $("#me-history").querySelectorAll(".lrow").length >= 1);
 w.toggleSet(true); await sleep(200);
 const rows = [...$("#set-list").querySelectorAll(".srow")].map((r) => r.textContent);
-ok("설정 10행 (모델·토큰·테마·튜토리얼)", rows.length === 10, String(rows.length));
+ok("설정 11행 (AI 연결 통합)", rows.length === 11, String(rows.length));
 ok("Low 모델 표시", rows.some((r) => r.includes("Low") && r.includes("haiku")), rows.join(" | "));
 ok("High 모델 표시", rows.some((r) => r.includes("High") && r.includes("claude")), rows.join(" | "));
+ok("AI 연결 행 · 토큰 위", rows.findIndex((r) => r.includes("AI 연결")) < rows.findIndex((r) => r.includes("앱 접근 토큰")), rows.join(" | "));
+ok("모델 행이 토큰 아래", rows.findIndex((r) => r.includes("앱 접근 토큰")) < rows.findIndex((r) => r.includes("모델 — Low")));
+ok("표준시 오프셋이 내보내기 위", rows.findIndex((r) => r.includes("표준시")) < rows.findIndex((r) => r.includes("내보내기")));
 
 console.log("\n[시트 — 열림 검증]");
 w.openSetting("model_high"); await sleep(200);
-ok("모델 시트 옵션 3개", $("#st-options").querySelectorAll(".optrow").length === 3);
-ok("현재값 체크", $("#st-options").querySelector(".optrow.on") !== null);
+ok("모델 후보 = 제공자/모델 조합", $("#st-options").querySelectorAll(".optrow").length === ev("modelOptions().length"),
+  String($("#st-options").querySelectorAll(".optrow").length));
+ok("모델 라벨에 제공자 이름", $("#st-options").textContent.includes("·"), $("#st-options").textContent.slice(0, 60));
 w.closeAll();
 w.openPeriod(null); await sleep(200);
 ok("새 기간 시트 — 색 팔레트 8", $("#pd-colors").querySelectorAll(".sw").length === 8);
@@ -153,14 +178,14 @@ ok("오프셋 설명 — UTC 명시", (ev("SET_DESC.utc_offset")).includes("UTC"
 w.closeAll();
 
 await w.openDay(ev("addDaysStr(S.today.date, 2)")); await sleep(500);
-ok("미래 날짜 팝업 — 일정 추가 입력", !!$("#day-add"));
+ok("미래 날짜 팝업 — 할 일 추가 입력", !!$("#day-add"));
 w.closeAll();
 await w.openDay(ev("S.today.date")); await sleep(500);
-ok("오늘 팝업에서도 추가 가능", !!$("#day-add"));
+ok("오늘 팝업에서도 추가 가능", !!$("#day-add") && !!$("#ev-add"));
 ok("오늘 팝업 task = 편집 진입", $("#day-body").innerHTML.includes("openTask("));
 w.closeAll();
 await w.openTask(ev("S.today.todo[0].id")); await sleep(400);
-ok("task 시트 완료율 5단계", $("#tk-rates").querySelectorAll("button").length === 5);
+ok("task 시트 완료율 = 4칸 바", $("#tk-rates").querySelectorAll(".rbar.big button").length === 4);
 ok("task 삭제 버튼", !!$("#tk-delete"));
 w.closeAll();
 
@@ -169,7 +194,7 @@ w.switchTab("cal"); await sleep(1000);
 const D0 = ev("S.today.date");
 // null = 그 달 그리드에 없는 날 / true = 비활성(흐림) / false = 선택 가능
 const dim = (d) => {
-  const c = w.document.querySelector(`#cal-rows .c[data-d="${d}"]`);
+  const c = $cur(`.c[data-d="${d}"]`);
   if (!c) return null;
   const o = c.style.opacity;
   return o !== "" && parseFloat(o) < 1;
@@ -184,7 +209,7 @@ ok("오늘은 비활성 (미루기는 내일부터)", dim(D0) === true, String(d
 ok("내일은 활성", dim(day(1)) === false, String(dim(day(1))));
 ok("이번 달 마지막 날 활성", dim(`${D0.slice(0, 8)}31`) === false, String(dim(`${D0.slice(0, 8)}31`)));
 // 이번 달 그리드의 꼬리에 붙어 나온 다음 달 날짜 — 범위 안이면 여기서도 눌러야 한다
-const tail = [...w.document.querySelectorAll("#cal-rows .c.mut")].map((c) => c.dataset.d).filter((d) => d > D0);
+const tail = [...$$cur(".c.mut")].map((c) => c.dataset.d).filter((d) => d > D0);
 ok("이번 달 그리드 꼬리에 다음 달 날짜 존재", tail.length > 0, tail.join(","));
 ok("그 꼬리 날짜도 범위 안이면 활성", tail.every((d) => dim(d) === (d > d14)), tail.map((d) => d + ":" + dim(d)).join(" "));
 
@@ -200,14 +225,14 @@ w.switchTab("cal"); await sleep(900);
 w.startPick({ mode: "schedule", id: "dummy", title: "상한 없음" });
 await sleep(800);
 ok("신규 일정 — 안내 문구 구분", $("#pick-note").textContent.includes("아무 날짜"));
-const anyFar = [...w.document.querySelectorAll("#cal-rows .c")].filter((c) => c.dataset.d > d15);
+const anyFar = [...$$cur(".c")].filter((c) => c.dataset.d > d15);
 ok("신규 일정 — 2주 밖도 전부 활성", anyFar.length === 0 || anyFar.every((c) => dim(c.dataset.d) === false),
   anyFar.slice(0, 3).map((c) => c.dataset.d + ":" + dim(c.dataset.d)).join(" "));
 w.exitPick(); await sleep(300);
 
 console.log("\n[이월 — 캘린더에서 옛 날짜 정리]");
 w.switchTab("cal"); await sleep(1200);
-const movedOnOld = [...w.document.querySelectorAll("#cal-rows .c")].some((c) =>
+const movedOnOld = [...$$cur(".c")].some((c) =>
   c.dataset.d >= ev("S.today.date") && [...c.querySelectorAll(".ev")].some((e) => e.classList.contains("moved")));
 ok("미룬 항목은 오늘·앞으로의 셀에서 빠짐", !movedOnOld);
 const hasDeferred = (await (await fetch(`${BASE}/api/calendar?start=${ev("S.today.date")}&end=${ev("addDaysStr(S.today.date,5)")}`)).json())
@@ -222,6 +247,229 @@ $("#log-send").dispatchEvent(new w.Event("click"));
 await sleep(1200);
 ok("Log 추가 후 재렌더", $("#td-logs").querySelectorAll(".lrow").length === before + 1,
   `${before} → ${$("#td-logs").querySelectorAll(".lrow").length}`);
+
+console.log("\n[이번 개선 — 다크 · AI 연결 · 완료 표시 · 취소]");
+// 내비/입력줄 색이 변수로 빠졌는가 (다크에서 흰 바로 남던 문제)
+const navBg = (el) => w.getComputedStyle(el).backgroundColor + w.getComputedStyle(el).background;
+w.applyTheme("dark"); await sleep(150);
+const cssText = [...w.document.styleSheets].length;
+ok("nav 배경이 --bar 변수", (await (await fetch(BASE + "/style.css")).text()).includes("nav,.logbar{background:var(--bar)}"));
+w.applyTheme("auto");
+
+w.switchTab("me"); await sleep(900); w.toggleSet(true);
+w.openSetting("ai_provider"); await sleep(200);
+ok("AI 제공자 3종 선택지", $("#st-options").querySelectorAll(".optrow").length === 3);
+ok("사람이 읽는 이름", $("#st-options").textContent.includes("Claude"), $("#st-options").textContent);
+w.closeAll();
+w.openSetting("ai_api_key"); await sleep(200);
+ok("AI 키 — 입력값 비움(마스킹)", $("#st-value").value === "" && $("#st-value").type === "password");
+ok("키 힌트 표시", $("#st-value").placeholder.length > 0, $("#st-value").placeholder);
+w.closeAll();
+w.openSetting("utc_offset"); await sleep(200);
+ok("오프셋 잠금 + [변경]", $("#st-value").disabled === true && $("#st-unlock").style.display === "");
+w.closeAll();
+
+w.switchTab("today"); await sleep(1000);
+ev("S.cal = { y:+S.today.date.slice(0,4), m:+S.today.date.slice(5,7) }"); // 앞 테스트에서 넘긴 달 복귀
+ok("Done 박스 기본 열림", [...w.document.querySelectorAll("#td-list details.fold")].every((d) => d.open) || !$("#td-list").querySelector("details"));
+
+// 완료 → 캘린더 셀·팝업 취소선
+const tDone = (await ev(`Api.createTask({title:"완료 표시 확인", date:S.today.date})`)).id;
+await ev(`Api.complete("${tDone}")`);
+await w.refreshToday(); w.switchTab("cal"); await sleep(1300);
+const cell = $cur(`.c[data-d="${ev("S.today.date")}"]`);
+ok("캘린더 셀 — 할 일은 한 줄로 압축(.tsum)", !!cell.querySelector(".ev.tsum"), cell.innerHTML.slice(0, 160));
+ok("캘린더 셀 — 대표는 살아 있는 항목(없으면 완료줄에 done)",
+  (() => { const s = cell.querySelector(".ev.tsum"); return s.classList.contains("done") || !!cell.querySelector(".ev.tsum:not(.done)"); })(),
+  cell.querySelector(".ev.tsum")?.outerHTML.slice(0, 140));
+await w.openDay(ev("S.today.date")); await sleep(600);
+ok("날짜 팝업 — 완료 줄 취소선", $("#day-body").innerHTML.includes("done-line"));
+w.closeAll();
+w.switchTab("works"); await sleep(1200);
+ok("완료 목록 — 예정일·완료일 구분 표기", $("#done-list").textContent.includes("완료"), $("#done-list").textContent.slice(0, 80));
+
+// 취소 = 회피 민감 문구
+await w.openTask(tDone); await sleep(400);
+ok("버튼 문구가 '취소'", $("#tk-delete").textContent.includes("취소"));
+w.closeAll();
+
+console.log("\n[일정(event) — task와 분리]");
+const EVD = ev("addDaysStr(S.today.date,1)");
+const evId = (await ev(`Api.createEvent({title:"일정 분리 확인", date:"${EVD}", time:"10:00"})`)).id;
+w.switchTab("cal"); await sleep(1300);
+const evCell = $cur(`.c[data-d="${EVD}"]`);
+ok("캘린더 셀에 일정 표시(.evt)", !!evCell.querySelector(".ev.evt"), evCell.innerHTML.slice(0, 140));
+ok("셀의 일정은 내용만 — 시각 문자열 없음",
+  evCell.querySelector(".ev.evt").textContent.trim() === "일정 분리 확인", evCell.querySelector(".ev.evt").textContent);
+ok("시각 있는 일정은 .timed 표시", evCell.querySelector(".ev.evt").classList.contains("timed"));
+await w.openDay(EVD); await sleep(600);
+ok("날짜 팝업 — 일정 섹션", $("#day-body").innerHTML.includes("일정") && !!$("#ev-add"));
+ok("일정 줄에 삭제(×)", $("#day-body").innerHTML.includes("removeEvent("));
+ok("할 일 입력과 분리", !!$("#day-add") && !!$("#ev-add"));
+w.closeAll();
+const worksBefore = (await ev(`Api.works("scheduled")`)).length;
+ok("일정은 Works(할 일)에 섞이지 않음", !(await ev(`Api.works("scheduled")`)).some((r) => r.title === "일정 분리 확인"));
+await ev(`Api.deleteEvent("${evId}")`);
+
+console.log("\n[기간 밴드 — 배경·공유 곡선]");
+const bandRow = ["2026-07-19","2026-07-20","2026-07-21","2026-07-22","2026-07-23","2026-07-24","2026-07-25"];
+const solo = ev(`bandPaths(${JSON.stringify(bandRow)}, [{id:"p1",start_date:"2026-07-20",end_date:"2026-07-23",color:"#a",created_at:"1"}])`);
+ok("단독 기간 — 시작·끝 면이 둥근 마감(Q곡선)", /^M11[0-9.]*,0/.test(solo[0].d) && (solo[0].d.match(/Q/g) || []).length === 4, solo[0].d.slice(0, 80));
+ok("밴드가 셀 높이 전체(0~96)", solo[0].d.includes(",96"));
+// 주 경계에서 잘린 면은 각지게 — 둥글게 하면 매주 끊긴 알약이 된다
+const cutRow = ev(`bandPaths(${JSON.stringify(bandRow)}, [{id:"p2",start_date:"2026-07-10",end_date:"2026-08-02",color:"#a",created_at:"1"}])`);
+ok("행 경계에서 잘린 면 — 곡선 없음(수직)", cutRow[0].d.startsWith("M0,0") && !cutRow[0].d.includes("Q"), cutRow[0].d.slice(0, 60));
+const two = ev(`bandPaths(${JSON.stringify(bandRow)}, [
+  {id:"a",start_date:"2026-07-19",end_date:"2026-07-25",color:"#a",created_at:"1"},
+  {id:"b",start_date:"2026-07-21",end_date:"2026-07-23",color:"#b",created_at:"2"}])`);
+const curveA = "C200,48 200,96 175,96";  // A의 하단 경계 (오른→왼)
+const curveB = "C200,96 200,48 225,48";  // B의 상단 개시 (왼→오른) — 같은 곡선의 역방향
+ok("겹침 경계 = 두 밴드가 같은 곡선 공유", two[0].d.includes(curveA) && two[1].d.includes(curveB),
+  two[0].d.slice(0, 40) + " / " + two[1].d.slice(0, 40));
+ok("셀 글줄에 흰 배경 없음", (await (await fetch(BASE + "/style.css")).text()).includes(".ev{background:none"));
+
+console.log("\n[이번 배치 — 스와이프·다이얼·압축·버튼 노출]");
+
+// ① 가로 스와이프: 축 잠금 — 세로로 시작한 제스처는 끝까지 탭을 넘기지 않는다
+// 좌표는 반드시 MouseEvent 생성자로 실어야 한다 (Event에 나중에 붙이면 undefined로 남아
+// dx가 NaN이 되고, 그러면 어떤 제스처든 '세로'로 판정돼 검사가 통과해 버린다)
+const swipe = (dxs, dys) => {
+  const scr = w.document.querySelector(".screens");
+  const mk = (type, x, y) => new w.MouseEvent(type, { bubbles: true, clientX: x, clientY: y });
+  scr.dispatchEvent(mk("pointerdown", 300, 400));
+  dxs.forEach((dx, i) => scr.dispatchEvent(mk("pointermove", 300 + dx, 400 + dys[i])));
+  const n = dxs.length - 1;
+  scr.dispatchEvent(mk("pointerup", 300 + dxs[n], 400 + dys[n]));
+};
+const tab = () => $("#phone").dataset.tab;
+w.switchTab("today"); await sleep(300);
+swipe([-14, -60, -150], [0, 3, 6]);                 // 가로로 확정 + 충분한 거리
+ok("가로 스와이프는 다음 탭으로", tab() === "cal", tab());
+w.switchTab("today"); await sleep(200);
+swipe([0, -20, -140], [30, 60, 62]);                // 세로로 시작 → 끝까지 무시
+ok("세로로 시작한 제스처는 탭을 넘기지 않음", tab() === "today", tab());
+w.switchTab("today"); await sleep(200);
+swipe([-14, -40, -70], [0, 2, 4]);                  // 가로지만 폭의 25%에 못 미침 (속도도 0)
+ok("짧은 가로 이동은 무시(임계값)", tab() === "today", tab());
+w.switchTab("today"); await sleep(200);
+
+// ①-b 트랙 위치가 인덱스를 그대로 따라가고, nav 표식이 같이 움직인다
+const tf = (sel) => ($(sel)?.style.transform || "").replace(/\s/g, "");
+w.switchTab("works", false); await sleep(400);
+ok("탭 트랙 = 인덱스 × -100%", tf("#tab-track") === "translateX(-200%)", tf("#tab-track"));
+ok("nav 표식도 같은 칸", tf("#nav-dot") === "translateX(200%)", tf("#nav-dot"));
+ok("nav 강조가 따라옴", [...w.document.querySelectorAll("nav button")][2].classList.contains("on"));
+w.switchTab("today", false); await sleep(300);
+ok("되돌아오면 0%", tf("#tab-track") === "translateX(0%)", tf("#tab-track"));
+
+// ①-c 달 넘기기 — 넘긴 뒤 조용히 재중심화되고 3-pane이 유지된다
+w.switchTab("cal"); await sleep(1400);
+const m0 = ev("S.cal.m"), y0 = ev("S.cal.y");
+w.calGo(1);
+await sleep(2200);                                   // transitionend 유실 대비 타이머 + 재조립
+const expM = m0 === 12 ? 1 : m0 + 1;
+ok("달 넘김 — 다음 달", ev("S.cal.m") === expM && ev("S.cal.y") === (m0 === 12 ? y0 + 1 : y0), `${m0} → ${ev("S.cal.m")}`);
+ok("넘긴 뒤 트랙은 다시 가운데", tf("#cal-track") === "translateX(-100%)", tf("#cal-track"));
+ok("3-pane 유지", w.document.querySelectorAll("#cal-track .calpane").length === 3);
+w.calGo(-1); await sleep(2200);
+ok("되돌리기 — 원래 달", ev("S.cal.m") === m0 && ev("S.cal.y") === y0, String(ev("S.cal.m")));
+w.switchTab("today"); await sleep(300);
+
+// ② 일정 추가 — 팝업 하나 안에서 시각까지 (시트를 겹쳐 쌓지 않는다)
+const DD = ev("addDaysStr(S.today.date,2)");
+await w.openDay(DD); await sleep(600);
+ok("날짜 팝업엔 [+ 일정 추가] 버튼만", !!$("#ev-add") && !$("#ev-title") && !$("#ev-time"));
+w.openEventSheet(DD); await sleep(250);
+ok("일정 시트 열림 · 날짜 팝업도 유지", $("#sh-event").classList.contains("on") && $("#sh-day").classList.contains("on"));
+ok("기본은 종일 — 드럼 숨김", $("#evx-dial").style.display === "none");
+ok("시 드럼 24칸 · 분 드럼 12칸(5분 단위)",
+  w.document.querySelectorAll("#dial-h .dopt").length === 24 && w.document.querySelectorAll("#dial-m .dopt").length === 12);
+w.document.querySelector('#evx-seg button[data-t="at"]').dispatchEvent(new w.Event("click"));
+ok("[시각] 고르면 드럼 노출", $("#evx-dial").style.display === "");
+w.document.querySelectorAll("#dial-h .dopt")[14].dispatchEvent(new w.Event("click", { bubbles: true }));
+w.document.querySelectorAll("#dial-m .dopt")[6].dispatchEvent(new w.Event("click", { bubbles: true }));
+ok("고른 값이 미리보기에 반영", txt("#evx-preview") === "14:30", txt("#evx-preview"));
+$("#evx-title").value = "다이얼로 넣은 일정";
+$("#evx-ok").dispatchEvent(new w.Event("click"));
+await sleep(1200);
+ok("시트가 닫히고 일정이 들어감", !$("#sh-event").classList.contains("on"));
+const added = (await ev(`Api.day("${DD}")`)).events.find((e) => e.title === "다이얼로 넣은 일정");
+ok("고른 시각 그대로 저장", added && added.time === "14:30", JSON.stringify(added));
+w.openEventSheet(DD); await sleep(200);
+ok("다시 열면 종일로 초기화", $("#evx-dial").style.display === "none" && $("#evx-title").value === "");
+$("#evx-cancel").dispatchEvent(new w.Event("click"));
+ok("취소 — 시트만 닫힘", !$("#sh-event").classList.contains("on"));
+w.closeAll(); await sleep(200);
+await ev(`Api.deleteEvent("${added.id}")`);
+
+// ③ 완료율 — 4칸 바, 같은 칸 다시 누르면 내려간다
+const T1 = ev("addDaysStr(S.today.date,1)");
+const tFut = (await ev(`Api.createTask({title:"내일 예정 완료율", date:"${T1}"})`)).id;
+await w.openTask(tFut); await sleep(500);
+ok("미래 예정 — 4칸 바 노출", $("#tk-rates").querySelectorAll(".rbar.big button").length === 4);
+ok("완료율 헤더에 대상 예정일 표기", txt("#tk-rate-head").includes("예정"), txt("#tk-rate-head"));
+ok("예정 task — '미루기' 라벨", txt("#tk-defer") === "미루기");
+ok("예정 task — 대기 연장 숨김", $("#tk-extend").style.display === "none");
+$("#tk-rates").querySelectorAll(".rbar button")[1].dispatchEvent(new w.Event("click"));
+await sleep(1000);
+ok("두 번째 칸 = 50%", (await ev(`Api.task("${tFut}")`)).entries[0].rate === 50);
+ok("칸 두 개가 켜짐", $("#tk-rates").querySelectorAll(".rbar button.on").length === 2);
+$("#tk-rates").querySelectorAll(".rbar button")[1].dispatchEvent(new w.Event("click"));
+await sleep(1000);
+ok("같은 칸 다시 = 25%로 내려감", (await ev(`Api.task("${tFut}")`)).entries[0].rate === 25);
+w.closeAll();
+
+// ④ 미루기 — 완료율을 물어보고 넘어간다
+const T2 = ev("addDaysStr(S.today.date,3)");
+const tDf = (await ev(`Api.createTask({title:"미루면서 완료율", date:S.today.date})`)).id;
+await w.refreshToday(); await sleep(300);
+ev(`startPick({mode:"defer", id:"${tDf}", from:S.today.date, title:"미루면서 완료율"})`);
+await sleep(400);
+await w.assignDate(T2); await sleep(900);
+ok("미루기 확인 시트가 뜸", $("#sh-defer").classList.contains("on"));
+ok("확인 시트에 4칸 바", $("#dfx-rate").querySelectorAll(".rbar.big button").length === 4);
+ok("어디로 가는지 표시", $("#dfx-what").textContent.includes("→") || $("#dfx-what").innerHTML.includes("→"));
+$("#dfx-rate").querySelectorAll(".rbar button")[2].dispatchEvent(new w.Event("click"));
+ok("고른 값이 바에 반영(아직 저장 전)", $("#dfx-rate").querySelectorAll(".rbar button.on").length === 3);
+$("#dfx-ok").dispatchEvent(new w.Event("click"));
+await sleep(1500);
+const dfd = await ev(`Api.task("${tDf}")`);
+ok("원래 예정일에 75%가 남음", dfd.entries.find((e) => e.deferred_to)?.rate === 75, JSON.stringify(dfd.entries));
+ok("옮겨 간 예정은 0%에서 시작", dfd.entries.find((e) => e.date === T2)?.rate === 0);
+w.closeAll(); await sleep(200);
+
+// ⑤ 대기 — 21일 전에는 연장 버튼이 없다
+const tWait = (await ev(`Api.createTask({title:"갓 담은 대기"})`)).id;
+await w.openTask(tWait); await sleep(500);
+ok("대기 task — '일정 정하기' 라벨", txt("#tk-defer") === "일정 정하기");
+ok("21일 전 — 대기 연장 버튼 숨김", $("#tk-extend").style.display === "none");
+ok("대기 — 완료율 대신 안내", $("#tk-rates").textContent.includes("일정을 정하면"));
+w.closeAll();
+w.switchTab("works"); await sleep(1300);
+ok("대기 세그먼트 윤곽선 강조", $("#seg-wait").classList.contains("ring"));
+ok("대기 목록 — 21일 전엔 연장 칩 없음", !$("#wait-list").innerHTML.includes(">연장<"));
+ok("예정 행에서 바로 완료율(칸 클릭)", $("#w-sched").innerHTML.includes("rateSet("));
+
+// ⑤ 삭제 거부 — 어떤 기록이 막는지 말해 준다
+const delMsg = await ev(`Api.deleteTask("${tFut}").then(()=>null, (e)=>e.message)`);
+ok("미래 예정 task는 취소됨", delMsg === null, String(delMsg));
+const blocked = await ev(`(async()=>{ const r = await fetch(API_BASE+"/tasks/"+encodeURIComponent(S.today.todo[0]?.id||"x"), {method:"DELETE"}); return (await r.json()).error || null; })()`);
+ok("차단 시 사유는 날짜로 말함(또는 차단 없음)", blocked === null || /\d+\/\d+/.test(blocked), String(blocked));
+
+console.log("\n[Feelings 필드 · AI 연결 시트]");
+w.switchTab("today"); await sleep(900);
+$("#feel-fields").dispatchEvent(new w.Event("click")); await sleep(900);
+ok("필드 시트 — 카탈로그 노출", $("#field-list").querySelectorAll("button").length >= 5);
+ok("기본 3개 선택 상태", $("#field-list").querySelectorAll("button.on").length >= 3);
+w.toggleField("sleep"); await sleep(200);
+ok("새 축 추가 가능", $("#field-list").querySelectorAll("button.on").length >= 4);
+w.closeAll();
+w.switchTab("me"); await sleep(900); w.toggleSet(true);
+await w.openAi(); await sleep(800);
+ok("AI 연결 — 제공자 3곳 목록", $("#conn-list").querySelectorAll(".conn").length === 3);
+ok("연결 테스트 버튼", !!$("#conn-test"));
+ok("키 입력칸 자동완성 차단", $("#conn-key").getAttribute("autocomplete") === "new-password");
+w.closeAll();
 
 console.log("\n[부팅 · 연결 실패 복구]");
 ok("로드 후 부팅 오버레이 닫힘", !$("#boot").classList.contains("on"));
@@ -261,7 +509,7 @@ ok("로드 후 부팅 오버레이 닫힘", !$("#boot").classList.contains("on")
   ok("다시 시도 → 복구", !$2("#boot").classList.contains("on") && w2.eval("!!S.today"));
   ok("복구 후 캘린더 렌더", (() => { w2.switchTab("cal"); return true; })());
   await sleep(900);
-  ok("캘린더 그리드 생성됨", $2("#cal-rows").querySelectorAll(".cal-row").length >= 4);
+  ok("캘린더 그리드 생성됨", $2("#cal-track").querySelectorAll(".calpane").length === 3);
 }
 
 console.log("\n[런타임 오류]");
@@ -270,6 +518,3 @@ ok("콘솔 오류 없음", errors.length === 0, errors.slice(0, 3).join(" / "));
 console.log(`\n${"=".repeat(46)}\n통과 ${passN} · 실패 ${fails.length}`);
 if (fails.length) { console.log("실패:\n  - " + fails.join("\n  - ")); process.exit(1); }
 console.log("프론트 렌더 경로 정상 — 실 API 응답으로 조립됨.");
-// jsdom(특히 pretendToBeVisual의 rAF 타이머)이 이벤트 루프를 붙잡아 자연 종료가
-// 안 되므로 명시적으로 끝낸다 — 안 그러면 부모(e2e.mjs)의 spawnSync가 무한 대기한다.
-process.exit(0);

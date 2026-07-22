@@ -13,8 +13,8 @@ import type { Env } from "../src/types";
 import { makeD1, rawOf } from "./d1shim";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const schema = readFileSync(join(here, "../migrations/0001_init.sql"), "utf8")
-  + "\n" + readFileSync(join(here, "../migrations/0002_models.sql"), "utf8");
+const schema = ["0001_init.sql", "0002_models.sql", "0003_ai_provider.sql", "0004_events.sql", "0005_delete_scope.sql", "0006_fix_model_high.sql"]
+  .map((f) => readFileSync(join(here, "../migrations/" + f), "utf8")).join("\n");
 const env: Env = { DB: makeD1(schema) };
 const raw = rawOf(env.DB);
 
@@ -107,6 +107,18 @@ ok("이동된 항목 다이얼 404", (await api("PUT", `/api/tasks/${tC}/rate`, 
 const cStats = (await api("GET", `/api/tasks/${tC}`)).json;
 ok("이월 1회 · 새 항목 rate 0 (v0.8)", cStats.defer_count === 1 && cStats.entries.at(-1).rate === 0);
 
+// 미루기와 함께 완료율 확정 — "그 예정일까지 얼마나 갔나"는 미루는 순간에 알 수 있다
+const tR = (await api("POST", "/api/tasks", { title: "미루며 완료율", date: D })).json.id as string;
+const dfR = await api("POST", `/api/tasks/${tR}/defer`, { from: D, to: N1, rate: 75 });
+ok("미루기 + rate 동시 처리", dfR.status === 200 && dfR.json.rate === 75);
+const rStats = (await api("GET", `/api/tasks/${tR}`)).json;
+ok("원 항목에 75% 확정", rStats.entries[0].rate === 75 && rStats.entries[0].deferred_to === N1);
+ok("새 항목은 0에서 시작 (v0.8 원칙 유지)", rStats.entries.at(-1).rate === 0);
+ok("rate 범위 밖이면 400",
+  (await api("POST", `/api/tasks/${tR}/defer`, { from: N1, to: N2, rate: 130 })).status === 400);
+ok("rate 없이도 그대로 동작",
+  (await api("POST", `/api/tasks/${tR}/defer`, { from: N1, to: N2 })).status === 200);
+
 // ── 4. 하루 마감 (G) — todo → missed 확정 ────────────────────
 console.log("\n[4] 마감 — 물화 → close, 이후 동결");
 const close = await api("POST", "/api/daily/close", { kind: "manual" });
@@ -130,8 +142,13 @@ ok("일기 없는 날 memo 404", (await api("POST", "/api/memos", { date: "2001-
 console.log("\n[6] 재배정 — 원 항목 동결 유지, 새 예정만");
 today = (await api("GET", "/api/today")).json; // 마감 후에도 조회는 그대로
 ok("같은 날엔 아직 재배정 대기 미노출 ('다음 날' 노출 — 1.2)", !today.reassign.some((r: any) => r.id === tA));
-const re = await api("POST", `/api/tasks/${tA}/defer`, { from: D, to: N1 }); // 날짜 팝업 경로의 미루기
+// 마감된 날에서 미룰 땐 완료율을 보내도 조용히 버린다 — 지난 기록은 불변(1.3).
+// 트리거가 거부해 500이 나면 안 되고, 원 항목의 rate(40)도 그대로여야 한다.
+const re = await api("POST", `/api/tasks/${tA}/defer`, { from: D, to: N1, rate: 90 });
 ok("재배정 = reassigned=true", re.status === 200 && re.json.reassigned === true);
+ok("마감된 날의 완료율은 rate를 보내도 안 바뀜",
+  (await api("GET", `/api/tasks/${tA}`)).json.entries.find((e: any) => e.date === D).rate === 40,
+  JSON.stringify(re.json));
 const aEntries = (await api("GET", `/api/tasks/${tA}`)).json.entries;
 ok("원 항목 deferred_to 없음 = Missed 기록 보존", aEntries.find((e: any) => e.date === D).deferred_to === null);
 ok("이월 카운트 +1 (통일 공식)", (await api("GET", `/api/tasks/${tA}`)).json.defer_count === 1);
@@ -210,7 +227,28 @@ ok("health", (await api("GET", "/api/health")).json.date === D);
 const tDel = (await api("POST", "/api/tasks", { title: "취소될 계획", date: N1 })).json.id as string;
 ok("미래 예정 task 삭제 OK", (await api("DELETE", `/api/tasks/${tDel}`)).status === 200);
 ok("삭제 후 404", (await api("GET", `/api/tasks/${tDel}`)).status === 404);
-ok("지난 기록 있는 task 삭제 409", (await api("DELETE", `/api/tasks/${tA}`)).status === 409);
+const delBlocked = await api("DELETE", `/api/tasks/${tA}`);
+ok("지난 기록 있는 task 삭제 409", delBlocked.status === 409);
+// 어떤 기록이 막는지 날짜로 말한다 — "다른 기록이 참조하고 있어요"로는 손쓸 수 없다
+ok("삭제 거부 사유에 마감된 날짜가 들어감",
+  /\d+\/\d+/.test(delBlocked.json.error) && delBlocked.json.error.includes("마감된 날"), delBlocked.json.error);
+
+// 연장한 적 있는 대기 task 도 취소된다 (0005 — 예전엔 FK가 걸려 영영 못 지웠다)
+// 앵커가 '며칠 전'이어야 UPDATE가 실제 변화가 되고 트리거가 이력을 남긴다
+const tExt = "20260620-009";
+const EXT_ANCHOR = `${addDays(D, -10)}T09:00:00+09:00`;
+raw.prepare("INSERT INTO tasks (id, title, wait_anchor_at, created_at) VALUES (?, '연장했다가 접는 계획', ?, ?)")
+  .run(tExt, EXT_ANCHOR, EXT_ANCHOR);
+ok("연장 성공", (await api("POST", `/api/tasks/${tExt}/extend`)).status === 200);
+ok("연장 이력 존재", (await api("GET", `/api/tasks/${tExt}`)).json.extensions.length === 1);
+ok("연장 이력 있는 task 삭제 OK", (await api("DELETE", `/api/tasks/${tExt}`)).status === 200);
+ok("연장 이력도 함께 사라짐",
+  raw.prepare("SELECT COUNT(*) AS n FROM wait_extensions WHERE task_id = ?").get(tExt)!.n === 0);
+// 그래도 마감 기록이 걸린 task의 연장 이력은 트리거가 막는다 (append-only 보존)
+raw.prepare("INSERT INTO wait_extensions (task_id, prev_anchor_at, extended_at) VALUES (?, ?, ?)")
+  .run(tA, EXT_ANCHOR, t0.now);
+ok("마감 기록 있는 task의 연장 이력 삭제는 여전히 거부",
+  (() => { try { raw.prepare("DELETE FROM wait_extensions WHERE task_id = ?").run(tA); return false; } catch { return true; } })());
 
 // ── 9.5 구현 2: 모델 이원화 · AI 경로 ────────────────────────
 console.log("\n[9.5] 모델 설정 · AI 경로 (키 없이 — 게이트만 검증)");
@@ -226,6 +264,54 @@ ok("컨텍스트 meta — weekly 출처 기록", ctxRaw.meta.weekly.source === "
 ok("분석 prompt 없으면 400", (await api("POST", "/api/analyses", {})).status === 400);
 ok("키 없으면 분석 503", (await api("POST", "/api/analyses", { prompt: "이번 주 리듬" })).status === 503);
 ok("서술 없으면 분류 400", (await api("POST", "/api/daily/classify-feelings")).status === 400);
+
+// AI 연결 — 제공자 전환 · 개인 키 마스킹
+ok("제공자 목록 3종", Object.keys((await api("GET", "/api/ai/providers")).json).length === 3);
+const conns = (await api("GET", "/api/ai/connections")).json;
+ok("연결 목록 — 제공자별 키 보유 여부", conns.connections.length === 3 && conns.connections.every((x: any) => "has_key" in x));
+await api("PUT", "/api/settings/ai_key_openai", { value: "sk-openai-testkey" });
+const conns2 = (await api("GET", "/api/ai/connections")).json;
+ok("여러 제공자 동시 등록", conns2.connections.find((x: any) => x.provider === "openai").has_key === true);
+ok("모델 값에 제공자 지정", (await api("PUT", "/api/settings/model_high", { value: "openai/gpt-5" })).status === 200);
+const t1 = (await api("POST", "/api/ai/test", { which: "high" })).json;
+ok("연결 테스트 — 제공자·모델 리포트", t1.provider === "openai" && t1.model === "gpt-5", JSON.stringify(t1));
+ok("연결 테스트 실패도 200으로 진단 반환", t1.ok === false && typeof t1.error === "string");
+await api("PUT", "/api/settings/ai_key_openai", { value: "" });
+await api("PUT", "/api/settings/model_high", { value: "anthropic/claude-sonnet-5" });
+ok("제공자 전환 OK", (await api("PUT", "/api/settings/ai_provider", { value: "openai" })).status === 200);
+ok("모르는 제공자 400", (await api("PUT", "/api/settings/ai_provider", { value: "acme" })).status === 400);
+ok("개인 키 저장 OK", (await api("PUT", "/api/settings/ai_api_key", { value: "sk-test-abcdefgh" })).status === 200);
+const masked = (await api("GET", "/api/settings")).json as Array<{ key: string; value: string }>;
+ok("키는 값 대신 '설정됨'만 노출", masked.find((r) => r.key === "ai_api_key")?.value === "설정됨");
+await api("PUT", "/api/settings/ai_api_key", { value: "" });
+await api("PUT", "/api/settings/ai_provider", { value: "anthropic" });
+
+// 완료 = 살아 있는 항목에 진행률 100 (예정일이 미래여도)
+const tFut = (await api("POST", "/api/tasks", { title: "미래 예정 완료", date: addDays(D, 9) })).json.id as string;
+const cRes = (await api("POST", `/api/tasks/${tFut}/complete`)).json;
+ok("완료 응답 — 예정일 함께", cRes.planned_on === addDays(D, 9) && cRes.rate_applied === true, JSON.stringify(cRes));
+const tFutDetail = (await api("GET", `/api/tasks/${tFut}`)).json;
+ok("미래 예정 항목도 100%", tFutDetail.entries.at(-1).rate === 100, JSON.stringify(tFutDetail.entries));
+const doneList = (await api("GET", "/api/works/done")).json as Array<{ id: string; planned_on: string | null }>;
+ok("완료 목록에 예정일 포함", doneList.find((r) => r.id === tFut)?.planned_on === addDays(D, 9));
+
+// ── 9.6 일정(event) — task와 분리 ────────────────────────────
+console.log("\n[9.6] 일정 — 캘린더 전용 엔티티");
+const evId = (await api("POST", "/api/events", { title: "정처기 실기", date: addDays(D, 3), time: "10:00" })).json.id as string;
+ok("일정 생성", typeof evId === "string" && evId.includes("-"));
+ok("제목 없으면 400", (await api("POST", "/api/events", { date: D })).status === 400);
+ok("시각 형식 검증", (await api("POST", "/api/events", { title: "x", date: D, time: "25:00" })).status === 400);
+const dayEv = (await api("GET", `/api/days/${addDays(D, 3)}`)).json;
+ok("날짜 조회에 일정 포함", dayEv.events.length === 1 && dayEv.events[0].time === "10:00");
+ok("task 목록과 섞이지 않음", dayEv.tasks.every((x: any) => x.id !== evId));
+const calEv = (await api("GET", `/api/calendar?start=${D}&end=${addDays(D, 7)}`)).json;
+ok("캘린더 응답에 일정", calEv.events.some((e: any) => e.id === evId));
+ok("일정 수정", (await api("PATCH", `/api/events/${evId}`, { time: "14:00" })).status === 200);
+ok("일정 삭제", (await api("DELETE", `/api/events/${evId}`)).status === 200);
+// 마감된 날의 일정은 불변
+const evClosed = (await api("POST", "/api/events", { title: "지난 약속", date: D })).json.id as string;
+await api("POST", "/api/daily/close", { kind: "manual" });
+ok("마감된 날 일정 삭제 409", (await api("DELETE", `/api/events/${evClosed}`)).status === 409);
 
 // ── 10. 인증 ─────────────────────────────────────────────────
 console.log("\n[10] 인증 — API_TOKEN 있으면 Bearer 필수");

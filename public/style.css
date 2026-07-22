@@ -24,9 +24,12 @@ body{
   .phone{height:min(874px,94vh); border-radius:36px; border:1px solid #D8D2C5;
     box-shadow:0 24px 60px rgba(40,34,24,.18)}
 }
+/* 탭 = 가로 트랙. 5개 화면이 늘 살아 있고 트랙만 미끄러진다 —
+   display 전환은 애니메이션이 불가능하고, 화면마다의 스크롤 위치도 잃는다.
+   위치는 %로 잡는다: 폭을 재지 않아도 되고 회전·리사이즈에 그대로 버틴다. */
 .screens{flex:1; position:relative; overflow:hidden}
-.screen{position:absolute; inset:0; overflow-y:auto; padding:20px 16px 150px; display:none}
-.screen.on{display:block}
+.track{display:flex; height:100%; will-change:transform}
+.screen{flex:0 0 100%; height:100%; overflow-y:auto; padding:20px 16px 150px}
 
 /* ── common ─────────────────────────────── */
 .kicker{font-size:11px; letter-spacing:.14em; color:var(--sub); font-weight:600}
@@ -120,14 +123,23 @@ details.fold[open] summary::before{transform:rotate(90deg)}
 .mhead{display:flex;align-items:center;gap:10px}
 .mtitle{font-size:21px;flex:1}
 .mnav{font-size:19px;color:var(--sub);padding:2px 8px}
-.wkdays{display:grid;grid-template-columns:repeat(7,1fr);margin-top:14px;padding:0 2px}
+/* 달력 파트는 둥근 사각형 한 덩어리. overflow:hidden이 캐러셀 마스크까지 겸한다. */
+.calbox{margin-top:14px;border:1px solid var(--line);border-radius:18px;
+  overflow:hidden;background:var(--card)}
+#cal-rows{position:relative;overflow:hidden}
+.caltrack{display:flex;will-change:transform}
+.calpane{flex:0 0 100%;min-width:0}
+.wkdays{display:grid;grid-template-columns:repeat(7,1fr);padding:9px 2px 5px}
 .wkdays span{font-size:10.5px;color:var(--faint);text-align:left;padding-left:5px;letter-spacing:.05em}
 .wkdays span:first-child{color:#C77}
-.cal-row{position:relative;height:96px;border-top:1px solid var(--line2)}
+/* 행 경계 = 박스 배경색 두께. 밴드가 주 단위로 끊기면서 셀의 경계가 드러난다.
+   height는 96(내용) + 3(경계) — 셀 안쪽 높이는 그대로 유지된다. */
+.cal-row{position:relative;height:99px;border-top:3px solid var(--card)}
+.calpane .cal-row:first-child{border-top:none}
 .cal-row svg.band{position:absolute;inset:0;width:100%;height:100%}
 .cells{position:absolute;inset:0;display:grid;grid-template-columns:repeat(7,1fr)}
 .c{padding:2px 3px 0 4px;position:relative;min-width:0}
-.c + .c{border-left:1px solid rgba(38,34,28,.055)}
+.c + .c{border-left:1px solid rgba(38,34,28,.035)}   /* 있는 듯 없는 듯 — 밴드의 흐름을 끊지 않을 만큼만 */
 .c .d{font-size:10.5px;line-height:1;color:var(--sub)}
 .c.mut .d{color:#CFC9BD}
 .dr{display:block;width:10px;height:2.5px;border-radius:2px;background:var(--faint);margin:3px 0 0 1px}
@@ -200,6 +212,8 @@ details.fold[open] summary::before{transform:rotate(90deg)}
 .wseg.hot1{background:#FBF0F2;border-color:#F0D5DB;color:#8E5560}
 .wseg.hot2{background:#F6DFE4;border-color:#E8C0C9;color:#83424F}
 .wseg.hot3{background:#F1CCD5;border-color:#DFA9B6;color:#7A3644}
+/* 대기 건이 있으면 세그먼트 자체를 눈에 띄게 — 안 들어가 보면 모르는 곳이라 */
+.wseg.ring:not(.on){border-color:var(--ink);color:var(--ink);box-shadow:inset 0 0 0 1px var(--ink)}
 .wseg.on{background:var(--ink);color:var(--paper);border-color:var(--ink)}
 .wview{display:none}.wview.on{display:block}
 .glab{font-size:11px;letter-spacing:.14em;color:var(--faint);font-weight:700;margin:16px 0 2px}
@@ -238,6 +252,11 @@ nav{position:absolute;left:0;right:0;bottom:0;height:64px;display:grid;grid-temp
 nav button{display:grid;place-items:center;gap:3px;color:var(--faint);font-size:10px;font-weight:600;text-align:center}
 nav button svg{width:21px;height:21px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 nav button.on{color:var(--ink)}
+/* 트랙을 따라 함께 미끄러지는 표식. 폭이 정확히 한 칸(20%)이라
+   translateX(100%)가 곧 한 탭 — 소수 인덱스를 그대로 넣으면 된다. */
+.navdot{position:absolute;top:0;left:0;width:20%;height:3px;pointer-events:none;will-change:transform}
+.navdot::before{content:"";display:block;width:22px;height:3px;margin:0 auto;
+  border-radius:0 0 2px 2px;background:var(--ink)}
 
 /* ── sheets & overlays ──────────────────── */
 .backdrop{position:absolute;inset:0;background:rgba(30,26,20,.38);z-index:7;display:none}
@@ -373,3 +392,123 @@ nav{height:calc(64px + env(safe-area-inset-bottom,0px));
 .boot p{font-size:13.5px;color:var(--sub);line-height:1.6;margin:14px 0 0}
 .boot .btn{margin-top:18px}
 .boot .spinner{width:22px;height:22px;border-width:2.5px}
+
+/* ── 바(내비·입력줄) 색 — 변수화 ────────────────────────
+   원래 흰색(rgba(251,250,247,.94))이 하드코딩돼 다크에서 홀로 밝게 남았다. */
+:root{--bar:rgba(251,250,247,.94)}
+:root[data-theme="dark"]{--bar:rgba(26,23,19,.94)}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){--bar:rgba(26,23,19,.94)}
+}
+nav,.logbar{background:var(--bar)}
+
+/* ── 상단 알림 — 종류별 색 + 등장 애니메이션 ─────────── */
+.toast{animation:toastIn .24s cubic-bezier(.2,.9,.3,1)}
+@keyframes toastIn{from{opacity:0;transform:translateY(-10px) scale(.98)}to{opacity:1;transform:none}}
+.toast.info{background:var(--card);border-color:var(--line);color:var(--ink)}
+.toast.ok{background:#E9F6EF;border-color:#BEE2D0;color:#1E6B47}
+.toast.warn{background:#FCF3DA;border-color:#EAD8A5;color:#7A5B1B}
+.toast.err{background:var(--brick-soft);border-color:#EBC9BB;color:var(--brick)}
+:root[data-theme="dark"] .toast.ok{background:#17301F;border-color:#2A4E38;color:#7FCFA4}
+:root[data-theme="dark"] .toast.warn{background:#312A16;border-color:#4C4222;color:#DCC276}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]) .toast.ok{background:#17301F;border-color:#2A4E38;color:#7FCFA4}
+  :root:not([data-theme="light"]) .toast.warn{background:#312A16;border-color:#4C4222;color:#DCC276}
+}
+
+/* ── 완료된 일정 표시 ─────────────────────────────────── */
+.ev.done{opacity:.32;text-decoration:line-through;text-decoration-thickness:1px}
+.lrow.done-line span:last-child{text-decoration:line-through;color:var(--faint)}
+.te.done-line{text-decoration:line-through;color:var(--faint)}
+
+/* ── 캘린더: 기간은 '배경', 일정·할 일은 '내용' ─────────── */
+.cal-row svg.band{z-index:0}
+.cells{position:absolute;inset:0;z-index:1}
+.band path{fill-opacity:.30}
+:root[data-theme="dark"] .band path{fill-opacity:.26}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .band path{fill-opacity:.26}}
+/* 글줄의 흰 배경 제거 — 기간색 위에 흰 조각이 뜨지 않게 */
+.ev{background:none;border-left-width:3px;padding-left:4px;color:var(--ink)}
+.ev.evt{font-weight:700}
+/* 시각은 셀에서 빼고 '있다'는 사실만 점으로 (몇 시인지는 날짜 팝업에서) */
+.ev.evt.timed::before{content:"";display:inline-block;width:3px;height:3px;border-radius:50%;
+  background:var(--sub);vertical-align:2px;margin-right:3px}
+/* 할 일 압축 줄 — 일정보다 한 단계 물러난 톤 */
+.ev.tsum{font-weight:600;color:var(--sub)}
+.ev.tsum b{font-weight:700;color:var(--faint);font-size:8.5px;margin-left:3px}
+.ev.exam{background:var(--brick);color:#fff;padding-left:3px}
+
+/* 일정 = 사건, 할 일과 구분 */
+.evrow{display:flex;align-items:center;gap:9px;padding:9px 2px;border-bottom:1px solid var(--line2)}
+.evrow:last-child{border-bottom:none}
+.evrow .et{flex:none;font-size:12px;color:var(--sub);width:42px}
+.evrow .en{flex:1;font-size:14px;font-weight:600}
+.evrow .ex{flex:none;color:var(--faint);font-size:16px;padding:0 4px}
+.addrow{display:flex;gap:6px;align-items:center;margin-top:10px}
+.addrow input.t{flex:none;width:74px;text-align:center}
+.addrow input.n{flex:1;min-width:0}
+.addrow .mok{flex:none}
+.seg-mini{display:inline-flex;border:1px solid var(--line);border-radius:999px;padding:2px;background:var(--card);margin-left:auto}
+.seg-mini button{padding:4px 10px;border-radius:999px;font-size:11.5px;color:var(--sub);font-weight:600}
+.seg-mini button.on{background:var(--ink);color:var(--paper)}
+
+/* 기간 시트 — 날짜 입력이 잘리지 않게 */
+.dates{display:flex;gap:8px;align-items:center;margin-top:12px}
+.dates input[type=date]{flex:1;min-width:0;width:100%;font-size:13.5px;padding:10px 8px}
+.dates span{flex:none;font-size:12px;color:var(--sub)}
+
+/* 캘린더 가로 드래그 */
+#cal-rows{touch-action:pan-y}
+#cal-rows.dragging{cursor:grabbing}
+:root[data-theme="dark"] .c + .c{border-left-color:rgba(255,255,255,.05)}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]) .c + .c{border-left-color:rgba(255,255,255,.05)}
+}
+
+/* Feelings 필드 고르기 */
+.fieldpick{display:flex;flex-direction:column;gap:2px;margin-top:10px}
+.fieldpick button{display:flex;align-items:center;gap:10px;padding:12px 2px;border-bottom:1px solid var(--line2);font-size:14px}
+.fieldpick .bx{width:19px;height:19px;border-radius:6px;border:1.8px solid var(--faint);flex:none;display:grid;place-items:center;font-size:12px;color:transparent}
+.fieldpick button.on .bx{background:var(--ink);border-color:var(--ink);color:var(--paper)}
+.fieldpick .n{flex:1}
+.fieldpick .d{font-size:11.5px;color:var(--faint)}
+
+/* AI 연결 목록 */
+.conn{display:flex;align-items:center;gap:10px;padding:13px 2px;border-bottom:1px solid var(--line2);width:100%}
+.conn:last-child{border-bottom:none}
+.conn .nm{flex:1;font-size:14px;font-weight:600}
+.conn .st{font-size:12px;color:var(--faint)}
+.conn .st.on{color:var(--mint);font-weight:700}
+
+/* ── 시각 다이얼 ──────────────────────────────────────────
+   .phone이 overflow:hidden이라 scrollIntoView를 쓰면 셸이 통째로 밀린다.
+   위치 제어는 반드시 scrollTop으로만 한다. */
+#sh-event,#sh-defer{z-index:9}   /* 날짜 팝업 위에 겹쳐 뜬다 */
+.dialwrap{position:relative;display:flex;align-items:center;justify-content:center;gap:4px;
+  height:154px;margin-top:14px;overflow:hidden}
+.dline{position:absolute;left:26px;right:26px;top:58px;height:38px;border-radius:11px;
+  background:rgba(38,34,28,.055);pointer-events:none}
+:root[data-theme="dark"] .dline{background:rgba(255,255,255,.07)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .dline{background:rgba(255,255,255,.07)}}
+.dcol{position:relative;flex:0 0 92px;height:154px;padding:58px 0;overflow-y:auto;
+  scroll-snap-type:y mandatory;scrollbar-width:none;touch-action:pan-y;overscroll-behavior:contain}
+.dcol::-webkit-scrollbar{display:none}
+.dopt{display:block;width:100%;height:38px;line-height:38px;text-align:center;
+  scroll-snap-align:center;font-size:19px;font-weight:600;color:var(--faint);
+  font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace}
+.dopt.on{color:var(--ink);font-size:22px}
+.dsep{font-size:20px;color:var(--faint);flex:none;padding-bottom:2px}
+#evx-preview{margin-left:3px}
+
+/* ── 완료율 바 — 25%씩 채워지는 게 눈에 보여야 한다 ─────────
+   도넛은 몇 칸인지 읽히지 않았고, 사이클은 되돌릴 수가 없었다.
+   칸을 직접 누르면 그 값, 같은 칸을 다시 누르면 한 단계 내려간다. */
+.rbar{display:inline-flex;gap:2.5px;flex:none;align-items:center}
+.rbar button,.rbar i{display:block;width:8px;height:15px;border-radius:2.5px;
+  background:var(--line);flex:none}
+.rbar button.on,.rbar i.on{background:var(--ink)}
+.rbar.done button,.rbar.done i{background:var(--mint)}
+.rbar.big{gap:5px}
+.rbar.big button,.rbar.big i{width:100%;height:34px;border-radius:9px}
+.rbar.big{display:flex;width:100%}
+.rbar.lock button{opacity:.55}

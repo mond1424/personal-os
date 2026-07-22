@@ -18,6 +18,7 @@ export interface TaskStats {
 export interface Entry {
   id: number; task_id: string; date: string; rate: number;
   deferred_to: string | null; deferred_at: string | null; created_at: string;
+  day_status?: string;   // 'open' | 'closed' — 그 날이 마감됐는지 (완료율 편집 가능 여부)
 }
 export interface DailyRow {
   date: string; status: "open" | "closed"; score: number | null;
@@ -196,9 +197,17 @@ export const stMarkDeferred = (env: Env, taskId: string, from: string, to: strin
 export const stExtendWait = (env: Env, taskId: string, now: string) =>
   q(env, "UPDATE tasks SET wait_anchor_at = ? WHERE id = ?").bind(now, taskId);
 
-export const stRate100Today = (env: Env, taskId: string, d: string) =>
+/** 살아 있는(미뤄지지 않은) 마지막 항목 — 완료율을 붙일 자리. */
+export const liveEntry = (env: Env, taskId: string) =>
+  q(env, `SELECT e.date, e.rate, COALESCE(d.status,'open') AS day_status
+          FROM schedule_entries e LEFT JOIN daily d ON d.date = e.date
+          WHERE e.task_id = ? AND e.deferred_to IS NULL
+          ORDER BY e.date DESC LIMIT 1`).bind(taskId)
+    .first<{ date: string; rate: number; day_status: string }>();
+
+export const stRate100At = (env: Env, taskId: string, date: string) =>
   q(env, "UPDATE schedule_entries SET rate = 100 WHERE task_id = ? AND date = ? AND deferred_to IS NULL")
-    .bind(taskId, d);
+    .bind(taskId, date);
 
 export const stFinishTask = (env: Env, taskId: string, now: string, d: string) =>
   q(env, "UPDATE tasks SET status = 'finished', finished_at = ?, finished_on = ? WHERE id = ? AND status = 'not_finished'")
@@ -251,11 +260,50 @@ export const worksByPeriod = (env: Env) => q(env, `
     latest_date: string | null; is_waiting: 0 | 1;
   }>();
 
+// 완료 목록 — 완료를 누른 날(finished_on)과 그 일의 예정일(live entry)은 다를 수 있다.
+// 둘 다 보여 줘야 "완료인데 왜 그 날짜?"가 사라진다.
 export const worksDone = (env: Env) => q(env, `
-  SELECT id, title, finished_on FROM tasks
-  WHERE status = 'finished' ORDER BY finished_on DESC, finished_at DESC`).all<{
-    id: string; title: string; finished_on: string;
+  SELECT t.id, t.title, t.finished_on,
+         (SELECT e.date FROM schedule_entries e
+           WHERE e.task_id = t.id AND e.deferred_to IS NULL
+           ORDER BY e.date DESC LIMIT 1) AS planned_on
+  FROM tasks t
+  WHERE t.status = 'finished' ORDER BY t.finished_on DESC, t.finished_at DESC`).all<{
+    id: string; title: string; finished_on: string; planned_on: string | null;
   }>();
+
+// ── 일정(event) — 캘린더 전용 엔티티 (0004) ─────────────────
+export interface EventRow {
+  id: string; title: string; date: string; time: string | null;
+  period_id: string | null; note: string | null; created_at: string;
+}
+export const eventGet = (env: Env, id: string) =>
+  q(env, "SELECT * FROM events WHERE id = ?").bind(id).first<EventRow>();
+
+export const eventsAt = (env: Env, date: string) =>
+  q(env, `SELECT e.*, p.color FROM events e LEFT JOIN periods p ON p.id = e.period_id
+          WHERE e.date = ? ORDER BY COALESCE(e.time,'99:99'), e.created_at`)
+    .bind(date).all<EventRow & { color: string | null }>();
+
+export const eventsRange = (env: Env, start: string, end: string) =>
+  q(env, `SELECT e.*, p.color FROM events e LEFT JOIN periods p ON p.id = e.period_id
+          WHERE e.date BETWEEN ? AND ? ORDER BY e.date, COALESCE(e.time,'99:99')`)
+    .bind(start, end).all<EventRow & { color: string | null }>();
+
+export const stInsertEvent = (
+  env: Env, id: string, title: string, date: string,
+  time: string | null, periodId: string | null, note: string | null, now: string,
+) => q(env, "INSERT INTO events (id,title,date,time,period_id,note,created_at) VALUES (?,?,?,?,?,?,?)")
+  .bind(id, title, date, time, periodId, note, now);
+
+export const stUpdateEvent = (
+  env: Env, id: string, title: string, date: string,
+  time: string | null, periodId: string | null, note: string | null,
+) => q(env, "UPDATE events SET title=?, date=?, time=?, period_id=?, note=? WHERE id=?")
+  .bind(title, date, time, periodId, note, id);
+
+export const stDeleteEvent = (env: Env, id: string) =>
+  q(env, "DELETE FROM events WHERE id = ?").bind(id);
 
 // 기간 카드 — 달성률(2.1)은 뷰가 계산
 export const periodCards = (env: Env) => q(env, `
@@ -278,8 +326,12 @@ export const diaryList = (env: Env, before: string, limit: number) => q(env, `
 export const taskStats = (env: Env, id: string) =>
   q(env, "SELECT * FROM v_task_stats WHERE id = ?").bind(id).first<TaskStats>();
 
+// 항목마다 '그 날이 마감됐는지'를 함께 준다 — 화면이 완료율을 열지 말지 판단하는 근거.
+// 없으면 프론트가 날짜만 보고 추측하게 되고, 추측은 트리거 거부(409)로 드러난다.
 export const taskEntries = (env: Env, id: string) =>
-  q(env, "SELECT * FROM schedule_entries WHERE task_id = ? ORDER BY date").bind(id).all<Entry>();
+  q(env, `SELECT e.*, COALESCE(d.status,'open') AS day_status
+          FROM schedule_entries e LEFT JOIN daily d ON d.date = e.date
+          WHERE e.task_id = ? ORDER BY e.date`).bind(id).all<Entry>();
 
 export const taskEntryAt = (env: Env, id: string, date: string) =>
   q(env, "SELECT * FROM schedule_entries WHERE task_id = ? AND date = ?").bind(id, date).first<Entry>();
@@ -299,10 +351,20 @@ export const stUpdatePeriod = (env: Env, p: PeriodRow) =>
   q(env, "UPDATE periods SET title = ?, start_date = ?, end_date = ?, color = ?, goals = ? WHERE id = ?")
     .bind(p.title, p.start_date, p.end_date, p.color, p.goals, p.id);
 
-export const closedEntryCount = (env: Env, taskId: string) =>
-  q(env, `SELECT COUNT(*) AS n FROM schedule_entries e
+// 삭제를 막는 것들. 개수가 아니라 '무엇이'를 돌려준다 —
+// "다른 기록이 참조하고 있어요"로는 사용자가 손쓸 수 없기 때문이다.
+export const closedEntryDates = (env: Env, taskId: string) =>
+  q(env, `SELECT e.date FROM schedule_entries e
           JOIN daily d ON d.date = e.date
-          WHERE e.task_id = ? AND d.status = 'closed'`).bind(taskId).first<{ n: number }>();
+          WHERE e.task_id = ? AND d.status = 'closed'
+          ORDER BY e.date`).bind(taskId).all<{ date: string }>();
+
+export const guardEventCount = (env: Env, taskId: string) =>
+  q(env, "SELECT COUNT(*) AS n FROM guard_events WHERE task_id = ?").bind(taskId).first<{ n: number }>();
+
+// 연장 이력은 마감 기록이 없을 때만 지워진다 — 허용 여부는 트리거가 최종 판정 (0005)
+export const stDeleteExtensions = (env: Env, taskId: string) =>
+  q(env, "DELETE FROM wait_extensions WHERE task_id = ?").bind(taskId);
 
 export const stDeleteEntries = (env: Env, taskId: string) =>
   q(env, "DELETE FROM schedule_entries WHERE task_id = ?").bind(taskId);

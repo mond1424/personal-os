@@ -1,7 +1,7 @@
 // Analysis (5장) — 구현 2: 5.2 컨텍스트 조립 + 5.3 2-pass 생성.
 // 자동 생성 없음 — 사용자 요청 시에만 (토큰 통제, 5.1).
 import * as db from "../db";
-import { callClaude } from "../lib/ai";
+import { aiConfig, callModel } from "../lib/ai";
 import { nextId } from "../lib/id";
 import { addDays, attributionOfIso, diffDays, mondayOf } from "../lib/time";
 import { ApiError, type Env, type TimeCtx } from "../types";
@@ -14,13 +14,10 @@ export async function get(env: Env, id: string) {
   return { ...row, context_meta: row.context_meta ? JSON.parse(row.context_meta) : null };
 }
 
-/** 모델 이원화 (8장) — settings에서 읽고, 없으면 기본값. */
+/** 모델 이원화 (8장) — 제공자·키와 함께 설정에서 읽는다. */
 export async function models(env: Env) {
-  const m = Object.fromEntries((await db.settingsAll(env)).results.map((r) => [r.key, r.value]));
-  return {
-    low: m.model_low ?? "claude-haiku-4-5-20251001",
-    high: m.model_high ?? "claude-sonnet-5",
-  };
+  const c = await aiConfig(env);
+  return { low: c.low, high: c.high }; // 값에 제공자가 포함된다 ('provider/model')
 }
 
 /**
@@ -153,7 +150,7 @@ export async function create(env: Env, t: TimeCtx, prompt: unknown) {
 
   const [{ text, meta }, m] = await Promise.all([assembleContext(env, t), models(env)]);
 
-  const pass1 = await callClaude(env, {
+  const pass1 = await callModel(env, {
     model: m.high, maxTokens: 1400,
     system: SYS_BASE + " 과거 분석 결과는 주어지지 않는다 — 이번 기록만으로 독립적으로 판단하라.",
     user: `${text}\n\n[사용자 질문]\n${p}`,
@@ -163,7 +160,7 @@ export async function create(env: Env, t: TimeCtx, prompt: unknown) {
   const pastText = past.length
     ? past.map((a) => `(${a.created_at.slice(0, 10)}) 질문: ${a.prompt}\n${a.pass1}\n${a.pass2}`).join("\n---\n")
     : "(없음)";
-  const pass2 = await callClaude(env, {
+  const pass2 = await callModel(env, {
     model: m.high, maxTokens: 1000,
     system: SYS_BASE +
       " 아래에 방금 작성된 1차 분석과 과거 분석들이 주어진다. 1차를 수정·재요약하지 말고, " +

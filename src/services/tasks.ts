@@ -76,7 +76,9 @@ export async function updateTaskMeta(
  *     deferred_to 없는 채로 남는 것이 곧 Missed 기록의 보존이다 (1.2).
  *     새 항목만 추가한다 — 이월 횟수(항목 수 − 1)는 두 경우 모두 +1.
  */
-export async function deferTask(env: Env, t: TimeCtx, id: string, from: string, to: string) {
+export async function deferTask(
+  env: Env, t: TimeCtx, id: string, from: string, to: string, rate?: number,
+) {
   if (!isDate(from)) throw new ApiError(400, "from 형식은 YYYY-MM-DD");
   const entry = await db.taskEntryAt(env, id, from);
   if (!entry) throw new ApiError(404, `${from}에 이 task의 예정이 없어요`);
@@ -87,11 +89,17 @@ export async function deferTask(env: Env, t: TimeCtx, id: string, from: string, 
 
   const fromDaily = await db.getDaily(env, from);
   const frozen = fromDaily?.status === "closed";
+  // 완료율은 '미루는 순간'에 확정된다 — 그 예정일까지 얼마나 갔는지는 그때 알 수 있다.
+  // 마감된 날(재배정)은 트리거가 수정을 막으므로 값이 와도 버린다.
+  const setRate = !frozen && rate !== undefined;
+  if (rate !== undefined && (!Number.isInteger(rate) || rate < 0 || rate > 100))
+    throw new ApiError(400, "rate는 0~100 정수예요");
   await env.DB.batch([
+    ...(setRate ? [db.stSetRate(env, id, from, rate!)] : []),  // deferred 표시보다 먼저
     ...(frozen ? [] : [db.stMarkDeferred(env, id, from, to, t.now)]),
     db.stInsertEntry(env, id, to, t.now), // 새 예정 — rate는 0에서 시작 (v0.8)
   ]);
-  return { id, from, to, reassigned: frozen };
+  return { id, from, to, reassigned: frozen, rate: setRate ? rate : entry.rate };
 }
 
 /** 대기 → 일정 확정: 첫 항목 생성. 예정이 이미 있으면 미루기를 쓴다. */
@@ -116,30 +124,66 @@ export async function extendWait(env: Env, t: TimeCtx, id: string) {
   return { id, anchor: t.now, deadline: addDays(t.d, 21) };
 }
 
-/** 완료: 오늘 항목이 있으면 다이얼 100 + status/귀속일 확정 (I). */
+/**
+ * 완료: status·귀속일 확정 + 살아 있는 항목의 다이얼을 100으로.
+ *
+ * 완료를 누른 날(finished_on = 오늘의 귀속일)과 그 일의 예정일은 다를 수 있다.
+ * 예전에는 '오늘 날짜의 항목'만 100으로 올려서, 예정일이 내일 이후거나 이미 미뤄진 경우
+ * "완료인데 진행률 0%"라는 모순 상태가 남았다. 이제는 마지막 live 항목에 붙인다.
+ * 단 그 날이 이미 마감됐다면 건드리지 않는다 — 지난 기록은 불변(1.3).
+ */
 export async function completeTask(env: Env, t: TimeCtx, id: string) {
   const stats = await db.taskStats(env, id);
   if (!stats) throw new ApiError(404, "해당 task가 없어요");
   if (stats.status === "finished") throw new ApiError(409, "이미 완료된 task예요");
-  await env.DB.batch([
-    db.stRate100Today(env, id, t.d),
-    db.stFinishTask(env, id, t.now, t.d),
-  ]);
-  return { id, finished_on: t.d };
+  const live = await db.liveEntry(env, id);
+  const stmts = [db.stFinishTask(env, id, t.now, t.d)];
+  if (live && live.day_status !== "closed") stmts.unshift(db.stRate100At(env, id, live.date));
+  await env.DB.batch(stmts);
+  return {
+    id, finished_on: t.d,
+    planned_on: live?.date ?? null,
+    rate_applied: !!live && live.day_status !== "closed",
+  };
 }
 
-/** 완료율 다이얼 — 오늘(또는 열린 날)의 항목만. 과거는 트리거가 거부. */
+const shortDate = (d: string) => `${+d.slice(5, 7)}/${+d.slice(8, 10)}`;
+
 /**
  * task 삭제 — 계획의 취소. 마감된 날의 항목이 하나라도 있으면 거부한다 (1.3 불변성):
  * 지나간 기록은 지우는 게 아니라 완료/미룸으로 남긴다.
+ *
+ * 거부할 때는 **무엇이 막는지 이름을 붙여** 돌려준다. "다른 기록이 참조하고 있어요"는
+ * 사용자가 손쓸 수 없는 문장이다 — 어느 날의 기록인지 알아야 완료로 남길지 그대로 둘지 고른다.
+ *
+ * 반대로 막을 이유가 없으면 부속 기록(연장 이력)까지 함께 지운다. 예전에는 이걸 빼먹어
+ * FK 제약이 대신 걸리면서, 한 번이라도 연장한 task 는 영영 취소되지 않았다 (0005).
  */
 export async function deleteTask(env: Env, id: string) {
   const task = await db.taskStats(env, id);
   if (!task) throw new ApiError(404, "해당 task가 없어요");
-  const closed = await db.closedEntryCount(env, id);
-  if ((closed?.n ?? 0) > 0)
-    throw new ApiError(409, "지난 기록이 있는 task는 삭제할 수 없어요 — 완료 처리하거나 그대로 두세요");
-  await env.DB.batch([db.stDeleteEntries(env, id), db.stDeleteTask(env, id)]);
+
+  const [closed, guard] = await Promise.all([
+    db.closedEntryDates(env, id),
+    db.guardEventCount(env, id),
+  ]);
+  const dates = closed.results.map((r) => r.date);
+  if (dates.length) {
+    const head = dates.slice(0, 3).map(shortDate).join(" · ");
+    const rest = dates.length > 3 ? ` 외 ${dates.length - 3}일` : "";
+    throw new ApiError(409,
+      `${head}${rest} — 이미 마감된 날의 기록이 이 일을 참조해요. ` +
+      `지난 기록은 지울 수 없으니(1.3) 완료로 남기거나 그대로 두세요`);
+  }
+  if ((guard?.n ?? 0) > 0)
+    throw new ApiError(409,
+      `Guard 개입 기록 ${guard!.n}건이 이 일을 참조해요 — 개입 이력은 지울 수 없어요`);
+
+  await env.DB.batch([
+    db.stDeleteExtensions(env, id), // 대기 연장 이력 — 마감 기록이 없을 때만 트리거가 허용
+    db.stDeleteEntries(env, id),
+    db.stDeleteTask(env, id),
+  ]);
   return { id, deleted: true };
 }
 

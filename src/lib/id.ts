@@ -2,7 +2,7 @@
 // 단일 사용자 앱 — 트랜잭션 batch 안에서 조회 → INSERT로 충분하다.
 import type { Env } from "../types";
 
-const TABLES = ["tasks", "periods", "memos", "analyses", "guard_events"] as const;
+const TABLES = ["tasks", "periods", "memos", "analyses", "guard_events", "events"] as const;
 export type IdTable = (typeof TABLES)[number];
 
 export async function nextId(env: Env, table: IdTable, compact: string): Promise<string> {

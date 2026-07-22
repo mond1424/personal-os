@@ -3,17 +3,18 @@
 import * as db from "../db";
 import { ApiError, type Env, type TimeCtx } from "../types";
 import { attributionOfIso, diffDays } from "../lib/time";
-import { callClaude, parseModelJson } from "../lib/ai";
+import { aiConfig, callModel, parseModelJson } from "../lib/ai";
 
 const WAIT_LIMIT = 21; // 1.4 대기 최대 체류
 
 /** Today 탭 한 화면의 조인 조립 (7장) — 파생은 전부 여기서 계산, 저장 없음. */
 export async function assembleToday(env: Env, t: TimeCtx) {
-  const [todo, done, reassign, waiting, daily, feelings, logs, periods] = await Promise.all([
+  const [todo, done, reassign, waiting, todayEvents, daily, feelings, logs, periods] = await Promise.all([
     db.todayTodo(env, t.d),
     db.todayDone(env, t.d),
     db.reassignQueue(env, t.d),
     db.waitingList(env),
+    db.eventsAt(env, t.d),
     db.getDaily(env, t.d),
     db.feelingsAt(env, t.d),
     db.logsAt(env, t.d),
@@ -36,6 +37,7 @@ export async function assembleToday(env: Env, t: TimeCtx) {
     todo: todo.results,
     done: done.results,
     reassign: reassign.results, // 재배정 대기 — Todo 아래 행 (1.2)
+    events: todayEvents.results, // 오늘의 일정 — 할 일이 아니라 사건
     waiting: {
       n: waitRows.length,
       max_age: waitRows[0]?.age ?? null,
@@ -101,9 +103,9 @@ export async function classifyFeelings(env: Env, t: TimeCtx, date?: string) {
   let fields: string[] = [];
   try { fields = JSON.parse(settings.feelings_fields ?? "[]"); } catch { fields = []; }
   if (!fields.length) fields = ["energy", "stress", "focus"];
-  const model = settings.model_low ?? "claude-haiku-4-5-20251001";
+  const model = (await aiConfig(env)).low;
 
-  const out = await callClaude(env, {
+  const out = await callModel(env, {
     model, maxTokens: 300,
     system:
       "너는 짧은 한국어 상태 서술을 심리 척도 점수로 변환하는 분류기다. " +
@@ -182,19 +184,21 @@ async function buildMech(env: Env, d: string, daily: db.DailyRow | null | undefi
 
 /** 날짜 팝업 (E) — 조인 조립, 하드코딩 금지 (2.2). */
 export async function assembleDay(env: Env, t: TimeCtx, k: string) {
-  const [periods, cls, daily, feelings, logs, memos] = await Promise.all([
+  const [periods, cls, daily, feelings, logs, memos, evs] = await Promise.all([
     db.periodsAt(env, k),
     db.classifyAt(env, k),
     db.getDaily(env, k),
     db.feelingsAt(env, k),
     db.logsAt(env, k),
     db.memosAt(env, k),
+    db.eventsAt(env, k),
   ]);
   return {
     date: k,
     relation: k === t.d ? "today" : k > t.d ? "future" : "past",
     periods: periods.results,
     tasks: cls.results,
+    events: evs.results, // 일정 — task와 별개 (0004)
     daily: daily ?? null,
     feelings: feelings.results,
     logs: logs.results,
@@ -204,12 +208,16 @@ export async function assembleDay(env: Env, t: TimeCtx, k: string) {
 }
 
 export async function calendar(env: Env, start: string, end: string) {
-  const [periods, entries, diary] = await Promise.all([
+  const [periods, entries, diary, evs] = await Promise.all([
     db.calPeriods(env, start, end),
     db.calEntries(env, start, end),
     db.calDiaryDates(env, start, end),
+    db.eventsRange(env, start, end),
   ]);
-  return { periods: periods.results, entries: entries.results, diary: diary.results };
+  return {
+    periods: periods.results, entries: entries.results,
+    diary: diary.results, events: evs.results,
+  };
 }
 
 export async function diaryFeed(env: Env, t: TimeCtx, limit = 30) {

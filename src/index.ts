@@ -12,6 +12,8 @@ import * as periods from "./services/periods";
 import * as memos from "./services/memos";
 import * as me from "./services/me";
 import * as analysis from "./services/analysis";
+import * as events from "./services/events";
+import { PROVIDERS, aiConfig, testConnection } from "./lib/ai";
 import * as guard from "./services/guard";
 import { autoClose, scheduled } from "./scheduled";
 
@@ -123,8 +125,8 @@ app.patch("/api/tasks/:id", async (c) => {
   return c.json(await tasks.updateTaskMeta(c.env, c.req.param("id"), b));
 });
 app.post("/api/tasks/:id/defer", async (c) => {
-  const b = await body<{ from: string; to: string }>(c);
-  return c.json(await tasks.deferTask(c.env, c.get("t"), c.req.param("id"), b.from, b.to));
+  const b = await body<{ from: string; to: string; rate?: number }>(c);
+  return c.json(await tasks.deferTask(c.env, c.get("t"), c.req.param("id"), b.from, b.to, b.rate));
 });
 app.post("/api/tasks/:id/schedule", async (c) => {
   const b = await body<{ date: string }>(c);
@@ -162,10 +164,24 @@ app.put("/api/me/:field", async (c) => {
 app.get("/api/me/history", async (c) =>
   c.json(await me.meHistory(c.env, Number(c.req.query("limit") ?? 50))));
 app.get("/api/settings", async (c) => c.json(await me.getSettings(c.env)));
+app.get("/api/ai/providers", async (c) => c.json(PROVIDERS));
+app.get("/api/ai/connections", async (c) => {
+  const cfg = await aiConfig(c.env);
+  return c.json({ connections: cfg.connections, low: cfg.low, high: cfg.high, fallback: cfg.provider });
+});
+app.post("/api/ai/test", async (c) => {
+  const b = await body<{ which?: "low" | "high" }>(c).catch(() => ({}) as any);
+  return c.json(await testConnection(c.env, b.which === "low" ? "low" : "high"));
+});
 app.put("/api/settings/:key", async (c) => {
   const b = await body<{ value: string }>(c);
   return c.json(await me.putSetting(c.env, c.req.param("key"), b.value));
 });
+
+// ── 일정(event) — 캘린더 전용 ───────────────────────────────
+app.post("/api/events", async (c) => c.json(await events.create(c.env, c.get("t"), await body(c))));
+app.patch("/api/events/:id", async (c) => c.json(await events.update(c.env, c.req.param("id"), await body(c))));
+app.delete("/api/events/:id", async (c) => c.json(await events.remove(c.env, c.req.param("id"))));
 
 // ── Analysis (5장) ──────────────────────────────────────────
 app.get("/api/analyses", async (c) => c.json(await analysis.list(c.env)));
