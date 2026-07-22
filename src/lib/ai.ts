@@ -10,8 +10,12 @@ export const PROVIDERS: Record<Provider, { label: string; keyHint: string; model
     models: ["claude-haiku-4-5-20251001", "claude-sonnet-4-6", "claude-opus-4-8"] },
   openai: { label: "OpenAI", keyHint: "sk-…",
     models: ["gpt-5-mini", "gpt-5"] },
+  // -latest 별칭 = stable/preview/experimental 중 최신을 가리킨다. 새 릴리스마다 자동 핫스왑되고,
+  // breaking change 시 2주 전 이메일 통지가 온다(Google 정책, ai.google.dev/gemini-api/docs/models).
+  // 특정 버전 하드코딩(gemini-2.5-flash 등)은 은퇴 주기가 빨라 404 반복 — 별칭으로 회피.
+  // 레이트리밋이 더 빡빡할 수 있으나 개인용이라 수용. 안정성 필요해지면 특정 버전 pin + 이 주석 갱신.
   google: { label: "Gemini (Google)", keyHint: "AIza…",
-    models: ["gemini-2.5-flash", "gemini-2.5-pro"] },
+    models: ["gemini-flash-latest", "gemini-pro-latest", "gemini-flash-lite-latest"] },
 };
 
 export interface AiCall {
