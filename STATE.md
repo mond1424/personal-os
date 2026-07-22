@@ -3,8 +3,8 @@
 ## 저장소
 - repo: https://github.com/mond1424/personal-os
 - branch: main
-- 마지막 커밋: `e6ce675` docs: CLAUDE.md·STATE.md·api-surface·schema 스냅샷 추가 (직전: `865402a` 코드)
-  - ✅ **push 완료** (main → origin/main, 2026-07-22). 이 STATE 갱신은 뒤이은 커밋에 포함.
+- 마지막 커밋: `641f213` feat(#4) 경계 스트레치 (A-6) — 이번 세션 A-1~A-6 반영
+  - ✅ **push 완료** (main → origin/main). 이 STATE 갱신은 뒤이은 커밋에 포함.
 
 ## raw 링크 (Chat이 직접 읽는 주소)
 - 설계문서(권위) https://raw.githubusercontent.com/mond1424/personal-os/main/personal-agent-design_v0.9.md
@@ -42,21 +42,21 @@ typecheck 통과 / smoke 124 / front 145 / 실패 0
 최신: `0006_fix_model_high` (0001_init · 0002_models · 0003_ai_provider · 0004_events · 0005_delete_scope · 0006_fix_model_high)
 ⚠️ 0006은 라이브 DB에 **미적용** — 사용자가 `--local`→`--remote` 적용 + `deploy` 필요.
 
-## 최근 세션에서 바뀐 것
-- `src/lib/ai.ts` · `migrations/0006_fix_model_high.sql` — 모델 ID `claude-sonnet-5`(실재 안 함)→`claude-sonnet-4-6` 교정
-- `src/services/me.ts` · `public/app.js` — Feelings 필드명 XSS 하드닝(형식 강제 + esc)
-- `public/app.js` · `public/index.html` — 완료율 100% 도달 시 즉시 완료 / 마감된 날 일정 추가 허용 + 경고문
-- `test/smoke.ts` — 스키마 목록에 0006 추가
-- 문서 — `README0722.md`(개발) 보강·`사용설명서0722.md`(사용자) 신규·`CLAUDE.md`·`STATE.md`·`docs/api-surface.md`·`docs/schema-current.sql`·`REFACTOR-PLAN.md`
-- `public/{public,src,test,migrations}`·낡은 zip·빈 파일 삭제(노출·잡파일 정리)
+## 최근 세션에서 바뀐 것 (UX 개선 A-1~A-6)
+- A-1 [#3] `public/style.css` — 다크모드 캘린더 색: 다른 달 날짜 `var(--faint)`, 일요일 헤더 다크 오버라이드
+- A-2 [#7] `src/lib/ai.ts` — Gemini 모델 `-latest` 별칭(gemini-2.5-* 404 회피, 요청 로직 불변)
+- A-3 [#5 Phase1] `public/{app.js,style.css}`·`test/front.mjs` — 완료율 인라인 막대 제거→읽기전용, 편집은 미루기 시트만
+- A-4 [#2] `public/{app.js,style.css}`·`test/front.mjs` — 캘린더 달 간격(CAL_GAP=20)+터치 씹힘 완화(dragBlockUntil 200·전환 후 즉시 재중심화·calGen 가드)
+- A-5 [#1] `public/app.js` — 스와이프 인접탭 프리렌더(드럼 느낌)+민감도 하향(AXIS_LOCK20·축비1.9·RATIO0.35·FLICK0.5)
+- A-6 [#4] `public/app.js` — 경계 스트레치(러버밴드 대체, `bindEdgeStretch` 격리·off 가능)
+- **기준선 smoke 124 · front 147→145**(A-3에서 인라인 완료율 검사를 미루기 시트 재탭 검사로 이동·통합). 매 커밋 전 검증, 실패 0
 
 ## 미해결 / 다음 할 것
-- ✅ GitHub push 완료 (main → origin/main).
-- ⚠️ **0006 마이그레이션 apply(local→remote) + deploy** — 사용자 직접 (안 하면 라이브 model_high=claude-sonnet-5, AI 연결 테스트 404)
-- 폰 확인: 완료율 100%=완료·마감일 일정 경고 동작 / 다크모드 색 짝 2건(`.c.mut .d`·`.wkdays span:first-child`) / 세로선 농도
-- 최종 정리(이 리포 밖, 상위 Pos/): 스캐폴딩 중복·대용량 백업 (worker/ git 루트와 무관)
-- (선택) 기간 삭제 confirm 추가 · analysis 문단 `white-space` · REFACTOR-PLAN "폰 확인 후" 항목
+- ⚠️ **로컬 worker 전체 갱신 완료 → 사용자 배포 필요**: `wrangler d1 migrations apply personal-os --local`→`--remote` + `npm run deploy`. (미적용 0006 포함 — 안 하면 라이브 model_high=claude-sonnet-5, AI 연결 테스트 404)
+- **폰 실측 후 미세조정**(이번 세션 산출, 코드 주석에도 표시): 스와이프 민감도 상수(AXIS_LOCK·축비·TRACK_RATIO·FLICK_V) · 캘린더 gap(20px) · 경계 스트레치 on/off(boot의 `bindEdgeStretch()`) · 다크모드 색(다른달·일요일) · 세로선 농도
+- **다음 세션 구현 대기 (B, 미착수)**: B-1[#5 Phase2] 미완료 전환/수동 마감 시 완료율 입력 · B-2[#6] light task 플래그(신호 오염 금지) · B-3[#8] 튜토리얼 상세화(step3 전 필수) · B-4[#4] 러버밴드 원안 보류 기록 → REFACTOR-PLAN "재구상/보류" 정리 예정
+- 최종 정리(리포 밖 상위 Pos/): 스캐폴딩 중복·대용량 백업
 
 ## 설계와 어긋난 지점
-- **완료율 100%** — 설계/가이드 §4는 "100%는 바에서 제외, [완료] 버튼 전용"이었으나, 사용자 지시로 **"100% 도달 시 즉시 완료"**로 변경. 문서 v1.0에 반영 대기.
-- **events 마감일 추가** — 마감된 날에도 일정 추가 허용(1.3 "과거엔 추가만 가능"과 정합). 추가 시 수정·삭제 불가 경고문 표시. (설계 위반 아님, 명시적 결정.)
+- **완료율 100%** — 지난 세션에 "인라인 100%=즉시 완료"로 이탈했으나, **A-3(#5 Phase1)에서 인라인 막대를 제거하며 폐기 → 완료는 완료 버튼 전용으로 설계 §1.4 재정합**(이제 설계와 일치). 완료율 편집은 미루기 시트에서만.
+- **events 마감일 추가** — 마감된 날에도 일정 추가 허용(1.3 "과거엔 추가만 가능"과 정합, 경고문 표시). 설계 위반 아님, 명시적 결정.
