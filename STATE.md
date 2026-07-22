@@ -3,8 +3,8 @@
 ## 저장소
 - repo: https://github.com/mond1424/personal-os
 - branch: main
-- 마지막 커밋: `641f213` feat(#4) 경계 스트레치 (A-6) — 이번 세션 A-1~A-6 반영
-  - ✅ **push 완료** (main → origin/main). 이 STATE 갱신은 뒤이은 커밋에 포함.
+- 마지막 커밋: `a4559a8` feat(memo): 어느 날짜에든 memo + 날짜 시트 통합 입력 폼 (WORK-PLAN 3단계)
+  - ✅ **push 완료** (main → origin/main). 이 STATE 갱신은 뒤이은 커밋(실사용 피드백 4건 UX)에 포함.
 
 ## raw 링크 (Chat이 직접 읽는 주소)
 - 설계문서(권위) https://raw.githubusercontent.com/mond1424/personal-os/main/personal-agent-design_v0.9.md
@@ -46,7 +46,15 @@ typecheck 통과 / smoke 129 / front 151 / 실패 0
 ⚠️ 라이브(remote) DB에 **0006·0007 미적용** — 사용자가 `--remote` 적용 + `deploy` 필요.
 - `0007_defer_reason`: `schedule_entries`에 `defer_reason TEXT` 추가(미루기 사유). **WORK-PLAN의 `task_entries` 표기는 오기** — 실제 테이블은 `schedule_entries`(예정 항목·rate가 있는 곳).
 
-## 이번 세션 (2026-07-23) — WORK-PLAN-0723 진행 중
+## 이번 세션 (2026-07-23) — 실사용 피드백 4건 (UX, 프런트+문서만)
+- **[#1 캘린더 기간]** `public/app.js` renderCalendar — `#p-list`를 범례와 동일한 이번 달 겹침 필터(`start_date≤curTo && end_date≥curFrom`)로 축소. `#p-cnt`도 이번 달 기준. 빈 문구 "이번 달엔 기간이 없어요". 목록·편집(`openPeriod`)·다른 달(달 넘기면 재표시)은 유지 — 전체 나열만 제거.
+- **[#2 me 직접입력]** `public/{app.js,index.html}` — 고정 5필드를 값 없어도 항상 노출("아직 없음 — 눌러서 입력해요")로 직접입력 진입 명확화 + 필드별 가이드(`ME_GUIDE`: 시트 상시설명 `#me-guide` + textarea placeholder 예시). 5필드가 다 보여 무의미해진 '+ 필드 추가'(`me-add`)·`addMeField` 제거. **백엔드·마이그레이션 무변경**(`putMeField`는 이미 `/^[a-z_]{1,40}$/` 임의 필드 허용). 설계 §3(고정 필드 프레임)과 정합.
+- **[#3 캘린더 모션]** `public/{app.js,index.html,style.css}` — 둥근 카드 chrome(border·radius·bg)과 요일줄(`CAL_WKDAYS`)을 고정 프레임 `.calbox`→각 `.calpane`(월 카드)로 이전. 이제 **카드가 통째로 슬라이드**(고정 창 안 grid만 미끄러지던 '흉내' 해소). ‹/› 화살표도 무모션 즉시교체→`calGo` 슬라이드로 통일. 색은 기존 변수만(다크 자동, 함정 5). 슬라이드 자체는 원래 진짜 3-pane 트랙 — 구조 재설계가 아니라 카드 단위로 격상. front line 216(cal-next)이 이제 `calGo` 경로를 타지만 translateX 문자열 동일→검사 통과.
+- **[#4 대기행 폭]** `public/index.html` — `#today-wait` `width:65%`→`fit-content;min-width:60%;max-width:90%`, `#tw-text` `nowrap`+`ellipsis`+`min-width:0`. 내용따라 60~90% 유동·항상 한 줄(초과 시 …).
+- **문서**: `CLAUDE.md` 기준선 문구 `smoke124/front145`→`129/151`로 정정(직전 세션에 STATE는 이미 129/151, CLAUDE만 지연됨. stash로 변경 전 코드도 151 확인).
+- 검증: typecheck 통과 · smoke 129(무변경) · front 151(무회귀) · 실패 0. **사용자 `deploy` + 폰 실사용 정상 확인 완료.**
+
+## 직전 세션 (2026-07-23) — WORK-PLAN-0723 (1~3단계 완료)
 - **1단계 완료** (항목 1·2·3·5, 프런트 표시/모션만, 백엔드 무변경):
   - [#1] `public/style.css` — 다크모드 `.wseg.on` 선택색 오버라이드 2곳 추가(미디어쿼리+data-theme). "이월 중" 세그가 hotN 명시도에 밀려 선택 시 배경이 안 바뀌던 것 수정.
   - [#2] `public/style.css` — `.screens`에 `touch-action:pan-y` 추가. 탭 가로 스와이프가 네이티브 스크롤에 먹혀 무효화되던 것. **폰 실측 대기**.

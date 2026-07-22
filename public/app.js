@@ -135,6 +135,8 @@ function bandPaths(dates, periods, rx = capRx(0)) {
 const TRACK_MS = 300, TRACK_EASE = "cubic-bezier(.22,.61,.36,1)";
 const TRACK_RATIO = 0.35, FLICK_V = 0.5;   // 화면 폭 비율 · px/ms — 민감도 하향(A-5, 폰 실측 미세조정 예정)
 const CAL_GAP = 20;   // 캘린더 달 사이 간격(px). 탭 트랙은 gap=0(불변), 캘린더만 gap 보정을 탄다
+// 요일 헤더는 각 '월 카드'(.calpane) 안에 들어간다 — 카드가 통째로 슬라이드하도록(고정 프레임 아님)
+const CAL_WKDAYS = '<div class="wkdays"><span>일</span><span>월</span><span>화</span><span>수</span><span>목</span><span>금</span><span>토</span></div>';
 
 // gap>0이면 pane 사이 간격(px)을 위치 계산에 더한다 — %만으로는 gap이 어긋난다
 function trackSet(el, i, animate, gap = 0) {
@@ -789,7 +791,7 @@ async function renderCalendar() {
 
   $("#cal-track").innerHTML = months.map((o, k) =>
     `<div class="calpane${k === 1 ? " cur" : ""}" data-ym="${o.y}-${String(o.m).padStart(2, "0")}">` +
-    grids[k].map((row) => rowHtml(row, o.m)).join("") + `</div>`).join("");
+    CAL_WKDAYS + grids[k].map((row) => rowHtml(row, o.m)).join("") + `</div>`).join("");
   trackSet($("#cal-track"), 1, false, CAL_GAP);   // 언제나 가운데 — 양옆이 이전·다음 달
 
   // 범례는 '지금 보고 있는 달'만 — 세 달치를 다 늘어놓으면 읽을 수 없다
@@ -797,8 +799,11 @@ async function renderCalendar() {
   $("#cal-leg").innerHTML = cal.periods.filter((p) => p.start_date <= curTo && p.end_date >= curFrom).map((p) =>
     `<span><i class="lsw" style="background:${p.color};opacity:.6"></i>${esc(p.title)} ${md(p.start_date)}–${md(p.end_date)}</span>`).join("");
 
-  $("#p-cnt").textContent = S.periods.length;
-  $("#p-list").innerHTML = S.periods.map((p) => {
+  // '기간' 목록은 범례와 같은 기준으로 '이번 달과 겹치는 것'만 — 전체를 나열하면 캘린더 탭이 과해진다.
+  // 다른 달 기간은 그 달로 넘기면 다시 뜬다(범례·밴드도 동일). 개수 라벨도 이번 달 기준으로 맞춘다.
+  const inMonth = S.periods.filter((p) => p.start_date <= curTo && p.end_date >= curFrom);
+  $("#p-cnt").textContent = inMonth.length;
+  $("#p-list").innerHTML = inMonth.map((p) => {
     const started = p.d_start <= 0;
     const ach = started && p.achievement != null ? p.achievement : null;
     return `<div class="prow" onclick="openPeriod('${p.id}')" style="cursor:pointer">
@@ -808,7 +813,7 @@ async function renderCalendar() {
         <div class="pbar"><i style="width:${ach ?? 0}%;background:${p.color}"></i></div></div>
       <span class="cap">${ach != null ? `달성률 ${ach}%` : "—"}</span>
     </div>`;
-  }).join("") || `<div class="prow"><span class="cap">아직 기간이 없어요</span></div>`;
+  }).join("") || `<div class="prow"><span class="cap">이번 달엔 기간이 없어요</span></div>`;
 
   applyPickDim();
 }
@@ -1180,17 +1185,31 @@ function closeBoard() { $("#aboard").classList.remove("on"); }
 
 /* ── Me · 설정 ─────────────────────────────────────────── */
 const ME_LABELS = { direction: "방향 — 장기", interests: "관심사", career: "진로", personality: "성격", life_pattern: "생활 패턴" };
+/* 필드별 입력 가이드 — desc는 시트에 상시 노출('무엇을 적나'), eg는 textarea placeholder(예시).
+ * Me는 모든 analysis의 장기 맥락 프레임이라(design 3장) 필드는 고정 5개, 안내로 채우기를 돕는다. */
+const ME_GUIDE = {
+  direction:    { desc: "시한 없는 장기 방향을 한두 문장으로. 모든 분석의 장기 맥락이 돼요.", eg: "예: 데이터로 사람을 돕는 일을 오래 하고 싶다." },
+  interests:    { desc: "요즘 끌리는 주제·활동.", eg: "예: 통계, 인지과학, 러닝" },
+  career:       { desc: "지향하는 직업/역할과 그 이유.", eg: "예: 헬스케어 데이터 분석 — 결과가 눈에 보여서" },
+  personality:  { desc: "스스로 보는 성향·강점·약점.", eg: "예: 몰입형. 시작은 느리지만 깊게 판다." },
+  life_pattern: { desc: "수면·집중·기복 등 반복되는 하루 리듬.", eg: "예: 밤에 집중이 잘 되고 오전엔 느리다." },
+};
 async function renderMe() {
   const [me, hist, guard] = await Promise.all([Api.me(), Api.meHistory(), Api.guardEvents()]);
   S.me = me;
   let h = "";
-  for (const f of me.fields)
-    h += `<button class="merow" style="width:100%" onclick="openMe('${f.field}')">
-      <span class="ml">${esc(ME_LABELS[f.field] || f.field)}</span>${esc(f.value)}</button>`;
+  // 기본 5필드는 값이 없어도 항상 노출 — 눌러 바로 입력하도록(직접입력 진입을 명시). 그 뒤에 5필드 밖의 값(있으면)을 잇는다.
+  const byField = Object.fromEntries(me.fields.map((f) => [f.field, f.value]));
+  const known = Object.keys(ME_LABELS);
+  const order = [...known, ...me.fields.map((f) => f.field).filter((f) => !known.includes(f))];
+  for (const field of order) {
+    const val = byField[field];
+    h += `<button class="merow" style="width:100%" onclick="openMe('${field}')">
+      <span class="ml">${esc(ME_LABELS[field] || field)}</span>${val ? esc(val) : `<span class="cap">아직 없음 — 눌러서 입력해요</span>`}</button>`;
+  }
   if (me.now.length)
     h += `<div class="merow"><span class="ml">지금 — 활성 기간에서 자동</span>` +
       me.now.map((n) => `<i class="pdot" style="display:inline-block;margin-right:5px;background:${n.color}"></i>${esc(n.goals.join(" · ") || n.title)}`).join('<span style="display:inline-block;width:10px"></span>') + `</div>`;
-  if (!h) h = `<div class="merow"><span class="cap">아직 비어 있어요 — Me는 모든 분석의 장기 맥락이 돼요.</span></div>`;
   h += `<p class="cap" style="margin-top:9px">'지금' 줄은 periods의 목표를 조인한 파생 — Me에 중복 저장하지 않아요.</p>`;
   $("#me-fields").innerHTML = h;
 
@@ -1288,16 +1307,13 @@ let meCtx = null;
 function openMe(field) {
   meCtx = field;
   $("#me-head").textContent = ME_LABELS[field] || field;
+  const g = ME_GUIDE[field];
+  $("#me-guide").textContent = g ? g.desc : "";
   const row = (S.me && S.me.fields.find((f) => f.field === field)) || null;
-  $("#me-value").value = row ? row.value : "";
+  const ta = $("#me-value");
+  ta.value = row ? row.value : "";
+  ta.placeholder = g ? g.eg : "내용을 적어요…";
   openSheet("sh-me");
-}
-function addMeField() {
-  const known = Object.keys(ME_LABELS);
-  const used = new Set((S.me ? S.me.fields : []).map((f) => f.field));
-  const next = known.find((k) => !used.has(k));
-  if (!next) return toast("기본 필드는 모두 채웠어요 — 값을 눌러 수정해요");
-  openMe(next);
 }
 function bindMeSheet() {
   $("#me-save").onclick = () => run(async () => {
@@ -1909,12 +1925,11 @@ async function boot() {
     ftTimer = setTimeout(() => run(() => Api.feelingsText($("#feel-text").value)), 900);
   });
 
-  // 캘린더 내비
-  $("#cal-prev").onclick = () => { S.cal.m--; if (S.cal.m < 1) { S.cal.m = 12; S.cal.y--; } run(renderCalendar); };
-  $("#cal-next").onclick = () => { S.cal.m++; if (S.cal.m > 12) { S.cal.m = 1; S.cal.y++; } run(renderCalendar); };
+  // 캘린더 내비 — 화살표도 스와이프와 같은 슬라이드(calGo). 달 넘김/재중심화/재조립을 calGo가 일괄 처리
+  $("#cal-prev").onclick = () => calGo(-1);
+  $("#cal-next").onclick = () => calGo(1);
   $("#btn-add-period").onclick = () => openPeriod(null);
   $("#btn-run-anal").onclick = runAnalysis;
-  $("#me-add").onclick = addMeField;
   $("#feel-classify").onclick = () => run(async () => {
     const r = await Api.classifyFeelings();
     toast(`분류 완료 — ${Object.entries(r.values).map(([k, v]) => k + " " + v).join(" · ")}`);
