@@ -134,16 +134,18 @@ function bandPaths(dates, periods, rx = capRx(0)) {
  * 판정은 거리(25%)와 속도(플릭) 둘 중 하나만 넘으면 된다 — 짧고 빠른 손짓도 넘어가야 한다. */
 const TRACK_MS = 300, TRACK_EASE = "cubic-bezier(.22,.61,.36,1)";
 const TRACK_RATIO = 0.25, FLICK_V = 0.35;   // 화면 폭 비율 · px/ms
+const CAL_GAP = 20;   // 캘린더 달 사이 간격(px). 탭 트랙은 gap=0(불변), 캘린더만 gap 보정을 탄다
 
-function trackSet(el, i, animate) {
+// gap>0이면 pane 사이 간격(px)을 위치 계산에 더한다 — %만으로는 gap이 어긋난다
+function trackSet(el, i, animate, gap = 0) {
   if (!el) return;
   el.style.transition = animate ? `transform ${TRACK_MS}ms ${TRACK_EASE}` : "none";
-  el.style.transform = `translateX(${-i * 100}%)`;
+  el.style.transform = gap ? `translateX(calc(${-i * 100}% - ${i * gap}px))` : `translateX(${-i * 100}%)`;
 }
-function trackDrag(el, i, dx) {
+function trackDrag(el, i, dx, gap = 0) {
   if (!el) return;
   el.style.transition = "none";
-  el.style.transform = `translateX(calc(${-i * 100}% + ${dx}px))`;
+  el.style.transform = `translateX(calc(${-i * 100}% - ${i * gap}px + ${dx}px))`;
 }
 /* 놓는 방향 — 속도가 충분하면 거리가 짧아도 넘긴다 */
 function trackDir(dx, vel, width) {
@@ -714,6 +716,7 @@ function bindDeferSheet() {
 /* ── Calendar ──────────────────────────────────────────── */
 async function renderCalendar() {
   if (!S.today) return; // 부팅 전 — S.cal이 아직 비어 있다 (날짜 계산 불가)
+  const gen = calGen;   // 이 조립을 시작할 때의 세대 — 도중에 달을 더 넘기면 버린다(최신 우선)
   const { y, m } = S.cal;
   $("#cal-title").textContent = `${y} · ${m}월`;
   /* 이전·현재·다음 달을 한 번에 만든다. 옆으로 밀 때 다음 달이 '이미 거기 있어야'
@@ -722,6 +725,7 @@ async function renderCalendar() {
   const grids = months.map((o) => weeksOf(o.y, o.m));
   const start = grids[0][0][0], end = grids[2][WEEKS_IN_GRID - 1][6];
   const [cal, plist] = await Promise.all([Api.calendar(start, end), Api.periods()]);
+  if (gen !== calGen) return;   // 더 새로운 달 넘김이 있었으면 이 3-pane 조립은 폐기(연속 스와이프 경합 방지)
   S.calData = cal;
   S.periods = plist;
 
@@ -771,7 +775,7 @@ async function renderCalendar() {
   $("#cal-track").innerHTML = months.map((o, k) =>
     `<div class="calpane${k === 1 ? " cur" : ""}" data-ym="${o.y}-${String(o.m).padStart(2, "0")}">` +
     grids[k].map((row) => rowHtml(row, o.m)).join("") + `</div>`).join("");
-  trackSet($("#cal-track"), 1, false);   // 언제나 가운데 — 양옆이 이전·다음 달
+  trackSet($("#cal-track"), 1, false, CAL_GAP);   // 언제나 가운데 — 양옆이 이전·다음 달
 
   // 범례는 '지금 보고 있는 달'만 — 세 달치를 다 늘어놓으면 읽을 수 없다
   const curFrom = grids[1][0][0], curTo = grids[1][WEEKS_IN_GRID - 1][6];
@@ -1646,7 +1650,7 @@ function bindCarousel(host, opt) {
     const moved = axis === "x", dx = e.clientX - x0;
     stop();
     if (!moved) return;
-    dragBlockUntil = Date.now() + 400;                  // 끌고 난 직후의 click은 삼킨다
+    dragBlockUntil = Date.now() + 200;                  // 끌고 난 직후의 click은 삼킨다(짧게 — A-4)
     const v = Date.now() - moveT > VEL_STALE ? 0 : vel;  // 멈췄다가 뗐으면 던진 게 아니다
     opt.commit(trackDir(dx, v, host.clientWidth || 380));
   }, { passive: true });
@@ -1680,10 +1684,10 @@ function bindSwipe() {
 
 /* 캘린더 가로 드래그 — 달 넘기기. 항상 가운데(1)에 있고 양옆이 이전·다음 달이라
  * 끄는 동안 다음 달이 그대로 따라 들어온다. */
-let calBusy = false;
+let calBusy = false, calGen = 0;
 function calGo(dir) {
   const track = $("#cal-track");
-  if (!dir) return trackSet(track, 1, true);
+  if (!dir) return trackSet(track, 1, true, CAL_GAP);
   if (calBusy || !S.today) return;
   calBusy = true;
   let done = false;
@@ -1693,20 +1697,31 @@ function calGo(dir) {
     track.removeEventListener("transitionend", onEnd);
     clearTimeout(timer);
     S.cal = addMonth(S.cal.y, S.cal.m, dir);
-    // 화면에는 이미 옳은 달이 떠 있다 — 그 뒤에 3-pane을 다시 조립하고 소리 없이 재중심화
-    run(renderCalendar).finally(() => { calBusy = false; });
+    // 전환이 끝나면 보고 있던 달이 곧 새 '가운데'다 — 지금 있는 pane을 밀어 즉시 재중심화하고
+    // calBusy를 바로 푼다(fetch를 기다리지 않아 연속 스와이프가 씹히지 않는다). 반대편으로 넘어간
+    // pane은 비워 두고, 정식 3-pane 재조립(renderCalendar)이 뒤이어 비동기로 채운다.
+    const panes = [...track.children];
+    if (panes.length === 3) {
+      if (dir > 0) { panes[0].innerHTML = ""; track.appendChild(panes[0]); }
+      else { panes[2].innerHTML = ""; track.insertBefore(panes[2], panes[0]); }
+      [...track.children].forEach((p, i) => p.classList.toggle("cur", i === 1));
+    }
+    trackSet(track, 1, false, CAL_GAP);
+    calBusy = false;
+    calGen++;                     // 세대 증가 — 이후 renderCalendar만 유효(경합 시 최신 우선)
+    run(renderCalendar);
   };
   const onEnd = (e) => { if (e.target === track) finish(); };
   const timer = setTimeout(finish, TRACK_MS + 150);   // transitionend 유실 대비
   track.addEventListener("transitionend", onEnd);
-  trackSet(track, 1 + dir, true);
+  trackSet(track, 1 + dir, true, CAL_GAP);
 }
 
 function bindCalendarDrag() {
   const host = $("#cal-rows");
   bindCarousel(host, {
     blocked: () => !!S.pick || calBusy,   // 날짜 선택 중엔 탭만 받는다
-    drag: (dx) => trackDrag($("#cal-track"), 1, dx),
+    drag: (dx) => trackDrag($("#cal-track"), 1, dx, CAL_GAP),
     commit: (dir) => calGo(dir),
   });
   host.addEventListener("click", (e) => {

@@ -127,7 +127,7 @@ details.fold[open] summary::before{transform:rotate(90deg)}
 .calbox{margin-top:14px;border:1px solid var(--line);border-radius:18px;
   overflow:hidden;background:var(--card)}
 #cal-rows{position:relative;overflow:hidden}
-.caltrack{display:flex;will-change:transform}
+.caltrack{display:flex;gap:20px;will-change:transform}   /* 달 사이 간격 — app.js CAL_GAP과 일치 (A-4) */
 .calpane{flex:0 0 100%;min-width:0}
 .wkdays{display:grid;grid-template-columns:repeat(7,1fr);padding:9px 2px 5px}
 .wkdays span{font-size:10.5px;color:var(--faint);text-align:left;padding-left:5px;letter-spacing:.05em}

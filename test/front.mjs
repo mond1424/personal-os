@@ -369,7 +369,7 @@ w.calGo(1);
 await sleep(2200);                                   // transitionend 유실 대비 타이머 + 재조립
 const expM = m0 === 12 ? 1 : m0 + 1;
 ok("달 넘김 — 다음 달", ev("S.cal.m") === expM && ev("S.cal.y") === (m0 === 12 ? y0 + 1 : y0), `${m0} → ${ev("S.cal.m")}`);
-ok("넘긴 뒤 트랙은 다시 가운데", tf("#cal-track") === "translateX(-100%)", tf("#cal-track"));
+ok("넘긴 뒤 트랙은 다시 가운데(gap 보정)", tf("#cal-track") === "translateX(calc(-100%-20px))", tf("#cal-track"));
 ok("3-pane 유지", w.document.querySelectorAll("#cal-track .calpane").length === 3);
 w.calGo(-1); await sleep(2200);
 ok("되돌리기 — 원래 달", ev("S.cal.m") === m0 && ev("S.cal.y") === y0, String(ev("S.cal.m")));
