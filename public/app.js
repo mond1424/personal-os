@@ -133,7 +133,7 @@ function bandPaths(dates, periods, rx = capRx(0)) {
  * 레이아웃이 없는 환경에서도 인덱스 상태가 그대로 성립한다.
  * 판정은 거리(25%)와 속도(플릭) 둘 중 하나만 넘으면 된다 — 짧고 빠른 손짓도 넘어가야 한다. */
 const TRACK_MS = 300, TRACK_EASE = "cubic-bezier(.22,.61,.36,1)";
-const TRACK_RATIO = 0.25, FLICK_V = 0.35;   // 화면 폭 비율 · px/ms
+const TRACK_RATIO = 0.35, FLICK_V = 0.5;   // 화면 폭 비율 · px/ms — 민감도 하향(A-5, 폰 실측 미세조정 예정)
 const CAL_GAP = 20;   // 캘린더 달 사이 간격(px). 탭 트랙은 gap=0(불변), 캘린더만 gap 보정을 탄다
 
 // gap>0이면 pane 사이 간격(px)을 위치 계산에 더한다 — %만으로는 gap이 어긋난다
@@ -1575,6 +1575,8 @@ async function runAnalysis() {
 /* ── 탭 전환 · 동기화 ──────────────────────────────────── */
 const TAB_ORDER = ["today", "cal", "works", "anal", "me"];
 const TAB_SCREEN = { today: "scr-today", cal: "scr-cal", works: "scr-works", anal: "scr-anal", me: "scr-me" };
+// 인접 탭 프리렌더 대상 — anal은 렌더 비용이 커서 제외(빈칸 방지가 목적)
+const TAB_RENDER = { today: refreshToday, cal: renderCalendar, works: renderWorks, me: renderMe };
 function switchTab(tab, animate = true) {
   const i = TAB_ORDER.indexOf(tab);
   if (i < 0) return;
@@ -1583,6 +1585,7 @@ function switchTab(tab, animate = true) {
   trackSet($("#tab-track"), i, animate);
   navSlide(i, animate);        // nav 표식도 같은 곡선으로 따라간다
   loadTab(tab);
+  prerenderAdjacent(tab);      // 옆 탭 미리 렌더 (드럼 느낌 — 빈칸 방지)
 }
 function loadTab(tab) {
   if (!S.today) return; // 데이터 준비 전에는 부팅 오버레이가 화면을 덮고 있다
@@ -1591,6 +1594,19 @@ function loadTab(tab) {
   else if (tab === "works") run(renderWorks);
   else if (tab === "anal") run(renderAnalysis);
   else if (tab === "me") run(renderMe);
+}
+// 인접 탭을 idle에 미리 렌더 — 드래그 시작 시 옆 화면이 빈칸이 아니게(드럼 느낌).
+// 데이터 최신성은 탭 진입 시 loadTab 재실행이 담당하고, 여기선 '빈칸 방지'만 한다.
+function prerenderAdjacent(tab) {
+  if (!S.today) return;
+  const i = TAB_ORDER.indexOf(tab);
+  const idle = typeof requestIdleCallback === "function" ? requestIdleCallback : (fn) => setTimeout(fn, 120);
+  idle(() => {
+    for (const j of [i - 1, i + 1]) {
+      const t = TAB_ORDER[j], fn = t && TAB_RENDER[t];
+      if (fn && t !== tab) run(fn);
+    }
+  });
 }
 function syncAll() {
   run(refreshToday);
@@ -1604,7 +1620,7 @@ function syncAll() {
  *
  * 축 잠금은 그대로 둔다 — 세로 스크롤 중 손가락이 옆으로 흐르는 것과 구분하는 유일한 장치다.
  * 다만 '얼마나 갔나'는 이제 손을 뗄 때가 아니라 끄는 내내 화면에 반영된다. */
-const AXIS_LOCK = 10;
+const AXIS_LOCK = 20;   // 축 잠금 임계 — 하향(A-5, 폰 실측 미세조정 예정)
 
 let dragBlockUntil = 0;
 
@@ -1629,7 +1645,7 @@ function bindCarousel(host, opt) {
     const dx = e.clientX - x0, dy = e.clientY - y0;
     if (!axis) {
       if (Math.abs(dx) < AXIS_LOCK && Math.abs(dy) < AXIS_LOCK) return;
-      axis = Math.abs(dx) > Math.abs(dy) * 1.4 ? "x" : "y";
+      axis = Math.abs(dx) > Math.abs(dy) * 1.9 ? "x" : "y";   // 더 확실한 가로만(A-5)
       if (axis === "y") { tracking = false; return; }   // 세로 제스처 — 놓아준다
       host.classList.add("dragging");
       try { host.setPointerCapture(e.pointerId); } catch { /* 무시 */ }
