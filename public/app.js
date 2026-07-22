@@ -500,7 +500,7 @@ async function openDay(k) {
       || `<div class="evrow"><span class="cap">이 날의 일정이 없어요</span></div>`) + `</div>`;
     h += `<button class="btn ghost" style="margin-top:10px" id="ev-add" onclick="openEventSheet('${k}',${closed})">+ 일정 추가</button>`;
     if (day.relation !== "past")
-      h += `<div class="sec-h" style="margin-top:16px"><span class="sec-t">할 일</span><span class="cnt">완료율·미루기가 있는 항목</span></div>
+      h += `<div class="sec-h" style="margin-top:16px"><span class="sec-t">할 일</span><span class="cnt">예정·미루기 이력</span></div>
             <div class="addrow">
               <input type="text" class="n" id="day-add" placeholder="할 일 추가">
               <button class="mok" onclick="addTaskOn('${k}')">추가</button>
@@ -973,11 +973,11 @@ async function openTask(id) {
     let tl = "";
     if (t.entries.length) {
       tl = t.entries.map((e) => {
-        if (e.deferred_to) return `<div class="te">${md(e.date)} · 완료율 ${e.rate}% → 미루기</div>`;
-        if (t.status === "finished") return `<div class="te done-line">${md(e.date)} · 예정${e.rate ? ` · ${e.rate}%` : ""}</div>`;
+        if (e.deferred_to) return `<div class="te">${md(e.date)} → 미루기</div>`;
+        if (t.status === "finished") return `<div class="te done-line">${md(e.date)} · 예정</div>`;
         if (e.date === D) return `<div class="te" style="color:var(--ink);font-weight:600">${md(e.date)} · 예정 (오늘)</div>`;
         if (e.date > D) return `<div class="te">${md(e.date)} · 예정</div>`;
-        return `<div class="te">${md(e.date)} · 완료율 ${e.rate}% — 미완료</div>`;
+        return `<div class="te">${md(e.date)} — 미완료</div>`;
       }).join("");
     } else {
       tl = `<div class="te">대기 · ${t.wait_age}일째</div>`;
@@ -987,24 +987,18 @@ async function openTask(id) {
       tl += `<div class="te" style="color:var(--ink);font-weight:600">${md(t.finished_on)} · 완료 처리</div>`;
     $("#tk-timeline").innerHTML = tl;
 
-    /* 완료율 — '살아 있는(미뤄지지 않은) 마지막 예정'에 매긴다. 서버가 완료 100%를 붙이는 자리와 같다.
-     * 예전에는 date <= 오늘인 항목만 찾았기 때문에, 내일 이후로 잡힌 일은
-     * "예정된 날이 없어요"가 뜨고 완료율을 고를 방법이 아예 없었다.
-     * 완료율은 "그 예정일까지 얼마나 진행했는가"이므로 미래 예정에도 매길 수 있어야 한다. */
+    /* 상태 — '살아 있는(미뤄지지 않은) 마지막 예정'을 기준으로 보여준다.
+     * 완료율은 화면에서 제거(2단계) — 여기선 상태(완료/대기/예정)만 읽기전용으로 표시한다.
+     * 내부 rate·완료(rate=100) 로직·DB는 그대로. 값 표시만 걷어냈다. */
     const live = [...t.entries].reverse().find((e) => !e.deferred_to);
     const locked = !!live && live.day_status === "closed";
-    $("#tk-rate-head").textContent = live ? `완료율 — ${md(live.date)} 예정` : "완료율";
-    // 완료율은 상시 인라인 입력을 걷어내고 읽기전용으로 표시한다(설계 §1.4 복귀).
-    // 값 변경은 '미루기'(defer sheet)와 '하루 마감'(구현 2)에서만, 완료는 완료 버튼.
     $("#tk-rates").innerHTML = t.status === "finished"
-      ? `<span class="ratebig done">완료 · 100%</span>`
+      ? `<span class="ratebig done">완료</span>`
       : !live
-        ? `<span class="cap">대기 중이에요 — 일정을 정하면 완료율이 생겨요.</span>`
+        ? `<span class="cap">대기 중이에요 — 일정을 정하면 예정이 생겨요.</span>`
         : locked
-          ? `<span class="ratebig">${live.rate}%</span>` +
-            `<p class="cap" style="margin-top:8px">${md(live.date)}은 이미 마감됐어요 — 지난 기록은 고칠 수 없어요.</p>`
-          : `<span class="ratebig">${live.rate}%</span>` +
-            `<p class="cap" style="margin-top:8px">완료율은 <b>미루기</b>나 하루 마감 때 정해요. 다 했으면 아래 <b>완료</b>.</p>`;
+          ? `<p class="cap">${md(live.date)}은 이미 마감됐어요 — 지난 기록은 고칠 수 없어요.</p>`
+          : `<p class="cap">${md(live.date)} 예정 — 다 했으면 아래 <b>완료</b>.</p>`;
 
     /* 버튼은 맥락에 맞는 것만 남긴다 —
      *  · 대기 중이면 미룰 예정 자체가 없다 → '미루기'가 아니라 '일정 정하기'
@@ -1077,7 +1071,7 @@ function completeFromSheet(id) {
   run(async () => {
     await Api.complete(id);
     closeAll();
-    toast("완료 100%", "ok");
+    toast("완료", "ok");
     syncAll();
     if ($("#phone").dataset.tab === "cal") renderCalendar();
   });

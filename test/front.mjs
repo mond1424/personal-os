@@ -185,7 +185,7 @@ ok("오늘 팝업에서도 추가 가능", !!$("#day-add") && !!$("#ev-add"));
 ok("오늘 팝업 task = 편집 진입", $("#day-body").innerHTML.includes("openTask("));
 w.closeAll();
 await w.openTask(ev("S.today.todo[0].id")); await sleep(400);
-ok("task 시트 완료율 = 읽기전용(막대 없음)", $("#tk-rates").querySelectorAll(".rbar button").length === 0 && !!$("#tk-rates .ratebig"));
+ok("task 시트 — 완료율 표시 없음(막대·% 없음)", $("#tk-rates").querySelectorAll(".rbar button").length === 0 && !$("#tk-rates").textContent.includes("%"));
 ok("task 삭제 버튼", !!$("#tk-delete"));
 w.closeAll();
 
@@ -402,12 +402,12 @@ ok("취소 — 시트만 닫힘", !$("#sh-event").classList.contains("on"));
 w.closeAll(); await sleep(200);
 await ev(`Api.deleteEvent("${added.id}")`);
 
-// ③ 완료율 — task 시트는 읽기전용(인라인 편집 걷어냄, 설계 §1.4). 편집은 미루기 시트에서만(④에서 검증).
+// ③ 완료율 화면 제거(2단계) — task 시트에 %·막대 없음. 상태(완료/대기/예정)만 읽기전용 표시.
 const T1 = ev("addDaysStr(S.today.date,1)");
 const tFut = (await ev(`Api.createTask({title:"내일 예정 완료율", date:"${T1}"})`)).id;
 await w.openTask(tFut); await sleep(500);
-ok("미래 예정 — 완료율 읽기전용(막대 없음)", $("#tk-rates").querySelectorAll(".rbar button").length === 0 && !!$("#tk-rates .ratebig"));
-ok("완료율 헤더에 대상 예정일 표기", txt("#tk-rate-head").includes("예정"), txt("#tk-rate-head"));
+ok("미래 예정 — 완료율 표시 없음(막대·% 없음)", $("#tk-rates").querySelectorAll(".rbar button").length === 0 && !$("#tk-rates").textContent.includes("%"));
+ok("상태 헤더 표기(완료율 문구 없음)", txt("#tk-rate-head") === "상태", txt("#tk-rate-head"));
 ok("예정 task — '미루기' 라벨", txt("#tk-defer") === "미루기");
 ok("예정 task — 대기 연장 숨김", $("#tk-extend").style.display === "none");
 w.closeAll();
