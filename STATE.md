@@ -3,9 +3,8 @@
 ## 저장소
 - repo: https://github.com/mond1424/personal-os
 - branch: main
-- 마지막 커밋: `865402a` 리팩토링 반영·문서 정리·GitHub 연결
-  - 이 STATE·CLAUDE.md·docs/ 는 뒤이은 문서 커밋에 포함됨.
-  - ⚠️ **아직 push 안 됨** — remote가 404(비공개/미생성 + 비대화형 인증 불가). 사용자가 저장소 확인 후 `git push -u origin main` 필요.
+- 마지막 커밋: `e6ce675` docs: CLAUDE.md·STATE.md·api-surface·schema 스냅샷 추가 (직전: `865402a` 코드)
+  - ✅ **push 완료** (main → origin/main, 2026-07-22). 이 STATE 갱신은 뒤이은 커밋에 포함.
 
 ## raw 링크 (Chat이 직접 읽는 주소)
 - 설계문서(권위) https://raw.githubusercontent.com/mond1424/personal-os/main/personal-agent-design_v0.9.md
@@ -52,7 +51,7 @@ typecheck 통과 / smoke 124 / front 147 / 실패 0
 - `public/{public,src,test,migrations}`·낡은 zip·빈 파일 삭제(노출·잡파일 정리)
 
 ## 미해결 / 다음 할 것
-- ⚠️ **GitHub push** — remote 404. 저장소 존재/이름/공개여부 확인 후 사용자가 `git push -u origin main` (아래 참고)
+- ✅ GitHub push 완료 (main → origin/main).
 - ⚠️ **0006 마이그레이션 apply(local→remote) + deploy** — 사용자 직접 (안 하면 라이브 model_high=claude-sonnet-5, AI 연결 테스트 404)
 - 폰 확인: 완료율 100%=완료·마감일 일정 경고 동작 / 다크모드 색 짝 2건(`.c.mut .d`·`.wkdays span:first-child`) / 세로선 농도
 - 최종 정리(이 리포 밖, 상위 Pos/): 스캐폴딩 중복·대용량 백업 (worker/ git 루트와 무관)
