@@ -1745,6 +1745,44 @@ function bindCalendarDrag() {
   }, true);
 }
 
+/* ── 경계 스트레치 (A-6, #4) ───────────────────────────────
+ * .screen이 최상단/최하단에서 더 당겨질 때만 감쇠 translateY + 스냅백.
+ * 정통 러버밴드(preventDefault)가 아니다 — passive 유지, 네이티브 스크롤이 소비할 게 없는
+ * '끝'에서만 관여한다. 가로 제스처(스와이프)·시트/보드·가로스크롤 영역은 건드리지 않는다.
+ * ⚠️ 기기 실측 필요 — 이상하면 boot()의 bindEdgeStretch() 호출 한 줄만 지우면 꺼진다. */
+const STRETCH_MAX = 48, STRETCH_K = 0.3;
+function bindEdgeStretch() {
+  const noStretch = (el) => !!(el && el.closest && el.closest(".bchart,.wsegs,.seg,.seg-mini,.likert,.dcol,input,textarea"));
+  $$(".screen").forEach((sc) => {
+    let y0 = 0, x0 = 0, on = false, cap = 0;
+    sc.addEventListener("pointerdown", (e) => {
+      if (noStretch(e.target)) { on = false; return; }
+      y0 = e.clientY; x0 = e.clientX; on = true;
+      cap = sc.scrollHeight - sc.clientHeight;   // 세로 스크롤 여유
+    }, { passive: true });
+    sc.addEventListener("pointermove", (e) => {
+      if (!on) return;
+      const dy = e.clientY - y0, dx = e.clientX - x0;
+      if (Math.abs(dy) <= Math.abs(dx)) return;   // 가로 제스처는 스와이프 몫
+      let s = 0;
+      if (sc.scrollTop <= 0 && dy > 0) s = Math.min(dy * STRETCH_K, STRETCH_MAX);
+      else if (sc.scrollTop >= cap - 1 && dy < 0) s = Math.max(dy * STRETCH_K, -STRETCH_MAX);
+      if (s) { sc.style.transition = "none"; sc.style.transform = `translateY(${s}px)`; }
+      else if (sc.style.transform) sc.style.transform = "";
+    }, { passive: true });
+    const release = () => {
+      if (!on) return;
+      on = false;
+      if (sc.style.transform) {
+        sc.style.transition = `transform ${TRACK_MS}ms ${TRACK_EASE}`;
+        sc.style.transform = "";
+      }
+    };
+    sc.addEventListener("pointerup", release, { passive: true });
+    sc.addEventListener("pointercancel", release, { passive: true });
+  });
+}
+
 /* ── 부트 ──────────────────────────────────────────────────
  * 바인딩은 한 번, 데이터 로드는 실패 시 재시도할 수 있게 분리한다.
  * 로드 전에는 오버레이가 화면을 덮어 조작(=날짜 없는 렌더)을 막는다. */
@@ -1877,6 +1915,7 @@ async function boot() {
   applyTheme();
   bindSwipe();
   bindCalendarDrag();
+  bindEdgeStretch();       // 경계 스트레치 (A-6) — 문제 시 이 줄만 제거하면 꺼짐
   switchTab($("#phone").dataset.tab || "today", false);   // 트랙 초기 위치
   $("#tut-next").onclick = () => { tutStep++; if (tutStep >= TUT.length) endTutorial(); else renderTut(); };
   $("#tut-skip").onclick = endTutorial;
