@@ -131,7 +131,9 @@ details.fold[open] summary::before{transform:rotate(90deg)}
 .calpane{flex:0 0 100%;min-width:0}
 .wkdays{display:grid;grid-template-columns:repeat(7,1fr);padding:9px 2px 5px}
 .wkdays span{font-size:10.5px;color:var(--faint);text-align:left;padding-left:5px;letter-spacing:.05em}
-.wkdays span:first-child{color:#C77}
+.wkdays span:first-child{color:#C77}   /* 일요일 — 라이트 */
+:root[data-theme="dark"] .wkdays span:first-child{color:#C88}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .wkdays span:first-child{color:#C88}}
 /* 행 경계 = 박스 배경색 두께. 밴드가 주 단위로 끊기면서 셀의 경계가 드러난다.
    height는 96(내용) + 3(경계) — 셀 안쪽 높이는 그대로 유지된다. */
 .cal-row{position:relative;height:99px;border-top:3px solid var(--card)}
@@ -141,7 +143,7 @@ details.fold[open] summary::before{transform:rotate(90deg)}
 .c{padding:2px 3px 0 4px;position:relative;min-width:0}
 .c + .c{border-left:1px solid rgba(38,34,28,.035)}   /* 있는 듯 없는 듯 — 밴드의 흐름을 끊지 않을 만큼만 */
 .c .d{font-size:10.5px;line-height:1;color:var(--sub)}
-.c.mut .d{color:#CFC9BD}
+.c.mut .d{color:var(--faint)}   /* 다른 달 날짜 — 두 모드 모두 --sub보다 항상 흐리게(#3) */
 .dr{display:block;width:10px;height:2.5px;border-radius:2px;background:var(--faint);margin:3px 0 0 1px}
 .c.today .d{display:inline-grid;place-items:center;width:17px;height:17px;
   background:var(--ink);color:var(--paper);border-radius:50%;font-size:10px}

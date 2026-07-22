@@ -121,7 +121,7 @@
 - [ ] 대용량 백업 정리: `worker_backup_2026-07-20/`(200MB) 압축 여부 — sector0
 - [ ] `새 폴더/`(최신 zip 이미 반영됨, 참고용) 처리 — sector0
 - [x] ~~README API 표 갱신~~ — 개발 README 보강 시 **전체 API 표 포함으로 해소**(후속)
-- [ ] **폰 확인 후** 시각 조정: 다크모드 색 짝(`.c.mut .d`·`.wkdays span:first-child`) + 세로선 농도(`.c + .c` `.035`) — sector8
+- [~] 다크모드 색 짝(`.c.mut .d`→`var(--faint)` · `.wkdays span:first-child` 다크 오버라이드) **코드 반영(A-1, #3)** · 세로선 농도(`.c + .c` `.035`)는 폰 확인 후 — sector8
 
 ---
 
