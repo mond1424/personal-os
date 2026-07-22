@@ -1,6 +1,6 @@
 -- Personal OS · D1 스키마 스냅샷 (자동 생성 — 손으로 고치지 말 것)
--- 적용 마이그레이션: 0001_init · 0002_models · 0003_ai_provider · 0004_events · 0005_delete_scope · 0006_fix_model_high
--- 생성일: 2026-07-22
+-- 적용 마이그레이션: 0001_init · 0002_models · 0003_ai_provider · 0004_events · 0005_delete_scope · 0006_fix_model_high · 0007_defer_reason
+-- 생성일: 2026-07-23
 -- 재생성: migrations/ 전체를 인메모리 sqlite에 적용한 뒤 sqlite_master를 덤프한다.
 --         (새 마이그레이션 추가 시 이 파일도 다시 만든다 — 세션 종료 규칙, CLAUDE.md 참조)
 
@@ -109,8 +109,7 @@ CREATE TABLE schedule_entries (
   deferred_to TEXT,                  -- 미루기 대상 날짜
   deferred_at TEXT,
   created_at  TEXT NOT NULL,
-  defer_reason TEXT,                  -- 미루기 사유 (0007) — 도착지(새 예정) 항목에 남김
-                                     -- ⚠️ 실제 ALTER ADD COLUMN은 테이블 끝에 붙는다. 세션 종료 시 재덤프로 정합.
+  defer_reason TEXT,                  -- 미루기 사유 (0007 ALTER 추가) — 도착지(새 예정) 항목에 남김
   UNIQUE (task_id, date),
   CHECK ((deferred_to IS NULL) = (deferred_at IS NULL)),
   CHECK (deferred_to IS NULL OR deferred_to > date)

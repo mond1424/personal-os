@@ -36,8 +36,9 @@
 - style.css      https://raw.githubusercontent.com/mond1424/personal-os/main/public/style.css
 
 ## 기준선
-typecheck 통과 / smoke 127 / front 145 / 실패 0
-(2단계에서 smoke 124→127: 미루기 사유 저장 검사 3개 추가. front는 145 유지: 미루기 시트 완료율 바 검사→사유 입력 검사로 교체, 개수 동일.)
+typecheck 통과 / smoke 129 / front 151 / 실패 0
+(2단계 smoke 124→127: 미루기 사유 저장 검사 3개. front 145 유지: 완료율 바 검사→사유 검사 교체.
+ 3단계 smoke 127→129: memo 어느 날짜에든 + diary 마커 검사. front 145→151: 통합 추가영역 세그·미래 memo 검사 6개.)
 
 ## 마이그레이션
 최신: `0007_defer_reason` (0001_init · 0002_models · 0003_ai_provider · 0004_events · 0005_delete_scope · 0006_fix_model_high · 0007_defer_reason)
@@ -58,7 +59,11 @@ typecheck 통과 / smoke 127 / front 145 / 실패 0
   - **2단계 보강**(사용자 지시): task 상세 시트(`#tk-rates`)의 완료율도 제거 — 헤더 `완료율`→`상태`, 본문 `{n}%`/문구를 상태(완료/대기/예정)로, SCHEDULE 이력의 `완료율 {n}%` 제거, 완료 버튼 `완료 100%`→`완료`, 완료 토스트 `완료 100%`→`완료`, 날짜 시트 '할 일' 부제 `완료율·미루기…`→`예정·미루기 이력`. 이제 리스트·날짜 시트·미루기 시트·상세 시트 **어디에도 % 없음**. `rbar`/`rateSet`/`setRate`/DB·완료(rate=100) 로직은 유지(B-1 재사용 대비).
   - `defer_reason` 분석 화면 노출은 향후.
   - 검증: typecheck 통과 · smoke 124→127 · front 145 · 실패 0.
-- 3단계(memo 통합)는 **미착수** — WORK-PLAN-0723.md 참조.
+- **3단계 완료** (memo 통합 — 어느 날짜에든 + 날짜 시트 통합 입력 폼, **신규 마이그레이션 없음**):
+  - 3-a `memos.ts addMemo`: daily 없으면 404 대신 `stOpenDaily`(기존 INSERT…ON CONFLICT DO NOTHING)로 open daily ensure 후 memo 붙임. → 과거·오늘·미래 어디든 memo.
+  - 3-a `db.calDiaryDates`: 캘린더 `.dr` 마커가 **빈 daily**를 오인하지 않게, `status=closed` 또는 score/feelings/logs/memos가 실제로 있는 날만 반환하도록 변경(빈 자동 daily 제외, memo 있는 날은 포함).
+  - 3-b `app.js openDay`: 흩어진 3개 추가 UI(일정 버튼·`#day-add` 할일·`#memo-input` memo)를 **통합 추가영역** `addZoneHtml(k,relation,closed)` + `setAddMode`로 합침. 세그 `[일정|할 일|memo]`, relation별 가용(past=일정·memo / today·future=셋 다). 일정은 기존 `openEventSheet`(시각 드럼·마감 경고) 재사용, 할일·memo는 인라인(`addTaskOn`/`sendMemo` 그대로). memo 표시는 전 relation으로 확장.
+  - 검증: typecheck 통과 · smoke 127→129 · front 145→151 · 실패 0.
 
 ## 최근 세션에서 바뀐 것 (UX 개선 A-1~A-6)
 - A-1 [#3] `public/style.css` — 다크모드 캘린더 색: 다른 달 날짜 `var(--faint)`, 일요일 헤더 다크 오버라이드
@@ -70,7 +75,7 @@ typecheck 통과 / smoke 127 / front 145 / 실패 0
 - **기준선 smoke 124 · front 147→145**(A-3에서 인라인 완료율 검사를 미루기 시트 재탭 검사로 이동·통합). 매 커밋 전 검증, 실패 0
 
 ## 미해결 / 다음 할 것
-- ⚠️ **로컬 worker 전체 갱신 완료 → 사용자 배포 필요**: `wrangler d1 migrations apply personal-os --local`→`--remote` + `npm run deploy`. (미적용 0006 포함 — 안 하면 라이브 model_high=claude-sonnet-5, AI 연결 테스트 404)
+- ⚠️ **로컬 worker 전체 갱신 완료 → 사용자 배포 필요**: `wrangler d1 migrations apply personal-os --remote` + `npm run deploy`. (미적용 **0006·0007** — 0006 안 하면 라이브 model_high=claude-sonnet-5·AI 연결 404, 0007 안 하면 미루기 사유 저장 시 컬럼 없음 오류. 로컬은 0007까지 적용 완료.)
 - **폰 실측 후 미세조정**(이번 세션 산출, 코드 주석에도 표시): 스와이프 민감도 상수(AXIS_LOCK·축비·TRACK_RATIO·FLICK_V) · 캘린더 gap(20px) · 경계 스트레치 on/off(boot의 `bindEdgeStretch()`) · 다크모드 색(다른달·일요일) · 세로선 농도
 - **다음 세션 구현 대기 (B, 미착수)**: B-1[#5 Phase2] 미완료 전환/수동 마감 시 완료율 입력 · B-2[#6] light task 플래그(신호 오염 금지) · B-3[#8] 튜토리얼 상세화(step3 전 필수) · B-4[#4] 러버밴드 원안 보류 기록 → REFACTOR-PLAN "재구상/보류" 정리 예정
 - 최종 정리(리포 밖 상위 Pos/): 스캐폴딩 중복·대용량 백업
@@ -80,3 +85,4 @@ typecheck 통과 / smoke 127 / front 145 / 실패 0
 - **events 마감일 추가** — 마감된 날에도 일정 추가 허용(1.3 "과거엔 추가만 가능"과 정합, 경고문 표시). 설계 위반 아님, 명시적 결정.
 - **완료율 화면 제거(2단계+보강, 2026-07-23)** — 완료율 개념을 **화면에서 전면 제거**(리스트·날짜 시트·미루기 시트·**task 상세 시트**). DB `rate` 컬럼·`completeTask`의 `rate=100` 완료 신호·`setRate`/`rbar` 경로는 **물리적으로 유지**(되돌리기 쉽게, 완료 로직 안전, B-1 재사용 대비). 물리적 소거는 향후 별도.
 - **미루기 사유 도착지 보존** — 사유(`defer_reason`)는 원 항목이 아니라 **도착지(새 예정) 항목**에 남긴다. 마감된 날의 원 항목은 트리거가 수정을 막으므로, 열린 날/재배정 두 갈래 모두 균일하게 도착지에 붙여 보존.
+- **memo 개념 확장(3단계, 2026-07-23)** — 설계 §1.3 "memo = 마감 후 유일한 추가 통로"를 **"memo = 어느 날짜에든 붙는 짧은 노트(마감된 날은 여전히 불변)"**로 확장. daily 없으면 자동으로 빈 open daily를 만들어 붙인다(마감된 날의 불변은 트리거가 계속 강제). 빈 daily가 캘린더 '기록 있는 날' 마커로 오인되지 않도록 `calDiaryDates`를 내용 기준으로 조정. **문서 v1.0 갱신은 사용자 지시로 연기 중이나, 이 확장은 명시적 결정으로 여기 기록.**

@@ -30,7 +30,7 @@
 | POST `/api/tasks` | `{title, period_id?, date?}` | `{id, title, waiting}` (201) | `tasks.createTask` |
 | GET `/api/tasks/:id` | — | stats + `{wait_age, entries, extensions}` | `tasks.getTask` |
 | PATCH `/api/tasks/:id` | `{title?, period_id?}` | `{id, title, period_id}` | `tasks.updateTaskMeta` |
-| POST `/api/tasks/:id/defer` | `{from, to, rate?}` | `{id, from, to, reassigned, rate}` | `tasks.deferTask` |
+| POST `/api/tasks/:id/defer` | `{from, to, rate?, reason?}` | `{id, from, to, reassigned, rate, reason?}` | `tasks.deferTask` |
 | POST `/api/tasks/:id/schedule` | `{date}` | `{id, date}` | `tasks.scheduleTask` |
 | POST `/api/tasks/:id/extend` | — | `{id, anchor, deadline}` | `tasks.extendWait` |
 | POST `/api/tasks/:id/complete` | — | `{id, finished_on, planned_on, rate_applied}` | `tasks.completeTask` |
@@ -86,7 +86,7 @@
 - `createTask(env, t, {title?, period_id?, date?})` → `{id, title, waiting}`
 - `getTask(env, t, id)` → stats + `{wait_age, entries, extensions}`
 - `updateTaskMeta(env, id, {title?, period_id?})` → `{id, title, period_id}`
-- `deferTask(env, t, id, from, to, rate?)` → `{id, from, to, reassigned, rate}` · **stSetRate→stMarkDeferred 순서**, 마감된 날은 재배정(insert-only, rate 무시)
+- `deferTask(env, t, id, from, to, rate?, reason?)` → `{id, from, to, reassigned, rate, reason?}` · **순서 stSetRate→stMarkDeferred→stInsertEntry→stSetDeferReason(도착지)**, 마감된 날은 재배정(insert-only, rate 무시). rate는 화면 입력에서 제거(2단계)되고 사유가 대신 저장됨
 - `scheduleTask(env, t, id, date)` → `{id, date}` · 대기→확정
 - `extendWait(env, t, id)` → `{id, anchor, deadline}` · 앵커=now(이력은 트리거)
 - `completeTask(env, t, id)` → `{id, finished_on, planned_on, rate_applied}` · live 항목 rate 100(마감된 날은 안 건드림)
@@ -106,8 +106,8 @@
 - `update(env, id, input)` → `{...}` · 마감일 트리거 409
 - `remove(env, id)` → `{id, deleted}` · 마감일 트리거 409
 
-### memos.ts — 마감 후 유일 추가 통로
-- `addMemo(env, t, {date, ts?, text})` → `{id, date}` · 기존 daily에만, +daily summary stale
+### memos.ts — 어느 날짜에든 붙는 짧은 노트(3단계)
+- `addMemo(env, t, {date, ts?, text})` → `{id, date}` · 과거·오늘·미래 어디든. daily 없으면 `stOpenDaily`로 빈 open daily ensure 후 붙임(마감된 날 불변은 트리거 유지) · +daily summary stale
 
 ### me.ts — Me·설정
 - `getMe(env, t)` → `{fields, now}` · '지금'=활성 기간 goals 조인 파생

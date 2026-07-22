@@ -435,12 +435,47 @@ function paintScore() {
   });
 }
 
+/* ── 날짜 시트 통합 추가 영역 (3단계) ──────────────────────────
+ * [일정 | 할 일 | memo] 세그로 하나의 추가 영역을 만든다. relation별 가용 세그:
+ *   past  : [일정 | memo]        (지난 날엔 할 일을 새로 못 만든다)
+ *   today : [일정 | 할 일 | memo]
+ *   future: [일정 | 할 일 | memo]
+ * 일정은 시각 드럼이 있는 기존 일정 시트(openEventSheet)를 재사용한다(마감된 날 경고 포함).
+ * 할 일·memo는 인라인 — 기존 addTaskOn/sendMemo를 그대로 부른다. */
+let azMode = "task", azKey = null;
+const AZ_LABEL = { event: "일정", task: "할 일", memo: "memo" };
+const azModesFor = (relation) => (relation === "past" ? ["event", "memo"] : ["event", "task", "memo"]);
+function addZoneHtml(k, relation, closed) {
+  const modes = azModesFor(relation);
+  if (!modes.includes(azMode)) azMode = relation === "past" ? "memo" : "task";
+  const seg = modes.map((m) =>
+    `<button data-m="${m}" class="${m === azMode ? "on" : ""}" onclick="setAddMode('${m}')">${AZ_LABEL[m]}</button>`).join("");
+  const field = (m, inner) => `<div class="az-field" data-m="${m}"${m === azMode ? "" : ' style="display:none"'}>${inner}</div>`;
+  let h = `<div class="sec-h" style="margin-top:16px"><span class="sec-t">추가</span></div>`;
+  h += `<div class="seg" id="az-seg" style="margin-top:8px">${seg}</div>`;
+  h += field("event",
+    `<button class="btn ghost" style="margin-top:10px" id="ev-add" onclick="openEventSheet('${k}',${closed})">+ 일정 추가 (시각·종일 선택)</button>`);
+  if (modes.includes("task"))
+    h += field("task",
+      `<div class="addrow"><input type="text" class="n" id="day-add" placeholder="할 일 추가"><button class="mok" onclick="addTaskOn('${k}')">추가</button></div>`);
+  h += field("memo",
+    `<div class="memobox" style="margin-top:10px"><span class="mtime mono">${hm(isoNowLocal())}</span><input type="text" id="memo-input" placeholder="memo 추가"><button class="mok" onclick="sendMemo('${k}')">확인</button></div>` +
+    `<p class="cap" style="margin-top:7px">${closed ? "확정 기록 — 수정 불가, memo만 추가돼요." : "memo는 어느 날짜에든 남길 수 있어요 — 나중에 분석에서 볼 수 있어요."}</p>`);
+  return h;
+}
+function setAddMode(m) {
+  azMode = m;
+  $$("#az-seg button").forEach((b) => b.classList.toggle("on", b.dataset.m === m));
+  $$(".az-field").forEach((f) => (f.style.display = f.dataset.m === m ? "" : "none"));
+}
+
 /* ── 날짜 팝업 (E — 조인 조립) ─────────────────────────── */
 async function openDay(k) {
   if (S.pick) { if (pickable(k)) assignDate(k); return; }
   await run(async () => {
     const day = await Api.day(k);
     const D = S.today.date;
+    if (azKey !== k) { azKey = k; azMode = day.relation === "past" ? "memo" : "task"; }
     let h = `<div class="sh-t">${dlabel(k)}</div>`;
     const st = day.relation === "today" ? "작성 중"
       : day.relation === "future" ? "예정"
@@ -478,16 +513,11 @@ async function openDay(k) {
       if (day.logs.length)
         h += `<div class="card" style="margin-top:9px;padding:6px 14px">` + day.logs.map((l) =>
           `<div class="lrow"><span class="ts mono">${hm(l.ts)}</span><span>${esc(l.text)}</span></div>`).join("") + `</div>`;
-      if (day.memos.length)
-        h += `<div class="card" style="margin-top:9px;padding:6px 14px">` + day.memos.map((m) =>
-          `<div class="lrow"><span class="ts mono">${hm(m.ts)}</span><span>${esc(m.text)} <span class="cap">memo</span></span></div>`).join("") + `</div>`;
-      h += `<div class="memobox">
-          <span class="mtime mono">${hm(isoNowLocal())}</span>
-          <input type="text" id="memo-input" placeholder="memo 추가">
-          <button class="mok" onclick="sendMemo('${k}')">확인</button>
-        </div>
-        <p class="cap" style="margin-top:7px">확정 기록 — 수정 불가, memo만 추가. 추가 시 해당 summary는 stale 처리돼요.</p>`;
     }
+    // memo 표시 — 어느 날짜에든(3단계): 과거·오늘·미래 모두. 추가는 아래 통합 영역에서.
+    if (day.memos.length)
+      h += `<div class="card" style="margin-top:9px;padding:6px 14px">` + day.memos.map((m) =>
+        `<div class="lrow"><span class="ts mono">${hm(m.ts)}</span><span>${esc(m.text)} <span class="cap">memo</span></span></div>`).join("") + `</div>`;
     // 일정 — 캘린더에서만 다루는 사건 (할 일과 분리).
     // 마감된 날에도 일정은 추가할 수 있다 (1.3 "과거엔 추가만 가능") — 단 추가하면 수정·삭제가
     // 막히므로 시트에서 경고한다. 삭제(×)는 '마감 안 된 날'에만 보인다(마감된 날은 트리거가 막는다).
@@ -498,13 +528,8 @@ async function openDay(k) {
       `<div class="evrow"><span class="et mono">${e.time || "종일"}</span><span class="en">${esc(e.title)}</span>` +
       (closed ? "" : `<button class="ex" onclick="removeEvent('${e.id}','${k}')">×</button>`) + `</div>`).join("")
       || `<div class="evrow"><span class="cap">이 날의 일정이 없어요</span></div>`) + `</div>`;
-    h += `<button class="btn ghost" style="margin-top:10px" id="ev-add" onclick="openEventSheet('${k}',${closed})">+ 일정 추가</button>`;
-    if (day.relation !== "past")
-      h += `<div class="sec-h" style="margin-top:16px"><span class="sec-t">할 일</span><span class="cnt">예정·미루기 이력</span></div>
-            <div class="addrow">
-              <input type="text" class="n" id="day-add" placeholder="할 일 추가">
-              <button class="mok" onclick="addTaskOn('${k}')">추가</button>
-            </div>`;
+    // 통합 추가 영역 — [일정 | 할 일 | memo] (relation별 가용 세그). 기존 함수 재사용.
+    h += addZoneHtml(k, day.relation, closed);
     if (day.relation === "today")
       h += `<button class="btn ghost" style="margin-top:10px" onclick="closeAll();switchTab('today')">Today 탭 열기 — 기분·Log·마감</button>`;
     $("#day-body").innerHTML = h;
@@ -539,7 +564,7 @@ function sendMemo(k) {
   if (!v) return;
   run(async () => {
     await Api.memo(k, isoNowLocal(), v);
-    toast("memo 추가 — summary는 stale 처리됐어요", "ok");
+    toast("memo 추가됨", "ok");
     openDay(k);
   });
 }

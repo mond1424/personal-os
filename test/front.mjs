@@ -402,6 +402,25 @@ ok("취소 — 시트만 닫힘", !$("#sh-event").classList.contains("on"));
 w.closeAll(); await sleep(200);
 await ev(`Api.deleteEvent("${added.id}")`);
 
+// ②.5 통합 추가 영역 (3단계) — [일정|할 일|memo] 세그 · 어느 날짜에든 memo
+const AZF = ev("addDaysStr(S.today.date,4)");   // 미래
+await w.openDay(AZF); await sleep(600);
+ok("추가영역 세그 3개(미래: 일정·할일·memo)", $("#az-seg").querySelectorAll("button").length === 3);
+ok("미래 기본 세그 = 할 일", $("#az-seg").querySelector("button.on")?.dataset.m === "task");
+ok("과거 추가영역 = 일정·memo만(할 일 세그 없음)",
+  (() => { const s = w.addZoneHtml("2020-01-01", "past", true); return s.includes('data-m="event"') && s.includes('data-m="memo"') && !s.includes('data-m="task"'); })());
+w.setAddMode("memo"); await sleep(120);
+ok("memo 세그 전환 — memo 입력 노출", !!$("#memo-input") && $('.az-field[data-m="memo"]').style.display !== "none");
+$("#memo-input").value = "미래에 남기는 memo";
+$('.az-field[data-m="memo"] .mok').dispatchEvent(new w.Event("click"));
+await sleep(1200);
+const azDay = await ev(`Api.day("${AZF}")`);
+ok("미래 날짜 memo 저장(daily 자동 생성)",
+  azDay.memos.some((m) => m.text === "미래에 남기는 memo") && !!azDay.daily, JSON.stringify(azDay.memos));
+await w.openDay(AZF); await sleep(500);
+ok("미래 날짜 시트에 memo 표시", $("#day-body").innerHTML.includes("미래에 남기는 memo"));
+w.closeAll(); await sleep(150);
+
 // ③ 완료율 화면 제거(2단계) — task 시트에 %·막대 없음. 상태(완료/대기/예정)만 읽기전용 표시.
 const T1 = ev("addDaysStr(S.today.date,1)");
 const tFut = (await ev(`Api.createTask({title:"내일 예정 완료율", date:"${T1}"})`)).id;

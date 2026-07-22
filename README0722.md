@@ -23,7 +23,7 @@ src/
 │   tasks.ts       생성 · 미루기/재배정 · 일정 확정 · 대기 연장 · 완료 · 완료율 · Works
 │   periods.ts     기간 CRUD + 달성률·경과일 파생
 │   events.ts      일정(event) — 캘린더 전용 사건(완료 개념 없음, task와 분리)
-│   memos.ts       memo 추가 + summary stale 연쇄
+│   memos.ts       memo 추가(어느 날짜에든 · daily 없으면 자동 ensure) + summary stale 연쇄
 │   me.ts          Me 필드(+이력) · '지금' 파생 · settings 검증
 │   analysis.ts    조회 + 5.2 컨텍스트 조립 + 5.3 2-pass 생성 (구현 2)
 │   guard.ts       구현 3 자리 (이벤트 조회만)
@@ -90,7 +90,7 @@ npm run deploy
 | GET `/api/calendar?start&end` | 월 그리드 (기간 밴드·셀 글줄·일기 마커·일정) |
 | GET `/api/days/:date` | 날짜 팝업 조립 (과거는 done/deferred/missed 분류) |
 | GET `/api/diary?limit` | 일기 몰아 읽기 목록 |
-| POST `/api/memos` | memo 추가 (+daily summary stale) |
+| POST `/api/memos` | memo 추가 — 어느 날짜에든(과거·오늘·미래), daily 없으면 자동 ensure (+daily summary stale) |
 | GET `/api/works/:seg` | scheduled · waiting · deferring · periods · done |
 | POST `/api/tasks` | 생성 — `date` 없으면 대기 |
 | GET · PATCH · DELETE `/api/tasks/:id` | 상세 · title/period 변경 · 취소(마감 기록 있으면 409, 사유를 날짜로) |

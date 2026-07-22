@@ -142,11 +142,21 @@ ok("마감 후 Log 추가 → 409 번역", (await api("POST", "/api/logs", { tex
 ok("마감 후 Score 수정 → 409", (await api("PUT", "/api/daily/score", { score: 9 })).status === 409);
 ok("마감 후 다이얼 → 동결 409", (await api("PUT", `/api/tasks/${tA}/rate`, { date: D, rate: 90 })).status === 409);
 
-// ── 5. memo — 유일한 추가 통로 + stale ────────────────────────
-console.log("\n[5] memo → summary stale");
+// ── 5. memo — 어느 날짜에든(3단계) + summary stale ──────────────
+console.log("\n[5] memo — 어느 날짜에든 + stale");
 ok("memo 추가 201", (await api("POST", "/api/memos", { date: D, text: "마감 후 소회" })).status === 201);
 ok("daily summary stale=1", raw.prepare("SELECT stale FROM summaries WHERE kind='daily' AND key=?").get(D)!.stale === 1);
-ok("일기 없는 날 memo 404", (await api("POST", "/api/memos", { date: "2001-01-01", text: "x" })).status === 404);
+// 3단계: memo는 어느 날짜에든 붙는다 — daily가 없으면 자동으로 open daily를 만들고 붙인다(404 폐기).
+// (미래일로 검증 — 과거 open daily는 뒤의 autoClose 테스트에 섞이므로.)
+const memoFut = addDays(D, 6);
+ok("일기 없던(미래) 날 memo도 201(daily 자동 생성)",
+  (await api("POST", "/api/memos", { date: memoFut, text: "미래 메모" })).status === 201);
+const futDay = (await api("GET", `/api/days/${memoFut}`)).json;
+ok("빈 open daily가 생기고 memo가 붙음 · relation=future",
+  futDay.daily?.status === "open" && futDay.relation === "future" && futDay.memos.some((m: any) => m.text === "미래 메모"));
+// 빈 daily가 아니라 '내용 있는 날'만 캘린더 마커 대상 — memo 있으면 대상
+const calMemo = (await api("GET", `/api/calendar?start=${D}&end=${addDays(D, 7)}`)).json;
+ok("memo 있는 미래일도 diary 마커 대상", calMemo.diary.some((x: any) => x.date === memoFut));
 
 // ── 6. 재배정 — 마감된 날에서의 미루기 (v0.8 재배정 대기) ─────
 console.log("\n[6] 재배정 — 원 항목 동결 유지, 새 예정만");

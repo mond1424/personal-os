@@ -11,11 +11,12 @@ export async function addMemo(
 ) {
   if (!isDate(input.date)) throw new ApiError(400, "date 형식은 YYYY-MM-DD");
   if (!input.text?.trim()) throw new ApiError(400, "text가 비어 있어요");
-  if (!(await db.getDaily(env, input.date)))
-    throw new ApiError(404, "그 날의 일기가 없어요 — memo는 기존 기록에만 붙어요");
 
   const id = await nextId(env, "memos", t.compact);
   await env.DB.batch([
+    // memo는 어느 날짜에든 붙는다(3단계) — daily가 없으면 빈 open 행을 만들어 붙인다.
+    // 마감된 날의 불변은 트리거가 계속 지킨다(memo insert는 마감돼도 허용).
+    db.stOpenDaily(env, input.date, t.now),
     db.stInsertMemo(env, id, input.date, input.ts ?? t.now, input.text.trim(), t.now),
     db.stStaleSummary(env, "daily", input.date),
     // weekly·monthly stale 연쇄는 키 규약과 함께 구현 2에서 (4장)

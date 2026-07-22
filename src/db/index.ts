@@ -92,8 +92,17 @@ export const calEntries = (env: Env, start: string, end: string) => q(env, `
     deferred_to: string | null; color: string | null;
   }>();
 
+// 캘린더 '기록 있는 날' 마커(.dr): 빈 daily(자동 생성)를 오인하지 않게 실제 내용이 있는 날만.
+// (3단계: memo가 어느 날짜에든 open daily를 만들 수 있으므로 daily 행 존재만으로는 부족.)
 export const calDiaryDates = (env: Env, start: string, end: string) =>
-  q(env, "SELECT date, status FROM daily WHERE date BETWEEN ? AND ? ORDER BY date")
+  q(env, `SELECT d.date, d.status FROM daily d
+          WHERE d.date BETWEEN ? AND ?
+            AND (d.status = 'closed'
+                 OR d.score IS NOT NULL
+                 OR d.feelings_text IS NOT NULL
+                 OR EXISTS (SELECT 1 FROM logs l WHERE l.date = d.date)
+                 OR EXISTS (SELECT 1 FROM memos m WHERE m.date = d.date))
+          ORDER BY d.date`)
     .bind(start, end).all<{ date: string; status: string }>();
 
 // ── E. 날짜 팝업 조각 ────────────────────────────────────────
