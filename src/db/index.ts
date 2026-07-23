@@ -93,17 +93,29 @@ export const calEntries = (env: Env, start: string, end: string) => q(env, `
   }>();
 
 // 캘린더 '기록 있는 날' 마커(.dr): 빈 daily(자동 생성)를 오인하지 않게 실제 내용이 있는 날만.
-// (3단계: memo가 어느 날짜에든 open daily를 만들 수 있으므로 daily 행 존재만으로는 부족.)
+// (3단계: memo는 셀 본문에 직접 나오므로 마커에서 제외 — 마커는 '마감·점수·감정·로그'만 의미.)
 export const calDiaryDates = (env: Env, start: string, end: string) =>
   q(env, `SELECT d.date, d.status FROM daily d
           WHERE d.date BETWEEN ? AND ?
             AND (d.status = 'closed'
                  OR d.score IS NOT NULL
                  OR d.feelings_text IS NOT NULL
-                 OR EXISTS (SELECT 1 FROM logs l WHERE l.date = d.date)
-                 OR EXISTS (SELECT 1 FROM memos m WHERE m.date = d.date))
+                 OR EXISTS (SELECT 1 FROM logs l WHERE l.date = d.date))
           ORDER BY d.date`)
     .bind(start, end).all<{ date: string; status: string }>();
+
+// 캘린더 셀 memo 줄: 날짜별 대표 1건(가장 이른 ts) + 총 개수만. 전문은 날짜 팝업에서.
+export const calMemos = (env: Env, start: string, end: string) =>
+  q(env, `
+    SELECT m.date,
+           COUNT(*) AS n,
+           (SELECT m2.text FROM memos m2
+             WHERE m2.date = m.date ORDER BY m2.ts LIMIT 1) AS text
+    FROM memos m
+    WHERE m.date BETWEEN ? AND ?
+    GROUP BY m.date
+    ORDER BY m.date`)
+    .bind(start, end).all<{ date: string; n: number; text: string }>();
 
 // ── E. 날짜 팝업 조각 ────────────────────────────────────────
 export const periodsAt = (env: Env, k: string) =>

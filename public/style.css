@@ -441,6 +441,10 @@ nav,.logbar{background:var(--bar)}
  * 취소선이 안 번진다. 명시 상속으로 완료·이동 취소선을 제목에 유지한다. */
 .ev .etxt{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-decoration:inherit}
 .ev.tsum b{font-weight:700;color:var(--faint);font-size:8.5px;flex:none}
+/* memo 줄 — 종류는 좌측 보더로 인코딩. 보더 있음 = 행동할 것(일정·할 일),
+ * 보더 없음(transparent, 폭은 유지해 글자 시작 위치 정렬) = 적어둔 것(memo). +n은 .etxt로 분리. */
+.ev.memo{display:flex;align-items:baseline;gap:3px;border-left-color:transparent;color:var(--faint);font-weight:500}
+.ev.memo b{flex:none;font-weight:600;color:var(--faint);font-size:8.5px}
 .ev.exam{background:var(--brick);color:#fff;padding-left:3px}
 
 /* 일정 = 사건, 할 일과 구분 */

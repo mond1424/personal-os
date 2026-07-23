@@ -154,9 +154,10 @@ ok("일기 없던(미래) 날 memo도 201(daily 자동 생성)",
 const futDay = (await api("GET", `/api/days/${memoFut}`)).json;
 ok("빈 open daily가 생기고 memo가 붙음 · relation=future",
   futDay.daily?.status === "open" && futDay.relation === "future" && futDay.memos.some((m: any) => m.text === "미래 메모"));
-// 빈 daily가 아니라 '내용 있는 날'만 캘린더 마커 대상 — memo 있으면 대상
+// memo는 셀 본문(calMemos 줄)에 직접 실린다 — 3단계에서 .dr 마커 조건에서는 빠졌다.
 const calMemo = (await api("GET", `/api/calendar?start=${D}&end=${addDays(D, 7)}`)).json;
-ok("memo 있는 미래일도 diary 마커 대상", calMemo.diary.some((x: any) => x.date === memoFut));
+ok("memo 있는 날은 셀 memo 줄로 실림(diary 마커 아님)",
+  calMemo.memos.some((x: any) => x.date === memoFut) && !calMemo.diary.some((x: any) => x.date === memoFut));
 
 // ── 6. 재배정 — 마감된 날에서의 미루기 (v0.8 재배정 대기) ─────
 console.log("\n[6] 재배정 — 원 항목 동결 유지, 새 예정만");

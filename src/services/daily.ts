@@ -208,15 +208,16 @@ export async function assembleDay(env: Env, t: TimeCtx, k: string) {
 }
 
 export async function calendar(env: Env, start: string, end: string) {
-  const [periods, entries, diary, evs] = await Promise.all([
+  const [periods, entries, diary, evs, memos] = await Promise.all([
     db.calPeriods(env, start, end),
     db.calEntries(env, start, end),
     db.calDiaryDates(env, start, end),
     db.eventsRange(env, start, end),
+    db.calMemos(env, start, end),
   ]);
   return {
     periods: periods.results, entries: entries.results,
-    diary: diary.results, events: evs.results,
+    diary: diary.results, events: evs.results, memos: memos.results,
   };
 }
 

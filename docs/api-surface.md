@@ -22,7 +22,7 @@
 | PUT `/api/daily/score` | `{score}` | `{date, score}` | `daily.setScore` |
 | POST `/api/daily/classify-feelings` | — | `{date, values, model}` | `daily.classifyFeelings` |
 | POST `/api/daily/close` | `{kind?: manual\|brief}` | `{date, kind}` | `daily.closeDay` |
-| GET `/api/calendar?start&end` | — | `{periods, entries, diary, events}` | `daily.calendar` |
+| GET `/api/calendar?start&end` | — | `{periods, entries, diary, events, memos}` | `daily.calendar` |
 | GET `/api/days/:date` | — | 날짜 팝업 조립(relation·periods·tasks·events·daily·feelings·logs·memos) | `daily.assembleDay` |
 | GET `/api/diary?limit` | — | 일기 목록 rows | `daily.diaryFeed` |
 | POST `/api/memos` | `{date, ts?, text}` | `{id, date}` (201) | `memos.addMemo` |
@@ -79,7 +79,7 @@
 - `setScore(env, t, score)` → `{date, score}`
 - `closeDay(env, t, kind, date?)` → `{date, kind}` · **기록→mech 물화→close** 순서 batch
 - `assembleDay(env, t, k)` → 날짜 팝업 조인(과거는 done/deferred/missed)
-- `calendar(env, start, end)` → `{periods, entries, diary, events}`
+- `calendar(env, start, end)` → `{periods, entries, diary, events, memos}` (memos: 날짜별 대표 1건+개수 — 셀 memo 줄)
 - `diaryFeed(env, t, limit=30)` → 일기 rows(최대 90)
 
 ### tasks.ts — task 생성·미루기·완료·Works
@@ -140,7 +140,7 @@
 
 **B. Today 조인** — `todayTodo(env, d)` · `todayDone(env, d)` · `reassignQueue(env, d)`(최근예정<오늘&미완료) · `waitingList(env)`(is_waiting=1)
 **C. 하루 열기** — `stOpenDaily(env, d, now)` · `getDaily(env, d)`
-**D. 캘린더 그리드** — `calPeriods(env, start, end)` · `calEntries(env, start, end)` · `calDiaryDates(env, start, end)`
+**D. 캘린더 그리드** — `calPeriods(env, start, end)` · `calEntries(env, start, end)` · `calDiaryDates(env, start, end)` (memo 제외 — 마감·점수·감정·로그만) · `calMemos(env, start, end)` (날짜별 대표 1건+개수)
 **E. 날짜 팝업 조각** — `periodsAt(env, k)` · `feelingsAt(env, k)` · `logsAt(env, k)` · `memosAt(env, k)`
 **F. 파생 분류** — `classifyAt(env, k)` → done/deferred/missed/todo (마감일이면 todo→missed)
 **G. 마감 조각** — `stUpsertMech(env, kind, key, mech, now)` · `stCloseDaily(env, d, kind, now)`

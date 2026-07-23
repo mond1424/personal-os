@@ -137,6 +137,12 @@ const TRACK_RATIO = 0.35, FLICK_V = 0.5;   // 화면 폭 비율 · px/ms — 민
 const CAL_GAP = 20;   // 캘린더 달 사이 간격(px). 탭 트랙은 gap=0(불변), 캘린더만 gap 보정을 탄다
 // 요일 헤더는 각 '월 카드'(.calpane) 안에 들어간다 — 카드가 통째로 슬라이드하도록(고정 프레임 아님)
 const CAL_WKDAYS = '<div class="wkdays"><span>일</span><span>월</span><span>화</span><span>수</span><span>목</span><span>금</span><span>토</span></div>';
+/* 셀 공간 예산 — 셀 폭 ~48px · 폰트 9px이라 줄 수가 곧 정보량이다.
+ * 총 CELL_MAX_LINES줄을 우선순위대로 동적 배분한다:
+ *   일정(최대 CELL_EV_MAX + 초과 시 '일정 +N' 한 줄) → 할 일 1줄 → memo 1줄 → 남으면 할 일 2번째 줄
+ * '할 일 > memo'이되 할 일 확장이 memo를 굶기지 않게 memo 자리를 먼저 비워둔다.
+ * 넘치는 것은 전부 '+n'으로 접는다. 폰 실측 후 상수만 조정하면 된다(하드코딩 금지). */
+const CELL_MAX_LINES = 4, CELL_EV_MAX = 2, CELL_TK_MAX = 2;
 
 // gap>0이면 pane 사이 간격(px)을 위치 계산에 더한다 — %만으로는 gap이 어긋난다
 function trackSet(el, i, animate, gap = 0) {
@@ -517,6 +523,7 @@ async function openDay(k) {
           `<div class="lrow"><span class="ts mono">${hm(l.ts)}</span><span>${esc(l.text)}</span></div>`).join("") + `</div>`;
     }
     // memo 표시 — 어느 날짜에든(3단계): 과거·오늘·미래 모두. 추가는 아래 통합 영역에서.
+    // 팝업은 memo 전문, 캘린더 셀은 대표 1건 + '+n'(calMemos) — 같은 memo의 두 시야.
     if (day.memos.length)
       h += `<div class="card" style="margin-top:9px;padding:6px 14px">` + day.memos.map((m) =>
         `<div class="lrow"><span class="ts mono">${hm(m.ts)}</span><span>${esc(m.text)} <span class="cap">memo</span></span></div>`).join("") + `</div>`;
@@ -757,6 +764,9 @@ async function renderCalendar() {
     if (e.deferred_to && e.date >= D) continue;
     (tkByDate[e.date] = tkByDate[e.date] || []).push(e);
   }
+  // memo — 날짜별 대표 1건(+개수). 캐시된 구버전 응답 대비 || [] (없으면 셀에 memo 줄 없음).
+  const memoByDate = {};
+  for (const m of cal.memos || []) memoByDate[m.date] = m;
 
   const rx = capRx($("#cal-rows").clientWidth);
   const rowHtml = (row, mm) => {
@@ -766,23 +776,39 @@ async function renderCalendar() {
       const mut = +d.slice(5, 7) !== mm ? " mut" : "";
       const today = d === D ? " today" : "";
       const past = d < D ? " past" : "";
-      const evs = evByDate[d] || [], tks = tkByDate[d] || [];
+      const evs = evByDate[d] || [], tks = tkByDate[d] || [], mo = memoByDate[d]; // mo=memo (mm은 상위의 '월' 파라미터)
 
-      // 일정 — 셀에서는 제목만 보인다. 시각을 앞에 붙이면 셀 폭(≈48px)에서 내용이 통째로
-      // 잘려 나갔다. 시각이 '있다'는 사실만 앞의 점으로 남기고, 몇 시인지는 날짜 팝업에서.
-      let h = evs.slice(0, 2).map((e) =>
+      // 공간 예산 동적 배분 (일정 → 할 일 1줄 → memo 1줄 → 남으면 할 일 2번째 줄)
+      let room = CELL_MAX_LINES;
+      const evShow = Math.min(evs.length, CELL_EV_MAX);   // 1) 일정
+      const evOver = evs.length - evShow;
+      room -= evShow + (evOver > 0 ? 1 : 0);              // 초과분 '일정 +N' 줄도 예산에 포함
+      const memoNeed = mo ? 1 : 0;                        // 2) 할 일 — memo 자리를 먼저 비워두고 배분
+      let tkShow = tks.length ? Math.min(1, room) : 0;
+      room -= tkShow;
+      if (tks.length > tkShow && room - memoNeed > 0 && tkShow < CELL_TK_MAX) { tkShow += 1; room -= 1; }
+      const memoShow = mo && room > 0 ? 1 : 0;            // 3) memo
+
+      // 일정 — 셀에서는 제목만. 시각·종일 구분은 날짜 팝업에서(1단계). 초과분은 '일정 +N' 한 줄.
+      let h = evs.slice(0, evShow).map((e) =>
         `<span class="ev evt${past}${e.time ? " timed" : ""}" style="border-left-color:${e.color || "var(--ink)"}">${esc(e.title)}</span>`).join("");
+      if (evOver > 0) h += `<span class="ev more">일정 +${evOver}</span>`;
 
-      // 할 일 — 한 줄로 압축 [제목 +n]. 대표는 아직 살아 있는 항목을 고른다
-      // (완료·이동만 남은 날에 취소선 그은 제목이 그 날을 대표하면 오독한다).
-      if (tks.length) {
-        const head = tks.find((x) => x.status !== "finished" && !x.deferred_to) || tks[0];
-        const rest = tks.length - 1;
-        h += `<span class="ev tsum${past}${head.deferred_to ? " moved" : ""}${head.status === "finished" ? " done" : ""}"` +
-          ` style="border-left-color:${head.color || "var(--faint)"}">` +
-          `<span class="etxt">${esc(head.title)}</span>${rest ? `<b>+${rest}</b>` : ""}</span>`;
+      // 할 일 — 살아 있는 항목(미완료·미이동)을 created_at 순으로 먼저 채운다
+      // (완료·이동만 남은 항목이 그 날을 대표하면 오독한다). +n은 마지막 표시 줄에.
+      if (tkShow) {
+        const ordered = tks.filter((x) => x.status !== "finished" && !x.deferred_to)
+          .concat(tks.filter((x) => x.status === "finished" || x.deferred_to));
+        const shown = ordered.slice(0, tkShow);
+        const restN = tks.length - shown.length;
+        h += shown.map((t, i) =>
+          `<span class="ev tsum${past}${t.deferred_to ? " moved" : ""}${t.status === "finished" ? " done" : ""}"` +
+          ` style="border-left-color:${t.color || "var(--faint)"}">` +
+          `<span class="etxt">${esc(t.title)}</span>${i === shown.length - 1 && restN ? `<b>+${restN}</b>` : ""}</span>`).join("");
       }
-      if (evs.length > 2) h += `<span class="ev more">일정 +${evs.length - 2}</span>`;
+
+      // memo — '적어둔 것'. 보더 없이 글씨만(우선순위 최하위, 가장 아래). 셀은 대표 1건+n, 전문은 팝업.
+      if (memoShow) h += `<span class="ev memo${past}"><span class="etxt">${esc(mo.text)}</span>${mo.n > 1 ? `<b>+${mo.n - 1}</b>` : ""}</span>`;
 
       return `<button class="c${mut}${today}" data-d="${d}" onclick="openDay('${d}')">
         <span class="d serif">${+d.slice(8, 10)}</span>${diarySet.has(d) ? '<i class="dr"></i>' : ""}${h}</button>`;
