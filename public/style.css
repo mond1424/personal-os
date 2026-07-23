@@ -435,10 +435,11 @@ nav,.logbar{background:var(--bar)}
 .ev.evt{font-weight:700}
 /* 할 일 압축 줄 — 일정보다 한 단계 물러난 톤 */
 .ev.tsum{font-weight:600;color:var(--sub);display:flex;align-items:baseline;gap:3px}
-/* +n 배지는 말줄임 대상에서 뺀다 — 제목만 줄고 배지는 항상 남는다 */
-/* text-decoration:inherit — .tt는 overflow로 자체 포맷팅 문맥이라 부모(.done/.moved)의
+/* +n 배지는 말줄임 대상에서 뺀다 — 제목만 줄고 배지는 항상 남는다.
+ * 클래스명은 .etxt — 전역 .tt(14.5px 시트 제목)와 충돌해 셀 글자가 커지던 문제를 피한다. */
+/* text-decoration:inherit — .etxt는 overflow로 자체 포맷팅 문맥이라 부모(.done/.moved)의
  * 취소선이 안 번진다. 명시 상속으로 완료·이동 취소선을 제목에 유지한다. */
-.ev .tt{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-decoration:inherit}
+.ev .etxt{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-decoration:inherit}
 .ev.tsum b{font-weight:700;color:var(--faint);font-size:8.5px;flex:none}
 .ev.exam{background:var(--brick);color:#fff;padding-left:3px}
 
