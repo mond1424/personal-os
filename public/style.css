@@ -433,9 +433,6 @@ nav,.logbar{background:var(--bar)}
 /* 글줄의 흰 배경 제거 — 기간색 위에 흰 조각이 뜨지 않게 */
 .ev{background:none;border-left-width:3px;padding-left:4px;color:var(--ink)}
 .ev.evt{font-weight:700}
-/* 시각은 셀에서 빼고 '있다'는 사실만 점으로 (몇 시인지는 날짜 팝업에서) */
-.ev.evt.timed::before{content:"";display:inline-block;width:3px;height:3px;border-radius:50%;
-  background:var(--sub);vertical-align:2px;margin-right:3px}
 /* 할 일 압축 줄 — 일정보다 한 단계 물러난 톤 */
 .ev.tsum{font-weight:600;color:var(--sub)}
 .ev.tsum b{font-weight:700;color:var(--faint);font-size:8.5px;margin-left:3px}
