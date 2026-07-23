@@ -434,8 +434,12 @@ nav,.logbar{background:var(--bar)}
 .ev{background:none;border-left-width:3px;padding-left:4px;color:var(--ink)}
 .ev.evt{font-weight:700}
 /* 할 일 압축 줄 — 일정보다 한 단계 물러난 톤 */
-.ev.tsum{font-weight:600;color:var(--sub)}
-.ev.tsum b{font-weight:700;color:var(--faint);font-size:8.5px;margin-left:3px}
+.ev.tsum{font-weight:600;color:var(--sub);display:flex;align-items:baseline;gap:3px}
+/* +n 배지는 말줄임 대상에서 뺀다 — 제목만 줄고 배지는 항상 남는다 */
+/* text-decoration:inherit — .tt는 overflow로 자체 포맷팅 문맥이라 부모(.done/.moved)의
+ * 취소선이 안 번진다. 명시 상속으로 완료·이동 취소선을 제목에 유지한다. */
+.ev .tt{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-decoration:inherit}
+.ev.tsum b{font-weight:700;color:var(--faint);font-size:8.5px;flex:none}
 .ev.exam{background:var(--brick);color:#fff;padding-left:3px}
 
 /* 일정 = 사건, 할 일과 구분 */

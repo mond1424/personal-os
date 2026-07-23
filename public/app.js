@@ -779,7 +779,8 @@ async function renderCalendar() {
         const head = tks.find((x) => x.status !== "finished" && !x.deferred_to) || tks[0];
         const rest = tks.length - 1;
         h += `<span class="ev tsum${past}${head.deferred_to ? " moved" : ""}${head.status === "finished" ? " done" : ""}"` +
-          ` style="border-left-color:${head.color || "var(--faint)"}">${esc(head.title)}${rest ? `<b>+${rest}</b>` : ""}</span>`;
+          ` style="border-left-color:${head.color || "var(--faint)"}">` +
+          `<span class="tt">${esc(head.title)}</span>${rest ? `<b>+${rest}</b>` : ""}</span>`;
       }
       if (evs.length > 2) h += `<span class="ev more">일정 +${evs.length - 2}</span>`;
 
