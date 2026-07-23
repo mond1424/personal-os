@@ -21,6 +21,7 @@ async function _req(method, path, body) {
       : (json && json.error) || "HTTP " + res.status;
     const e = new Error(msg);
     e.status = res.status;
+    if (json && json.suggest) e.suggest = json.suggest;   // 후속 액션 힌트(예: "cancel")
     throw e;
   }
   return json;
@@ -48,6 +49,8 @@ const Api = {
   extend: (id) => _req("POST", `/tasks/${id}/extend`),
   deleteTask: (id) => _req("DELETE", "/tasks/" + id),
   complete: (id) => _req("POST", `/tasks/${id}/complete`),
+  cancelTask: (id) => _req("POST", `/tasks/${id}/cancel`),
+  uncancelTask: (id) => _req("POST", `/tasks/${id}/uncancel`),
   classifyFeelings: () => _req("POST", "/daily/classify-feelings"),
   editLog: (id, b) => _req("PATCH", "/logs/" + id, b),
   setRate: (id, date, rate) => _req("PUT", `/tasks/${id}/rate`, { date, rate }),

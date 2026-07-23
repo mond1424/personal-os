@@ -1,5 +1,5 @@
 -- Personal OS · D1 스키마 스냅샷 (자동 생성 — 손으로 고치지 말 것)
--- 적용 마이그레이션: 0001_init · 0002_models · 0003_ai_provider · 0004_events · 0005_delete_scope · 0006_fix_model_high · 0007_defer_reason
+-- 적용 마이그레이션: 0001_init · 0002_models · 0003_ai_provider · 0004_events · 0005_delete_scope · 0006_fix_model_high · 0007_defer_reason · 0008_cancel_task
 -- 생성일: 2026-07-23
 -- 재생성: migrations/ 전체를 인메모리 sqlite에 적용한 뒤 sqlite_master를 덤프한다.
 --         (새 마이그레이션 추가 시 이 파일도 다시 만든다 — 세션 종료 규칙, CLAUDE.md 참조)
@@ -127,6 +127,11 @@ CREATE TABLE summaries (
   generated_at TEXT NOT NULL,
   PRIMARY KEY (kind, key)
 );
+-- 취소 상태는 status enum이 아니라 cancelled_at/cancelled_on으로 표현한다 (0008).
+-- 이유: status에 CHECK이 두 개 걸려 있어 값을 늘리려면 테이블 재작성이 필요한데,
+-- tasks는 FK 대상이자 뷰·트리거의 소스라 D1 위에서 위험하다. 따라서
+-- status='not_finished' + cancelled_at IS NOT NULL 이 곧 '취소'이며, 이 조합을
+-- 코드가 직접 판정하지 않도록 v_task_stats.state가 대신 계산한다. 읽을 땐 언제나 state.
 CREATE TABLE tasks (
   id             TEXT PRIMARY KEY,   -- 불변 id
   title          TEXT NOT NULL,      -- 자유 변경
@@ -138,6 +143,8 @@ CREATE TABLE tasks (
                  CHECK (status IN ('not_finished','finished')),
   finished_at    TEXT,               -- 실제 완료 시각
   finished_on    TEXT,               -- 완료가 귀속된 날 (경계 반영, 기록 시점 확정)
+  cancelled_at   TEXT,               -- 취소 시각(ISO). NULL = 살아 있음 (0008)
+  cancelled_on   TEXT,               -- 취소가 귀속된 날 (경계 반영, YYYY-MM-DD) (0008)
   wait_anchor_at TEXT NOT NULL,      -- 대기 21일 시계의 기준점 (1.4, v0.8 확정)
                  -- 생성 시 = created_at · 연장 시 = 연장한 현재 시각
                  -- 기한 = anchor + 21일. 갱신하면 아래 트리거가 이력을 자동 기록.
@@ -164,11 +171,17 @@ CREATE INDEX idx_wait_ext_task ON wait_extensions(task_id, extended_at);
 -- ─────────────────────────── VIEWS ───────────────────────────
 CREATE VIEW v_period_achievement AS
 SELECT p.id, p.title, ROUND(AVG(s.current_rate), 1) AS achievement
-FROM periods p LEFT JOIN v_task_stats s ON s.period_id = p.id
+FROM periods p LEFT JOIN v_task_stats s
+  ON s.period_id = p.id AND s.state <> 'cancelled'                             -- 취소 제외 (0008, 오염 방지)
 GROUP BY p.id;
 CREATE VIEW v_task_stats AS
 SELECT
-  t.id, t.title, t.period_id, t.status, t.finished_on,
+  t.id, t.title, t.period_id,
+  t.status,          -- 원시 저장 컬럼. 상태 판정에 쓰지 말 것 — 아래 state를 쓴다 (0008).
+  CASE WHEN t.cancelled_at IS NOT NULL THEN 'cancelled'
+       WHEN t.status = 'finished'      THEN 'finished'
+       ELSE 'not_finished' END AS state,                                       -- ★ task 상태의 유일한 진실
+  t.finished_on, t.cancelled_at, t.cancelled_on,
   t.wait_anchor_at, t.created_at,
   (SELECT COUNT(*) FROM schedule_entries e WHERE e.task_id = t.id)             AS entry_count,
   MAX((SELECT COUNT(*) FROM schedule_entries e WHERE e.task_id = t.id) - 1, 0) AS defer_count,   -- 이월 횟수
@@ -178,8 +191,9 @@ SELECT
                       WHERE e.task_id = t.id ORDER BY e.date DESC LIMIT 1), 0)
   END AS current_rate,                                                          -- 완료율 다이얼 값
   CASE WHEN t.status = 'not_finished'
+        AND t.cancelled_at IS NULL
         AND NOT EXISTS (SELECT 1 FROM schedule_entries e WHERE e.task_id = t.id)
-       THEN 1 ELSE 0 END AS is_waiting                                          -- schedule:[] = 대기
+       THEN 1 ELSE 0 END AS is_waiting                                         -- 취소 제외 대기 (0008)
 FROM tasks t;
 
 -- ─────────────────────────── TRIGGERS ───────────────────────────
@@ -254,3 +268,6 @@ WHEN EXISTS (
 BEGIN SELECT RAISE(ABORT, '마감 기록이 있는 task의 연장 이력은 삭제할 수 없음'); END;
 CREATE TRIGGER trg_wait_ext_no_upd BEFORE UPDATE ON wait_extensions
 BEGIN SELECT RAISE(ABORT, '연장 이력은 수정할 수 없음'); END;
+CREATE TRIGGER trg_task_cancel_excl BEFORE UPDATE ON tasks
+WHEN NEW.cancelled_at IS NOT NULL AND NEW.status = 'finished'
+BEGIN SELECT RAISE(ABORT, '완료된 task는 취소할 수 없음'); END;

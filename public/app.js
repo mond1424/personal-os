@@ -986,16 +986,19 @@ async function renderWorks() {
   $("#pgroups").innerHTML = Object.values(pg).map((g) =>
     `<div class="glab" style="color:var(--ink)"><i class="pdot" style="display:inline-block;margin-right:5px;background:${g.color}"></i>${esc(g.title).toUpperCase()}</div>
      <div class="card" style="padding:2px 14px">` + g.rows.map((r) =>
-      `<button class="trow" style="width:100%" onclick="openTask('${r.id}')"><span class="tk${r.status === "finished" ? " done" : ""}"></span>
+      `<button class="trow" style="width:100%" onclick="openTask('${r.id}')"><span class="tk${r.state === "finished" ? " done" : ""}"></span>
         <span class="tbody"><span class="tt">${esc(r.title)}</span>
           <span class="tmeta">${r.is_waiting ? "대기" : r.latest_date ? md(r.latest_date) : ""}</span></span></button>`).join("") + `</div>`).join("") ||
     `<p class="cap" style="margin-top:14px">기간에 속한 task가 없어요.</p>`;
 
   // 완료
   $("#done-list").innerHTML = done.map((r) => {
-    const meta = r.planned_on && r.planned_on !== r.finished_on
-      ? `예정 ${md(r.planned_on)} · 완료 ${md(r.finished_on)}`
-      : `${md(r.finished_on)} 완료`;
+    if (r.kind === "cancelled")   // 완료·취소를 한 목록에 — 취소는 흐리게+취소선, on_date 표시 (0008)
+      return `<button class="trow muted" style="width:100%" onclick="openTask('${r.id}')"><span class="tk"></span>
+        <span class="tbody"><span class="tt" style="color:var(--faint);text-decoration:line-through">${esc(r.title)}</span><span class="tmeta">${md(r.on_date)} · 취소</span></span></button>`;
+    const meta = r.planned_on && r.planned_on !== r.on_date
+      ? `예정 ${md(r.planned_on)} · 완료 ${md(r.on_date)}`
+      : `${md(r.on_date)} 완료`;
     return `<button class="trow muted" style="width:100%" onclick="openTask('${r.id}')"><span class="tk done"></span>
       <span class="tbody"><span class="tt">${esc(r.title)}</span><span class="tmeta">${meta}</span></span></button>`;
   }).join("") ||
@@ -1031,7 +1034,7 @@ async function openTask(id) {
     if (t.entries.length) {
       tl = t.entries.map((e) => {
         if (e.deferred_to) return `<div class="te">${md(e.date)} → 미루기</div>`;
-        if (t.status === "finished") return `<div class="te done-line">${md(e.date)} · 예정</div>`;
+        if (t.state === "finished") return `<div class="te done-line">${md(e.date)} · 예정</div>`;
         if (e.date === D) return `<div class="te" style="color:var(--ink);font-weight:600">${md(e.date)} · 예정 (오늘)</div>`;
         if (e.date > D) return `<div class="te">${md(e.date)} · 예정</div>`;
         return `<div class="te">${md(e.date)} — 미완료</div>`;
@@ -1040,8 +1043,10 @@ async function openTask(id) {
       tl = `<div class="te">대기 · ${t.wait_age}일째</div>`;
     }
     tl += t.extensions.map((x) => `<div class="te">연장 ${md(x.extended_at.slice(0, 10))}</div>`).join("");
-    if (t.status === "finished" && t.finished_on)
+    if (t.state === "finished" && t.finished_on)
       tl += `<div class="te" style="color:var(--ink);font-weight:600">${md(t.finished_on)} · 완료 처리</div>`;
+    if (t.state === "cancelled" && t.cancelled_on)
+      tl += `<div class="te" style="color:var(--faint)">${md(t.cancelled_on)} · 취소</div>`;
     $("#tk-timeline").innerHTML = tl;
 
     /* 상태 — '살아 있는(미뤄지지 않은) 마지막 예정'을 기준으로 보여준다.
@@ -1049,23 +1054,26 @@ async function openTask(id) {
      * 내부 rate·완료(rate=100) 로직·DB는 그대로. 값 표시만 걷어냈다. */
     const live = [...t.entries].reverse().find((e) => !e.deferred_to);
     const locked = !!live && live.day_status === "closed";
-    $("#tk-rates").innerHTML = t.status === "finished"
-      ? `<span class="ratebig done">완료</span>`
-      : !live
-        ? `<span class="cap">대기 중이에요 — 일정을 정하면 예정이 생겨요.</span>`
-        : locked
-          ? `<p class="cap">${md(live.date)}은 이미 마감됐어요 — 지난 기록은 고칠 수 없어요.</p>`
-          : `<p class="cap">${md(live.date)} 예정 — 다 했으면 아래 <b>완료</b>.</p>`;
+    const fin = t.state === "finished";
+    const cancelled = t.state === "cancelled";
+    $("#tk-rates").innerHTML =
+      cancelled ? `<span class="ratebig" style="color:var(--faint)">취소됨 · ${md(t.cancelled_on)}</span>`
+      : fin ? `<span class="ratebig done">완료</span>`
+      : !live ? `<span class="cap">대기 중이에요 — 일정을 정하면 예정이 생겨요.</span>`
+      : locked ? `<p class="cap">${md(live.date)}은 이미 마감됐어요 — 지난 기록은 고칠 수 없어요.</p>`
+      : `<p class="cap">${md(live.date)} 예정 — 다 했으면 아래 <b>완료</b>.</p>`;
 
-    /* 버튼은 맥락에 맞는 것만 남긴다 —
-     *  · 대기 중이면 미룰 예정 자체가 없다 → '미루기'가 아니라 '일정 정하기'
-     *  · 대기 연장은 기한(21일)에 닿아야 뜻이 있다. 3일째에 누르는 연장은
-     *    시계를 되감는 게 아니라 연장 이력만 남겨 신호를 흐린다 (1.4)
-     *  · 완료된 일은 전부 잠금 */
-    const fin = t.status === "finished";
+    /* 버튼은 맥락에 맞는 것만 —
+     *  · 취소된 일: 앞으로의 동작(완료·미루기·일정확정·연장)은 다 숨기고 '취소 해제'만.
+     *  · 완료된 일: 완료·미루기 잠금, 취소 버튼도 숨김(완료는 취소 대상 아님).
+     *  · 대기 연장은 기한(21일)에 닿아야 뜻이 있다 (1.4). */
     $("#tk-defer").textContent = t.is_waiting ? "일정 정하기" : "미루기";
-    const canExtend = !fin && !!t.is_waiting && (t.wait_age ?? 0) >= WAIT_LIMIT;
+    const canExtend = !fin && !cancelled && !!t.is_waiting && (t.wait_age ?? 0) >= WAIT_LIMIT;
     $("#tk-extend").style.display = canExtend ? "" : "none";
+    $("#tk-defer").style.display = cancelled ? "none" : "";
+    $("#tk-complete").style.display = cancelled ? "none" : "";
+    $("#tk-cancel").style.display = (fin || cancelled) ? "none" : "";
+    $("#tk-uncancel").style.display = cancelled ? "" : "none";
     ["tk-defer", "tk-complete"].forEach((i) => {
       const b = $("#" + i);
       b.disabled = fin;
@@ -1090,28 +1098,62 @@ function bindTaskSheet() {
   };
   $("#tk-extend").onclick = () => { const t = S.sheetTask; if (t) { closeAll(); extendTask(t.id); } };
   $("#tk-complete").onclick = () => { const t = S.sheetTask; if (t) completeFromSheet(t.id); };
+  $("#tk-cancel").onclick = () => {
+    const t = S.sheetTask;
+    if (!t) return;
+    run(async () => {
+      // kept: 마감된 날 항목 수 — 무엇이 남는지 알아야 안심하고 누른다 (day_status는 getTask에 실려온다).
+      const kept = t.entries.filter((e) => e.day_status === "closed").length;
+      const body = kept
+        ? `“${esc(t.title)}” — 마감된 날 기록 <b>${kept}일</b>은 그대로 남고, 앞으로 잡힌 예정만 사라져요. 나중에 되돌릴 수 있어요.`
+        : `“${esc(t.title)}” — 앞으로 잡힌 예정만 사라지고, 지난 기록은 남아요. 나중에 되돌릴 수 있어요.`;
+      if (await confirmAsk("이 일을 취소할까요?", body, "취소하기") === "ok") await execCancel(t);
+    });
+  };
+  $("#tk-uncancel").onclick = () => {
+    const t = S.sheetTask;
+    if (!t) return;
+    run(async () => {
+      const res = await Api.uncancelTask(t.id);
+      closeAll();
+      toast(res.waiting ? "취소 해제 — 대기로 돌아왔어요" : "취소 해제했어요", "ok");
+      syncAll();
+      if ($("#phone").dataset.tab === "cal") renderCalendar();
+    });
+  };
   $("#tk-delete").onclick = () => {
     const t = S.sheetTask;
     if (!t) return;
     run(async () => {
       const n = t.defer_count || 0;
       const body = n > 0
-        ? `“${esc(t.title)}”은(는) 이미 <b>${n}번 미룬</b> 일이에요.<br>취소하면 기록에서 사라지고, 미룬 흔적도 함께 지워져요 — 하기 싫은 걸 없애는 중은 아닌지 한 번만 더 생각해요.`
-        : `“${esc(t.title)}” — 계획을 지우는 거예요. 마감된 날의 기록이 있으면 취소되지 않아요.`;
-      const r = await confirmAsk(
-        n > 0 ? "정말 이 일을 취소할까요?" : "이 일정을 취소할까요?",
-        body,
-        n >= 2 ? "그래도 취소" : "취소하기",
-        t.is_waiting ? null : "차라리 미루기");
-      if (r === "alt") { closeAll(); return startPick({ mode: "defer", id: t.id, from: t.latest_date, title: t.title }); }
-      if (r !== "ok") return;
-      await Api.deleteTask(t.id);
-      closeAll();
-      toast("취소했어요", "warn");
-      syncAll();
-      if ($("#phone").dataset.tab === "cal") renderCalendar();
+        ? `“${esc(t.title)}”은(는) 이미 <b>${n}번 미룬</b> 일이에요.<br>삭제하면 기록도 미룬 흔적도 전부 사라져요 — 남기려면 '취소'를 쓰세요.`
+        : `“${esc(t.title)}” — 기록까지 완전히 지워요. 되돌릴 수 없어요. 남기려면 '취소'를 쓰세요.`;
+      if (await confirmAsk("이 일을 삭제할까요?", body, n >= 2 ? "그래도 삭제" : "삭제") !== "ok") return;
+      try {
+        await Api.deleteTask(t.id);
+        closeAll();
+        toast("삭제했어요", "warn");
+        syncAll();
+        if ($("#phone").dataset.tab === "cal") renderCalendar();
+      } catch (e) {
+        // 마감·Guard 기록이 막으면(409 suggest:"cancel") 삭제 대신 취소를 원탭으로 권한다.
+        if (e && e.suggest === "cancel") {
+          if (await confirmAsk("삭제할 수 없어요", esc(e.message), "대신 취소하기") === "ok") await execCancel(t);
+        } else throw e;
+      }
     });
   };
+}
+
+/** 취소 실행(확인은 호출부에서) — 성공 후 시트 닫고 남은 날을 알린다. */
+async function execCancel(t) {
+  const res = await Api.cancelTask(t.id);
+  closeAll();
+  const kn = (res.kept_dates || []).length;
+  toast(kn ? `취소 — 마감된 날 기록 ${kn}일은 그대로 남아요` : "취소했어요", "warn");
+  syncAll();
+  if ($("#phone").dataset.tab === "cal") renderCalendar();
 }
 
 function setRateOn(id, date, k, cur) {

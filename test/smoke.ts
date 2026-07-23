@@ -13,7 +13,7 @@ import type { Env } from "../src/types";
 import { makeD1, rawOf } from "./d1shim";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const schema = ["0001_init.sql", "0002_models.sql", "0003_ai_provider.sql", "0004_events.sql", "0005_delete_scope.sql", "0006_fix_model_high.sql", "0007_defer_reason.sql"]
+const schema = ["0001_init.sql", "0002_models.sql", "0003_ai_provider.sql", "0004_events.sql", "0005_delete_scope.sql", "0006_fix_model_high.sql", "0007_defer_reason.sql", "0008_cancel_task.sql"]
   .map((f) => readFileSync(join(here, "../migrations/" + f), "utf8")).join("\n");
 const env: Env = { DB: makeD1(schema) };
 const raw = rawOf(env.DB);
@@ -128,6 +128,10 @@ ok("도착지 항목에 사유 저장(trim)",
   reStats.entries.find((e: any) => e.date === N3)?.defer_reason === "다른 일이 급해서", JSON.stringify(reStats.entries));
 ok("원 항목(N2)엔 사유 없음",
   (reStats.entries.find((e: any) => e.date === N2)?.defer_reason ?? null) === null);
+
+// 취소 테스트 예약 — 마감 전 D에 예정을 심어 둔다(마감 후엔 INSERT 트리거가 막는다).
+// 마감되면 missed로 확정되고, 뒤의 [취소] 절에서 '마감된 날 항목 보존'을 검증한다 (0008).
+const tCanKeep = (await api("POST", "/api/tasks", { title: "취소-마감보존", date: D })).json.id as string;
 
 // ── 4. 하루 마감 (G) — todo → missed 확정 ────────────────────
 console.log("\n[4] 마감 — 물화 → close, 이후 동결");
@@ -333,6 +337,64 @@ ok("일정 삭제", (await api("DELETE", `/api/events/${evId}`)).status === 200)
 const evClosed = (await api("POST", "/api/events", { title: "지난 약속", date: D })).json.id as string;
 await api("POST", "/api/daily/close", { kind: "manual" });
 ok("마감된 날 일정 삭제 409", (await api("DELETE", `/api/events/${evClosed}`)).status === 409);
+
+// ── 취소 — 제3의 종결 (0008): 삭제가 막히는 일을 기록 보존한 채 목록에서 내린다 ──
+console.log("\n[취소] 열린 예정만 비우고 마감 기록은 보존 · state로 상태 판정");
+
+// (1) 미래(daily 행 없는) 예정 → 취소 시 삭제. state=cancelled(status는 not_finished 유지).
+const tCanFut = (await api("POST", "/api/tasks", { title: "취소-미래" })).json.id as string;
+await api("POST", `/api/tasks/${tCanFut}/schedule`, { date: addDays(D, 5) });
+const canRes = (await api("POST", `/api/tasks/${tCanFut}/cancel`)).json;
+ok("취소 응답 kept_dates 빈 배열", Array.isArray(canRes.kept_dates) && canRes.kept_dates.length === 0);
+ok("취소 → 미래(daily 없는) 예정 삭제",
+  (raw.prepare("SELECT COUNT(*) AS n FROM schedule_entries WHERE task_id=?").get(tCanFut) as any).n === 0);
+const canStat = (await api("GET", `/api/tasks/${tCanFut}`)).json;
+ok("state='cancelled'인데 status는 'not_finished' (조합 규칙 고정)",
+  canStat.state === "cancelled" && canStat.status === "not_finished");
+ok("취소 → scheduled·waiting 목록에서 빠짐",
+  !(await api("GET", "/api/works/scheduled")).json.some((x: any) => x.id === tCanFut)
+  && !(await api("GET", "/api/works/waiting")).json.some((x: any) => x.id === tCanFut));
+ok("취소 → done 목록에 kind='cancelled'로 등장",
+  (await api("GET", "/api/works/done")).json.some((x: any) => x.id === tCanFut && x.kind === "cancelled"));
+
+// (2) 취소된 task는 complete·defer·extend 각각 409
+ok("취소된 task 완료 409", (await api("POST", `/api/tasks/${tCanFut}/complete`)).status === 409);
+ok("취소된 task 미루기 409",
+  (await api("POST", `/api/tasks/${tCanFut}/defer`, { from: addDays(D, 5), to: addDays(D, 6) })).status === 409);
+ok("취소된 task 연장 409", (await api("POST", `/api/tasks/${tCanFut}/extend`)).status === 409);
+
+// (3) 취소 해제 → 예정 복구 없이 대기(is_waiting=1)
+const uncRes = (await api("POST", `/api/tasks/${tCanFut}/uncancel`)).json;
+ok("취소 해제 → 대기 복귀", uncRes.cancelled === false && uncRes.waiting === true);
+ok("취소 해제 후 state=not_finished", (await api("GET", `/api/tasks/${tCanFut}`)).json.state === "not_finished");
+ok("이미 취소 아닌데 해제하면 409", (await api("POST", `/api/tasks/${tCanFut}/uncancel`)).status === 409);
+
+// (4) 마감된 날 항목 보존 + classifyAt 여전히 missed
+const keepRes = (await api("POST", `/api/tasks/${tCanKeep}/cancel`)).json;
+ok("취소해도 마감된 날(D) 예정은 보존",
+  keepRes.kept_dates.includes(D)
+  && (raw.prepare("SELECT COUNT(*) AS n FROM schedule_entries WHERE task_id=? AND date=?").get(tCanKeep, D) as any).n === 1);
+ok("취소된 task도 마감된 날엔 여전히 missed(분류 불변)",
+  (await api("GET", `/api/days/${D}`)).json.tasks.find((x: any) => x.id === tCanKeep)?.class === "missed");
+
+// (5) 취소는 기간 달성률 평균을 오염시키지 않는다 (v_period_achievement: state <> 'cancelled')
+const pCan = (await api("POST", "/api/periods",
+  { title: "취소달성률", start_date: D, end_date: addDays(D, 30), color: "#123456" })).json.id as string;
+const tPerLive = (await api("POST", "/api/tasks", { title: "살아있는70", period_id: pCan })).json.id as string;
+await api("POST", `/api/tasks/${tPerLive}/schedule`, { date: addDays(D, 3) });
+await api("PUT", `/api/tasks/${tPerLive}/rate`, { date: addDays(D, 3), rate: 70 });
+const achBefore = (raw.prepare("SELECT achievement FROM v_period_achievement WHERE id=?").get(pCan) as any).achievement;
+const tPerCan = (await api("POST", "/api/tasks", { title: "취소될0", period_id: pCan })).json.id as string;
+await api("POST", `/api/tasks/${tPerCan}/schedule`, { date: addDays(D, 4) });
+await api("POST", `/api/tasks/${tPerCan}/cancel`);
+const achAfter = (raw.prepare("SELECT achievement FROM v_period_achievement WHERE id=?").get(pCan) as any).achievement;
+ok("취소 전 기간 달성률 70", achBefore === 70);
+ok("취소 task는 달성률 평균에서 제외 — 70 유지(오염 방지)", achAfter === 70);
+
+// (6) 완료된 task는 취소 불가
+const tCanFin = (await api("POST", "/api/tasks", { title: "완료라취소불가" })).json.id as string;
+await api("POST", `/api/tasks/${tCanFin}/complete`);
+ok("완료된 task 취소 409", (await api("POST", `/api/tasks/${tCanFin}/cancel`)).status === 409);
 
 // ── 10. 인증 ─────────────────────────────────────────────────
 console.log("\n[10] 인증 — API_TOKEN 있으면 Bearer 필수");

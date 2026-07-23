@@ -13,9 +13,10 @@ export interface TimeCtx {
   offsetMin: number;
 }
 
-/** 서비스 계층이 던지는 의도된 실패 — index.ts가 상태코드로 번역. */
+/** 서비스 계층이 던지는 의도된 실패 — index.ts가 상태코드로 번역.
+ *  suggest: 프런트가 후속 액션 버튼을 띄우기 위한 기계 판독 힌트(예: "cancel"). */
 export class ApiError extends Error {
-  constructor(public status: number, message: string) {
+  constructor(public status: number, message: string, public suggest?: string) {
     super(message);
   }
 }

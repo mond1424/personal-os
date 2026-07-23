@@ -3,8 +3,9 @@
 ## 저장소
 - repo: https://github.com/mond1424/personal-os
 - branch: main
-- 마지막 커밋: CAL-PLAN-0723 캘린더 셀 개선 — `3a26bbb`(1단계 일정 점 제거)·`0160ea3`(선행A +n 배지 잘림)·`2fad8ad`(.tt 클래스 충돌 글자커짐)·3단계(이 STATE 포함 커밋).
-  - ✅ **push 완료** (main → origin/main). 직전 세션 커밋 `13f6c50`(실사용 피드백 4건 UX)도 push 완료.
+- 마지막 커밋: CANCEL-0723 취소 상태 도입 (마이그레이션 0008) — 이 STATE 포함 커밋. 직전: CAL-PLAN `3a26bbb`·`0160ea3`·`2fad8ad`·`d0d3157`.
+  - ✅ **push 완료** (main → origin/main).
+  - ⚠️ **원격 마이그레이션 0008 적용 + `deploy`는 사용자 직접**(현재 로컬만 적용). 아래 '마이그레이션' 절 참조.
 
 ## raw 링크 (Chat이 직접 읽는 주소)
 - 설계문서(권위) https://raw.githubusercontent.com/mond1424/personal-os/main/personal-agent-design_v0.9.md
@@ -36,17 +37,28 @@
 - style.css      https://raw.githubusercontent.com/mond1424/personal-os/main/public/style.css
 
 ## 기준선
-typecheck 통과 / smoke 129 / front 151 / 실패 0
-(2단계 smoke 124→127: 미루기 사유 저장 검사 3개. front 145 유지: 완료율 바 검사→사유 검사 교체.
- 3단계 smoke 127→129: memo 어느 날짜에든 + diary 마커 검사. front 145→151: 통합 추가영역 세그·미래 memo 검사 6개.)
+typecheck 통과 / smoke 145 / front 157 / 실패 0
+(CAL-PLAN: smoke 129 유지(diary→memos 재타겟), front 151 유지.
+ CANCEL(0008): smoke 129→145 취소 16건, front 151→157 취소 UI 6건.)
 
 ## 마이그레이션
-최신: `0007_defer_reason` (0001_init · 0002_models · 0003_ai_provider · 0004_events · 0005_delete_scope · 0006_fix_model_high · 0007_defer_reason)
-✅ **로컬·원격(remote) 모두 0007까지 적용 완료** (2026-07-23 확인 — `migrations list`가 로컬·원격 다 "No migrations to apply").
+최신: `0008_cancel_task` (…0006_fix_model_high · 0007_defer_reason · 0008_cancel_task)
+- **0008_cancel_task**: `tasks`에 `cancelled_at`/`cancelled_on` + 트리거 `trg_task_cancel_excl`(완료·취소 상호배제) + 뷰 재생성(`v_task_stats.state` 추가, `v_period_achievement`·`is_waiting` 취소 제외). smoke 스키마 목록에도 등록.
+  - ✅ **로컬 적용 완료.** ⚠️ **원격 미적용 — 사용자가 `npx wrangler d1 migrations apply personal-os --remote` 실행 필요**(배포보다 먼저, `--local`→`--remote` 순서).
+✅ 0007까지는 로컬·원격 모두 적용 완료 (2026-07-23 확인 — `migrations list` 양쪽 "No migrations to apply").
 검증: 원격 `schedule_entries.defer_reason` 컬럼 존재(0007) · 원격 `settings.model_high = claude-sonnet-4-6`(0006 반영, 버그값 sonnet-5 아님).
 - `0007_defer_reason`: `schedule_entries`에 `defer_reason TEXT` 추가(미루기 사유). **WORK-PLAN의 `task_entries` 표기는 오기** — 실제 테이블은 `schedule_entries`(예정 항목·rate가 있는 곳).
 
-## 이번 세션 (2026-07-23) — CAL-PLAN-0723 캘린더 셀 개선 (마이그레이션 없음)
+## 이번 세션 (2026-07-23) — CANCEL-0723 취소 상태 도입 (마이그레이션 0008)
+- **제3의 종결 '취소'** — 삭제가 1.3 불변성(마감/Guard 참조)에 막히는 일을 기록 보존한 채 목록에서 내린다. 삭제는 분리 유지, 409에서 취소 안내.
+- **0008**: `tasks.cancelled_at`/`cancelled_on` + 트리거(완료·취소 상호배제). status enum 확장 안 함(CHECK 2개·테이블 재작성 회피). **상태의 유일한 진실 = `v_task_stats.state`**(`not_finished`/`finished`/`cancelled`). `v_period_achievement`·`is_waiting` 취소 제외(달성률 오염·21일 시계 방지).
+- **db**: `stCancelTask`/`stUncancelTask`/`stDeleteOpenEntries`(열린 날 예정만 — `NOT EXISTS(closed)`로 미래 예정 포함, 마감 항목은 트리거 ABORT 회피 위해 제외). `worksDeferring`/`worksByPeriod` status→state, `worksDone` UNION으로 취소행(`on_date`/`kind`), `calEntries`·`classifyAt`에 표시용 `is_cancelled`(분류 로직 불변).
+- **services/tasks**: `status==='finished'` 판정을 전부 `state`로. defer/schedule/extend/complete에 취소 가드(409). **`deferTask`는 취소 확인을 예정 조회보다 먼저** — 취소 시 열린 예정이 없어 entry 404가 먼저 터지던 것 수정(smoke가 잡음). 신규 `cancelTask`(kept_dates)·`uncancelTask`(예정 복구 없이 대기 복귀). `deleteTask` 409에 `suggest:"cancel"`.
+- **types/index**: `ApiError`에 `suggest?` → onError가 `{error, suggest}`. `TaskStats`에 state/cancelled_at/cancelled_on.
+- **프런트**: 상세 시트 `[취소]`·`[취소 해제]` 신설, `[삭제]`(=deleteTask)를 '삭제'로 개명(전엔 '취소' 표기라 충돌). 취소된 task는 완료·미루기·연장·취소 숨기고 '취소 해제'+'취소됨' 배지. 삭제 409(suggest) → '대신 취소하기' 원탭. done 세그에 취소 행(흐림+취소선). cancel 확인문구에 kept_dates.
+- 검증: typecheck 통과 · smoke 129→145 · front 151→157 · 실패 0. **로컬 마이그레이션만**(원격은 사용자).
+
+## 직전 세션 (2026-07-23) — CAL-PLAN-0723 캘린더 셀 개선 (마이그레이션 없음)
 - **1단계** `public/style.css` — 시각 지정 일정 앞 점(`.ev.evt.timed::before`) 제거. 시각 있는/종일 일정의 제목 시작 위치 일치, 제목 1~2자 더 노출. `.timed` 클래스 부여는 향후 훅으로 유지(app.js). 시각은 날짜 팝업에서 '종일/14:30'으로 이미 명확.
 - **2단계(진단만·코드 무변경)** 7/24 '포르쉐 바이브 티켓' 미표시 = **분기 B**로 확정. `deferred_to` 없는 살아있는 할 일 2건인데 셀은 할 일을 '항상 1줄 대표'로 압축 → 포르쉐는 대표(created_at 첫)가 아니라 `+1`에만 접힘. 조회 계층 정상·버그 아님 → 3단계 동적 예산으로 해소.
 - **선행 A** `public/{app.js,style.css}` — `+n` 배지 잘림(실버그) 수정. 배지가 제목과 같은 `.ev`(overflow:hidden;ellipsis) 안이라 제목이 넘치면 배지까지 잘렸다. 제목을 `.etxt`로 감싸 말줄임 분리, `.ev.tsum` flex화. `.etxt`는 자체 포맷팅 문맥이라 부모 취소선이 안 번져 `text-decoration:inherit`로 완료·이동 취소선 회귀 방지. **처음 `.tt`로 썼다가 전역 `.tt`(14.5px 시트 제목)와 충돌해 셀 글자가 커진 것 발견 → `.etxt`로 개명(`2fad8ad`).**
@@ -107,3 +119,4 @@ typecheck 통과 / smoke 129 / front 151 / 실패 0
 - **미루기 사유 도착지 보존** — 사유(`defer_reason`)는 원 항목이 아니라 **도착지(새 예정) 항목**에 남긴다. 마감된 날의 원 항목은 트리거가 수정을 막으므로, 열린 날/재배정 두 갈래 모두 균일하게 도착지에 붙여 보존.
 - **memo 개념 확장(3단계, 2026-07-23)** — 설계 §1.3 "memo = 마감 후 유일한 추가 통로"를 **"memo = 어느 날짜에든 붙는 짧은 노트(마감된 날은 여전히 불변)"**로 확장. daily 없으면 자동으로 빈 open daily를 만들어 붙인다(마감된 날의 불변은 트리거가 계속 강제). 빈 daily가 캘린더 '기록 있는 날' 마커로 오인되지 않도록 `calDiaryDates`를 내용 기준으로 조정. **문서 v1.0 갱신은 사용자 지시로 연기 중이나, 이 확장은 명시적 결정으로 여기 기록.**
   - **(2026-07-23 CAL-PLAN 3단계 갱신)** memo는 이제 캘린더 **셀 본문에 직접** 노출되므로 `calDiaryDates`의 `.dr` 마커 조건에서 **memo를 다시 제외**했다. 마커 = '마감·점수·감정·로그'만 의미(선명해짐). 빈 daily 오인 방지 취지는 그대로 유지.
+- **취소 상태 도입(0008, 2026-07-23)** — 설계 §1.4의 종결은 완료·미루기 둘뿐이었으나, 삭제가 1.3 불변성에 막히는 일에 **제3의 종결 '취소'**를 추가했다. `status` enum이 아니라 `cancelled_at`/`cancelled_on` 컬럼으로 저장하고(CHECK 2개·테이블 재작성 회피), **상태 판정은 `v_task_stats.state`(`not_finished`/`finished`/`cancelled`) 하나로 통일**했다. `status='not_finished'` + `cancelled_at IS NOT NULL` = 취소라는 물리적 사실은 schema-current.sql의 tasks 주석에만 남기고, 코드는 `state`만 읽는다. 취소는 **열린 날 예정만 비우고 마감된 날 항목은 보존**(defer의 두 갈래와 동형), 해제 시 예정은 복구되지 않고 대기로 돌아간다. 삭제는 분리 유지, 409에서 취소를 안내. `cancel_reason`은 도입하지 않음(필요 시 별도 마이그레이션). 프런트에서 기존 '삭제=취소 라벨'을 '삭제'로 바로잡아 새 '취소'와 분리.

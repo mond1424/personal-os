@@ -34,7 +34,9 @@
 | POST `/api/tasks/:id/schedule` | `{date}` | `{id, date}` | `tasks.scheduleTask` |
 | POST `/api/tasks/:id/extend` | — | `{id, anchor, deadline}` | `tasks.extendWait` |
 | POST `/api/tasks/:id/complete` | — | `{id, finished_on, planned_on, rate_applied}` | `tasks.completeTask` |
-| DELETE `/api/tasks/:id` | — | `{id, deleted}` (마감 기록 있으면 409) | `tasks.deleteTask` |
+| POST `/api/tasks/:id/cancel` | — | `{id, cancelled_at, cancelled_on, kept_dates}` | `tasks.cancelTask` |
+| POST `/api/tasks/:id/uncancel` | — | `{id, cancelled, waiting}` | `tasks.uncancelTask` |
+| DELETE `/api/tasks/:id` | — | `{id, deleted}` (마감·Guard 기록 있으면 409 `{suggest:"cancel"}`) | `tasks.deleteTask` |
 | PUT `/api/tasks/:id/rate` | `{date, rate}` | `{id, date, rate}` | `tasks.setRate` |
 | GET `/api/periods` | — | 카드 rows(달성률·경과일 파생) | `periods.listPeriods` |
 | POST `/api/periods` | `{title, start_date, end_date, color, goals?}` | `{id}` (201) | `periods.createPeriod` |
@@ -90,7 +92,9 @@
 - `scheduleTask(env, t, id, date)` → `{id, date}` · 대기→확정
 - `extendWait(env, t, id)` → `{id, anchor, deadline}` · 앵커=now(이력은 트리거)
 - `completeTask(env, t, id)` → `{id, finished_on, planned_on, rate_applied}` · live 항목 rate 100(마감된 날은 안 건드림)
-- `deleteTask(env, id)` → `{id, deleted}` · 마감 기록 있으면 409(사유 날짜로), 삭제 순서 연장이력→항목→task
+- `cancelTask(env, t, id)` → `{id, cancelled_at, cancelled_on, kept_dates}` · 열린 날 예정만 비우고 마감된 날 항목은 보존(0008). state='cancelled'
+- `uncancelTask(env, id)` → `{id, cancelled:false, waiting}` · 예정 복구 없이 대기로 복귀
+- `deleteTask(env, id)` → `{id, deleted}` · 마감·Guard 기록 있으면 409 `{suggest:"cancel"}`(사유 날짜로), 삭제 순서 연장이력→항목→task
 - `setRate(env, id, date, rate)` → `{id, date, rate}`
 - `segment(env, t, name)` → Works 세그먼트 rows
 
@@ -158,7 +162,7 @@
 **컨텍스트 범위 조회** — `dailyRange` · `logsRange` · `feelingsRange` · `memosRange` (각 `(env, start, end)`) · `analysesRecentFull(env, n)` · `stInsertAnalysis(env, id, prompt, pass1, pass2, meta, now)`
 **guard** — `guardEventsList(env)`
 
-**뷰(스키마)**: `v_task_stats`(entry_count·defer_count·latest_date·current_rate·is_waiting) · `v_period_achievement`(달성률=current_rate 평균).
+**뷰(스키마)**: `v_task_stats`(**state**=상태의 유일한 진실 `not_finished`/`finished`/`cancelled` · cancelled_at·cancelled_on · entry_count·defer_count·latest_date·current_rate·is_waiting) · `v_period_achievement`(달성률=current_rate 평균, **취소 제외**). 상태 판정은 언제나 `state`(status는 원시 컬럼).
 
 ---
 

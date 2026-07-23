@@ -11,6 +11,9 @@ const q = (env: Env, sql: string) => env.DB.prepare(sql);
 export interface TaskStats {
   id: string; title: string; period_id: string | null;
   status: "not_finished" | "finished"; finished_on: string | null;
+  // ★ 상태 판정은 state만 쓴다 (status는 원시 컬럼). 'cancelled' = status='not_finished' + cancelled_at≠NULL (0008).
+  state: "not_finished" | "finished" | "cancelled";
+  cancelled_at: string | null; cancelled_on: string | null;
   wait_anchor_at: string; created_at: string;
   entry_count: number; defer_count: number; latest_date: string | null;
   current_rate: number; is_waiting: 0 | 1;
@@ -82,14 +85,15 @@ export const calPeriods = (env: Env, start: string, end: string) => q(env, `
   ORDER BY created_at`).bind(end, start).all<PeriodRow>();
 
 export const calEntries = (env: Env, start: string, end: string) => q(env, `
-  SELECT e.date, t.id, t.title, t.status, e.deferred_to, p.color
+  SELECT e.date, t.id, t.title, t.status, e.deferred_to, p.color,
+         (t.cancelled_at IS NOT NULL) AS is_cancelled  -- 표시 배지 전용. 상태 판정은 v_task_stats.state
   FROM schedule_entries e
   JOIN tasks t        ON t.id = e.task_id
   LEFT JOIN periods p ON p.id = t.period_id
   WHERE e.date BETWEEN ? AND ?
   ORDER BY e.date, t.created_at`).bind(start, end).all<{
     date: string; id: string; title: string; status: string;
-    deferred_to: string | null; color: string | null;
+    deferred_to: string | null; color: string | null; is_cancelled: number;
   }>();
 
 // 캘린더 '기록 있는 날' 마커(.dr): 빈 daily(자동 생성)를 오인하지 않게 실제 내용이 있는 날만.
@@ -145,13 +149,14 @@ export const classifyAt = (env: Env, k: string) => q(env, `
                                                              THEN 'missed'
            ELSE 'todo'
          END AS class,
-         e.rate, e.deferred_to
+         e.rate, e.deferred_to,
+         (t.cancelled_at IS NOT NULL) AS is_cancelled  -- 표시 배지 전용. 분류(class)는 건드리지 않음
   FROM schedule_entries e JOIN tasks t ON t.id = e.task_id
   WHERE e.date = ?1
   ORDER BY t.created_at`).bind(k).all<{
     id: string; title: string; period_id: string | null;
     class: "done" | "deferred" | "missed" | "todo";
-    rate: number; deferred_to: string | null;
+    rate: number; deferred_to: string | null; is_cancelled: number;
   }>();
 
 // ── G. 하루 마감 조각 (순서는 services/daily.ts가 강제) ──────
@@ -235,6 +240,16 @@ export const stFinishTask = (env: Env, taskId: string, now: string, d: string) =
   q(env, "UPDATE tasks SET status = 'finished', finished_at = ?, finished_on = ? WHERE id = ? AND status = 'not_finished'")
     .bind(now, d, taskId);
 
+// 취소 (0008) — status는 그대로 두고 cancelled_at/on만 세운다. state 뷰가 'cancelled'로 계산.
+export const stCancelTask = (env: Env, id: string, now: string, d: string) =>
+  q(env, `UPDATE tasks SET cancelled_at = ?, cancelled_on = ?
+           WHERE id = ? AND cancelled_at IS NULL AND status = 'not_finished'`)
+    .bind(now, d, id);
+
+export const stUncancelTask = (env: Env, id: string) =>
+  q(env, `UPDATE tasks SET cancelled_at = NULL, cancelled_on = NULL
+           WHERE id = ? AND cancelled_at IS NOT NULL`).bind(id);
+
 export const stSetRate = (env: Env, taskId: string, date: string, rate: number) =>
   q(env, "UPDATE schedule_entries SET rate = ? WHERE task_id = ? AND date = ? AND deferred_to IS NULL")
     .bind(rate, taskId, date);
@@ -272,7 +287,7 @@ export const worksDeferring = (env: Env) => q(env, `
   SELECT s.id, s.title, s.defer_count, s.latest_date,
          (SELECT MIN(date) FROM schedule_entries e WHERE e.task_id = s.id) AS first_date
   FROM v_task_stats s
-  WHERE s.status = 'not_finished' AND s.defer_count > 0
+  WHERE s.state = 'not_finished' AND s.defer_count > 0
   ORDER BY s.defer_count DESC`).all<{
     id: string; title: string; defer_count: number;
     latest_date: string; first_date: string;
@@ -280,24 +295,29 @@ export const worksDeferring = (env: Env) => q(env, `
 
 export const worksByPeriod = (env: Env) => q(env, `
   SELECT p.id AS period_id, p.title AS period_title, p.color,
-         s.id, s.title, s.status, s.latest_date, s.is_waiting
+         s.id, s.title, s.state, s.latest_date, s.is_waiting
   FROM periods p JOIN v_task_stats s ON s.period_id = p.id
+  WHERE s.state <> 'cancelled'
   ORDER BY p.created_at, s.latest_date IS NULL, s.latest_date`).all<{
     period_id: string; period_title: string; color: string;
-    id: string; title: string; status: string;
+    id: string; title: string; state: string;
     latest_date: string | null; is_waiting: 0 | 1;
   }>();
 
 // 완료 목록 — 완료를 누른 날(finished_on)과 그 일의 예정일(live entry)은 다를 수 있다.
 // 둘 다 보여 줘야 "완료인데 왜 그 날짜?"가 사라진다.
 export const worksDone = (env: Env) => q(env, `
-  SELECT t.id, t.title, t.finished_on,
+  SELECT t.id, t.title, t.finished_on AS on_date, 'finished' AS kind,
          (SELECT e.date FROM schedule_entries e
            WHERE e.task_id = t.id AND e.deferred_to IS NULL
            ORDER BY e.date DESC LIMIT 1) AS planned_on
-  FROM tasks t
-  WHERE t.status = 'finished' ORDER BY t.finished_on DESC, t.finished_at DESC`).all<{
-    id: string; title: string; finished_on: string; planned_on: string | null;
+  FROM tasks t WHERE t.status = 'finished'
+  UNION ALL
+  SELECT t.id, t.title, t.cancelled_on AS on_date, 'cancelled' AS kind, NULL
+  FROM tasks t WHERE t.cancelled_at IS NOT NULL
+  ORDER BY on_date DESC`).all<{
+    id: string; title: string; on_date: string;
+    kind: "finished" | "cancelled"; planned_on: string | null;
   }>();
 
 // ── 일정(event) — 캘린더 전용 엔티티 (0004) ─────────────────
@@ -396,6 +416,17 @@ export const stDeleteExtensions = (env: Env, taskId: string) =>
 
 export const stDeleteEntries = (env: Env, taskId: string) =>
   q(env, "DELETE FROM schedule_entries WHERE task_id = ?").bind(taskId);
+
+// 취소 (0008): 열린 날(=마감되지 않은 날)의 예정만 비운다. 마감된 날은 트리거가 막는 영역이라
+// 조건에서 애초에 제외한다 — ABORT로 batch 전체가 죽는 걸 피한다.
+// ★ 미래 날짜는 daily 행 자체가 없다. d.status='open'으로 쓰면 미래 예정이 안 지워진다.
+//   반드시 NOT EXISTS(closed)로 쓸 것.
+export const stDeleteOpenEntries = (env: Env, taskId: string) =>
+  q(env, `DELETE FROM schedule_entries
+           WHERE task_id = ?
+             AND NOT EXISTS (SELECT 1 FROM daily d
+                              WHERE d.date = schedule_entries.date AND d.status = 'closed')`)
+    .bind(taskId);
 export const stDeleteTask = (env: Env, id: string) =>
   q(env, "DELETE FROM tasks WHERE id = ?").bind(id);
 

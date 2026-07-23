@@ -80,11 +80,13 @@ export async function deferTask(
   env: Env, t: TimeCtx, id: string, from: string, to: string, rate?: number, reason?: string,
 ) {
   if (!isDate(from)) throw new ApiError(400, "from 형식은 YYYY-MM-DD");
+  // 취소 확인을 예정 조회보다 먼저 — 취소된 일은 열린 예정이 없어 entry 404가 먼저 터진다.
+  const stats = await db.taskStats(env, id);
+  if (stats?.state === "cancelled") throw new ApiError(409, "취소된 일이에요 — 취소를 풀고 다시 잡아주세요");
   const entry = await db.taskEntryAt(env, id, from);
   if (!entry) throw new ApiError(404, `${from}에 이 task의 예정이 없어요`);
   if (entry.deferred_to) throw new ApiError(409, `이미 ${entry.deferred_to}로 미뤄졌어요`);
-  const stats = await db.taskStats(env, id);
-  if (stats?.status === "finished") throw new ApiError(409, "완료된 task는 미룰 수 없어요");
+  if (stats?.state === "finished") throw new ApiError(409, "완료된 task는 미룰 수 없어요");
   assertDeferable(t, to, from); // to > from은 DB CHECK로도 이중 보장
 
   const fromDaily = await db.getDaily(env, from);
@@ -109,7 +111,8 @@ export async function deferTask(
 export async function scheduleTask(env: Env, t: TimeCtx, id: string, date: string) {
   const stats = await db.taskStats(env, id);
   if (!stats) throw new ApiError(404, "해당 task가 없어요");
-  if (stats.status === "finished") throw new ApiError(409, "완료된 task예요");
+  if (stats.state === "finished") throw new ApiError(409, "완료된 task예요");
+  if (stats.state === "cancelled") throw new ApiError(409, "취소된 일이에요 — 취소를 풀고 다시 잡아주세요");
   if (!stats.is_waiting)
     throw new ApiError(409, "이미 예정이 있는 task예요 — 이동은 미루기(defer)로");
   assertSchedulable(t, date);
@@ -121,7 +124,8 @@ export async function scheduleTask(env: Env, t: TimeCtx, id: string, date: strin
 export async function extendWait(env: Env, t: TimeCtx, id: string) {
   const stats = await db.taskStats(env, id);
   if (!stats) throw new ApiError(404, "해당 task가 없어요");
-  if (!stats.is_waiting || stats.status === "finished")
+  if (stats.state === "cancelled") throw new ApiError(409, "취소된 일이에요 — 취소를 풀고 다시 잡아주세요");
+  if (!stats.is_waiting || stats.state === "finished")
     throw new ApiError(409, "대기 중인 task만 연장할 수 있어요");
   await db.stExtendWait(env, id, t.now).run();
   return { id, anchor: t.now, deadline: addDays(t.d, 21) };
@@ -138,7 +142,8 @@ export async function extendWait(env: Env, t: TimeCtx, id: string) {
 export async function completeTask(env: Env, t: TimeCtx, id: string) {
   const stats = await db.taskStats(env, id);
   if (!stats) throw new ApiError(404, "해당 task가 없어요");
-  if (stats.status === "finished") throw new ApiError(409, "이미 완료된 task예요");
+  if (stats.state === "finished") throw new ApiError(409, "이미 완료된 task예요");
+  if (stats.state === "cancelled") throw new ApiError(409, "취소된 일은 완료할 수 없어요");
   const live = await db.liveEntry(env, id);
   const stmts = [db.stFinishTask(env, id, t.now, t.d)];
   if (live && live.day_status !== "closed") stmts.unshift(db.stRate100At(env, id, live.date));
@@ -148,6 +153,35 @@ export async function completeTask(env: Env, t: TimeCtx, id: string) {
     planned_on: live?.date ?? null,
     rate_applied: !!live && live.day_status !== "closed",
   };
+}
+
+/**
+ * 취소 — 완료와 나란한 종결. 지난 기록은 남기고 앞으로의 계획만 비운다.
+ * 삭제와 다른 점: tasks 행과 마감된 날 항목이 살아남아 '있었던 일'이 보존된다.
+ */
+export async function cancelTask(env: Env, t: TimeCtx, id: string) {
+  const task = await db.taskStats(env, id);
+  if (!task) throw new ApiError(404, "해당 task가 없어요");
+  if (task.state === "finished")
+    throw new ApiError(409, "완료된 일은 취소할 수 없어요 — 완료 기록으로 남겨두세요");
+  if (task.state === "cancelled") throw new ApiError(409, "이미 취소된 일이에요");
+
+  const kept = (await db.closedEntryDates(env, id)).results.map((r) => r.date);
+  await env.DB.batch([
+    db.stDeleteOpenEntries(env, id),        // 앞으로의 계획을 비우고
+    db.stCancelTask(env, id, t.now, t.d),   // 취소를 표시한다
+  ]);
+  return { id, cancelled_at: t.now, cancelled_on: t.d, kept_dates: kept };
+}
+
+/** 취소 해제 — 예정은 복구되지 않으므로 '대기'로 돌아간다. */
+export async function uncancelTask(env: Env, id: string) {
+  const task = await db.taskStats(env, id);
+  if (!task) throw new ApiError(404, "해당 task가 없어요");
+  if (task.state !== "cancelled") throw new ApiError(409, "취소된 일이 아니에요");
+  await db.stUncancelTask(env, id).run();
+  const after = await db.taskStats(env, id);
+  return { id, cancelled: false, waiting: !!after?.is_waiting };
 }
 
 const shortDate = (d: string) => `${+d.slice(5, 7)}/${+d.slice(8, 10)}`;
@@ -175,12 +209,15 @@ export async function deleteTask(env: Env, id: string) {
     const head = dates.slice(0, 3).map(shortDate).join(" · ");
     const rest = dates.length > 3 ? ` 외 ${dates.length - 3}일` : "";
     throw new ApiError(409,
-      `${head}${rest} — 이미 마감된 날의 기록이 이 일을 참조해요. ` +
-      `지난 기록은 지울 수 없으니(1.3) 완료로 남기거나 그대로 두세요`);
+      `${head}${rest} — 이미 마감된 날의 기록이 이 일을 참조해요. 지난 기록은 지울 수 없어요(1.3). ` +
+      `대신 '취소'하면 기록은 남고 목록에서만 빠져요`,
+      "cancel");
   }
   if ((guard?.n ?? 0) > 0)
     throw new ApiError(409,
-      `Guard 개입 기록 ${guard!.n}건이 이 일을 참조해요 — 개입 이력은 지울 수 없어요`);
+      `Guard 개입 기록 ${guard!.n}건이 이 일을 참조해요 — 개입 이력은 지울 수 없어요. ` +
+      `대신 '취소'하면 기록은 남고 목록에서만 빠져요`,
+      "cancel");
 
   await env.DB.batch([
     db.stDeleteExtensions(env, id), // 대기 연장 이력 — 마감 기록이 없을 때만 트리거가 허용

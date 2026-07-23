@@ -288,10 +288,27 @@ w.closeAll();
 w.switchTab("works"); await sleep(1200);
 ok("완료 목록 — 예정일·완료일 구분 표기", $("#done-list").textContent.includes("완료"), $("#done-list").textContent.slice(0, 80));
 
-// 취소 = 회피 민감 문구
+// 삭제 vs 취소 — 완료된 task 시트: 삭제 링크는 '삭제', 취소 버튼은 숨김(완료는 취소 대상 아님)
 await w.openTask(tDone); await sleep(400);
-ok("버튼 문구가 '취소'", $("#tk-delete").textContent.includes("취소"));
+ok("삭제 링크 문구가 '삭제'", $("#tk-delete").textContent.includes("삭제"), $("#tk-delete").textContent);
+ok("완료된 task 시트 — 취소 버튼 숨김", $("#tk-cancel").style.display === "none");
 w.closeAll();
+
+// 취소 — 제3의 종결 (0008): 살아있는 task를 목록에서 내리고 기록은 남긴다
+const tCanId = (await ev(`Api.createTask({title:"접을 일정", date:S.today.date})`)).id;
+await w.openTask(tCanId); await sleep(400);
+ok("상세 시트 — 취소 버튼 보임(살아있는 task)",
+  !!$("#tk-cancel") && $("#tk-cancel").style.display !== "none");
+w.closeAll();
+await ev(`Api.cancelTask("${tCanId}")`);
+await w.openTask(tCanId); await sleep(400);
+ok("취소된 task 시트 — 완료 버튼 숨김", $("#tk-complete").style.display === "none");
+ok("취소된 task 시트 — 취소 해제 버튼 보임",
+  $("#tk-uncancel").style.display !== "none" && $("#tk-uncancel").textContent.includes("취소 해제"));
+ok("취소된 task 시트 — '취소됨' 배지", $("#tk-rates").textContent.includes("취소됨"), $("#tk-rates").textContent);
+w.closeAll();
+w.switchTab("works"); await sleep(900);
+ok("done 세그에 취소 행 렌더('취소' 라벨)", $("#done-list").textContent.includes("취소"), $("#done-list").textContent.slice(0, 140));
 
 console.log("\n[일정(event) — task와 분리]");
 const EVD = ev("addDaysStr(S.today.date,1)");

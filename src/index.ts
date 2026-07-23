@@ -53,7 +53,7 @@ function translateDbError(e: Error): ApiError | null {
 
 app.onError((err, c) => {
   const e = err instanceof ApiError ? err : translateDbError(err);
-  if (e) return c.json({ error: e.message }, e.status as ContentfulStatusCode);
+  if (e) return c.json({ error: e.message, ...(e.suggest ? { suggest: e.suggest } : {}) }, e.status as ContentfulStatusCode);
   console.error(err);
   return c.json({ error: "서버 오류" }, 500);
 });
@@ -136,6 +136,10 @@ app.post("/api/tasks/:id/extend", async (c) =>
   c.json(await tasks.extendWait(c.env, c.get("t"), c.req.param("id"))));
 app.post("/api/tasks/:id/complete", async (c) =>
   c.json(await tasks.completeTask(c.env, c.get("t"), c.req.param("id"))));
+app.post("/api/tasks/:id/cancel", async (c) =>
+  c.json(await tasks.cancelTask(c.env, c.get("t"), c.req.param("id"))));
+app.post("/api/tasks/:id/uncancel", async (c) =>
+  c.json(await tasks.uncancelTask(c.env, c.req.param("id"))));
 app.delete("/api/tasks/:id", async (c) => c.json(await tasks.deleteTask(c.env, c.req.param("id"))));
 app.put("/api/tasks/:id/rate", async (c) => {
   const b = await body<{ date: string; rate: number }>(c);
