@@ -101,7 +101,7 @@ runAnalysis: (prompt, depth) => _req("POST", "/analyses", { prompt, depth }),
 
 ## S1-d. `public/index.html` — `#scr-anal` (대략 143~151행)
 
-`<textarea id="anal-q">` 와 `<div class="ctxbox">` **사이**에 삽입. 기존 `.wsegs`/`.wseg` 재사용(다크모드 선택색은 A-1에서 해결됨 → **신규 CSS 불필요**).
+`<textarea id="anal-q">` 와 `<div class="ctxbox">` **사이**에 삽입. 기존 `.wsegs`/`.wseg` 재사용(다크모드 선택색은 WORK-PLAN-0723 1단계 [#1]에서 해결됨 — `style.css`의 `.wseg.on` 다크 오버라이드 2곳 → **신규 CSS 불필요**).
 
 ```html
 <div class="wsegs" id="anal-depth" style="margin-top:10px">
