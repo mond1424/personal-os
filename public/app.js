@@ -1058,7 +1058,9 @@ async function openTask(id) {
     const fin = t.state === "finished";
     const cancelled = t.state === "cancelled";
     $("#tk-rates").innerHTML =
+      // 사유는 취소 상태일 때만 — 해제하면 컬럼엔 남아 있어도 현재 상태가 아니다(append-only).
       cancelled ? `<span class="ratebig" style="color:var(--faint)">취소됨 · ${md(t.cancelled_on)}</span>`
+        + (t.cancel_reason ? `<p class="cap" style="margin:6px 0 0">사유 — ${esc(t.cancel_reason)}</p>` : "")
       : fin ? `<span class="ratebig done">완료</span>`
       : !live ? `<span class="cap">대기 중이에요 — 일정을 정하면 예정이 생겨요.</span>`
       : locked ? `<p class="cap">${md(live.date)}은 이미 마감됐어요 — 지난 기록은 고칠 수 없어요.</p>`
@@ -1105,10 +1107,15 @@ function bindTaskSheet() {
     run(async () => {
       // kept: 마감된 날 항목 수 — 무엇이 남는지 알아야 안심하고 누른다 (day_status는 getTask에 실려온다).
       const kept = t.entries.filter((e) => e.day_status === "closed").length;
-      const body = kept
+      // 사유는 append-only(0009) — 그래서 placeholder에 '나중에 고칠 수 없다'를 밝힌다.
+      const body = (kept
         ? `“${esc(t.title)}” — 마감된 날 기록 <b>${kept}일</b>은 그대로 남고, 앞으로 잡힌 예정만 사라져요. 나중에 되돌릴 수 있어요.`
-        : `“${esc(t.title)}” — 앞으로 잡힌 예정만 사라지고, 지난 기록은 남아요. 나중에 되돌릴 수 있어요.`;
-      if (await confirmAsk("이 일을 취소할까요?", body, "취소하기") === "ok") await execCancel(t);
+        : `“${esc(t.title)}” — 앞으로 잡힌 예정만 사라지고, 지난 기록은 남아요. 나중에 되돌릴 수 있어요.`)
+        + `<textarea id="cf-reason" rows="2" style="margin-top:10px;width:100%;box-sizing:border-box"
+             placeholder="취소하는 이유 (선택) — 나중에 고칠 수 없어요"></textarea>`;
+      // confirmAsk resolve 직후 읽는다(요소는 DOM에 남아 있다).
+      if (await confirmAsk("이 일을 취소할까요?", body, "취소하기") === "ok")
+        await execCancel(t, ($("#cf-reason")?.value || "").trim());
     });
   };
   $("#tk-uncancel").onclick = () => {
@@ -1148,8 +1155,8 @@ function bindTaskSheet() {
 }
 
 /** 취소 실행(확인은 호출부에서) — 성공 후 시트 닫고 남은 날을 알린다. */
-async function execCancel(t) {
-  const res = await Api.cancelTask(t.id);
+async function execCancel(t, reason) {
+  const res = await Api.cancelTask(t.id, reason);
   closeAll();
   const kn = (res.kept_dates || []).length;
   toast(kn ? `취소 — 마감된 날 기록 ${kn}일은 그대로 남아요` : "취소했어요", "warn");

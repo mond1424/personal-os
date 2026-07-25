@@ -159,19 +159,25 @@ export async function completeTask(env: Env, t: TimeCtx, id: string) {
  * 취소 — 완료와 나란한 종결. 지난 기록은 남기고 앞으로의 계획만 비운다.
  * 삭제와 다른 점: tasks 행과 마감된 날 항목이 살아남아 '있었던 일'이 보존된다.
  */
-export async function cancelTask(env: Env, t: TimeCtx, id: string) {
+export async function cancelTask(env: Env, t: TimeCtx, id: string, reason?: string) {
+  // ★ 가드 검사 순서는 바꾸지 말 것 — 0008에서 deferTask 순서를 고쳐야 했던 회귀 이력이 있다.
   const task = await db.taskStats(env, id);
   if (!task) throw new ApiError(404, "해당 task가 없어요");
   if (task.state === "finished")
     throw new ApiError(409, "완료된 일은 취소할 수 없어요 — 완료 기록으로 남겨두세요");
   if (task.state === "cancelled") throw new ApiError(409, "이미 취소된 일이에요");
+  if (reason !== undefined && typeof reason !== "string") throw new ApiError(400, "사유는 문자열이에요");
+  if ((reason ?? "").length > 500) throw new ApiError(400, "취소 사유는 500자 이내로");
+  const trimmedReason = reason?.trim() || null;   // 빈 문자열·공백만 → NULL
 
   const kept = (await db.closedEntryDates(env, id)).results.map((r) => r.date);
   await env.DB.batch([
     db.stDeleteOpenEntries(env, id),        // 앞으로의 계획을 비우고
-    db.stCancelTask(env, id, t.now, t.d),   // 취소를 표시한다
+    // 사유는 append-only — 여기서 한 번 쓰고 취소 상태인 동안 고치지 않는다.
+    // cancelled_by는 지금 단계에선 항상 'user'(Guard 개입 4단계에서 'guard'가 생긴다).
+    db.stCancelTask(env, id, t.now, t.d, trimmedReason, "user"),
   ]);
-  return { id, cancelled_at: t.now, cancelled_on: t.d, kept_dates: kept };
+  return { id, cancelled_at: t.now, cancelled_on: t.d, kept_dates: kept, cancel_reason: trimmedReason };
 }
 
 /** 취소 해제 — 예정은 복구되지 않으므로 '대기'로 돌아간다. */

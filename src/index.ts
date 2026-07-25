@@ -62,6 +62,10 @@ const body = async <T>(c: { req: { json(): Promise<unknown> } }): Promise<T> => 
   try { return (await c.req.json()) as T; }
   catch { throw new ApiError(400, "JSON 본문이 필요해요"); }
 };
+// 본문이 '선택'인 엔드포인트용 — 없거나 깨졌으면 빈 객체. 무본문으로 부르던 기존 호출을 깨지 않는다.
+const bodyOpt = async <T>(c: { req: { json(): Promise<unknown> } }): Promise<Partial<T>> => {
+  try { return (await c.req.json()) as Partial<T>; } catch { return {}; }
+};
 
 // ── Today (7장) ─────────────────────────────────────────────
 app.get("/api/today", async (c) => c.json(await daily.assembleToday(c.env, c.get("t"))));
@@ -136,8 +140,10 @@ app.post("/api/tasks/:id/extend", async (c) =>
   c.json(await tasks.extendWait(c.env, c.get("t"), c.req.param("id"))));
 app.post("/api/tasks/:id/complete", async (c) =>
   c.json(await tasks.completeTask(c.env, c.get("t"), c.req.param("id"))));
-app.post("/api/tasks/:id/cancel", async (c) =>
-  c.json(await tasks.cancelTask(c.env, c.get("t"), c.req.param("id"))));
+app.post("/api/tasks/:id/cancel", async (c) => {
+  const b = await bodyOpt<{ reason?: string }>(c);   // 사유는 선택 — 무본문 취소도 그대로 동작
+  return c.json(await tasks.cancelTask(c.env, c.get("t"), c.req.param("id"), b.reason));
+});
 app.post("/api/tasks/:id/uncancel", async (c) =>
   c.json(await tasks.uncancelTask(c.env, c.req.param("id"))));
 app.delete("/api/tasks/:id", async (c) => c.json(await tasks.deleteTask(c.env, c.req.param("id"))));

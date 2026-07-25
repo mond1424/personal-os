@@ -14,6 +14,7 @@ export interface TaskStats {
   // ★ 상태 판정은 state만 쓴다 (status는 원시 컬럼). 'cancelled' = status='not_finished' + cancelled_at≠NULL (0008).
   state: "not_finished" | "finished" | "cancelled";
   cancelled_at: string | null; cancelled_on: string | null;
+  cancel_reason?: string | null; cancelled_by?: string | null;   // (0009) append-only — 해제해도 남는다
   wait_anchor_at: string; created_at: string;
   entry_count: number; defer_count: number; latest_date: string | null;
   current_rate: number; is_waiting: 0 | 1;
@@ -241,11 +242,13 @@ export const stFinishTask = (env: Env, taskId: string, now: string, d: string) =
     .bind(now, d, taskId);
 
 // 취소 (0008) — status는 그대로 두고 cancelled_at/on만 세운다. state 뷰가 'cancelled'로 계산.
-export const stCancelTask = (env: Env, id: string, now: string, d: string) =>
-  q(env, `UPDATE tasks SET cancelled_at = ?, cancelled_on = ?
+// 사유는 append-only (0009). 빈 문자열·공백만은 NULL로 정규화 — 남으면 '사유 있음' 판정이 오염된다.
+export const stCancelTask = (env: Env, id: string, now: string, d: string, reason?: string | null, by = "user") =>
+  q(env, `UPDATE tasks SET cancelled_at = ?, cancelled_on = ?, cancel_reason = ?, cancelled_by = ?
            WHERE id = ? AND cancelled_at IS NULL AND status = 'not_finished'`)
-    .bind(now, d, id);
+    .bind(now, d, (reason ?? "").trim() || null, by, id);
 
+// ★ cancel_reason·cancelled_by는 건드리지 않는다 — append-only. 다음 취소가 덮어쓴다.
 export const stUncancelTask = (env: Env, id: string) =>
   q(env, `UPDATE tasks SET cancelled_at = NULL, cancelled_on = NULL
            WHERE id = ? AND cancelled_at IS NOT NULL`).bind(id);

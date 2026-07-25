@@ -340,6 +340,22 @@ w.closeAll();
 w.switchTab("works"); await sleep(900);
 ok("done 세그에 취소 행 렌더('취소' 라벨)", $("#done-list").textContent.includes("취소"), $("#done-list").textContent.slice(0, 140));
 
+// 취소 사유(0009) — 확인 박스에서 받고 상세 시트에 보여준다. append-only라 해제 상태에선 안 보인다.
+const tRzId = (await ev(`Api.createTask({title:"사유 남기고 취소", date:S.today.date})`)).id;
+await w.openTask(tRzId); await sleep(400);
+$("#tk-cancel").dispatchEvent(new w.Event("click")); await sleep(400);
+ok("취소 확인 박스에 사유 입력칸", !!$("#cf-reason"));
+$("#cf-no").dispatchEvent(new w.Event("click")); await sleep(200);   // 확인은 누르지 않는다
+w.closeAll();
+await ev(`Api.cancelTask("${tRzId}", "방향이 바뀌어서")`);
+await w.openTask(tRzId); await sleep(400);
+ok("취소된 task 시트 — 사유 노출", $("#tk-rates").textContent.includes("방향이 바뀌어서"), $("#tk-rates").textContent);
+w.closeAll();
+await ev(`Api.uncancelTask("${tRzId}")`);
+await w.openTask(tRzId); await sleep(400);
+ok("취소 해제 상태 — 사유 미노출", !$("#tk-rates").textContent.includes("방향이 바뀌어서"), $("#tk-rates").textContent);
+w.closeAll();
+
 console.log("\n[일정(event) — task와 분리]");
 const EVD = ev("addDaysStr(S.today.date,1)");
 const evId = (await ev(`Api.createEvent({title:"일정 분리 확인", date:"${EVD}", time:"10:00"})`)).id;

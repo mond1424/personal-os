@@ -13,7 +13,7 @@ import type { Env } from "../src/types";
 import { makeD1, rawOf } from "./d1shim";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const schema = ["0001_init.sql", "0002_models.sql", "0003_ai_provider.sql", "0004_events.sql", "0005_delete_scope.sql", "0006_fix_model_high.sql", "0007_defer_reason.sql", "0008_cancel_task.sql"]
+const schema = ["0001_init.sql", "0002_models.sql", "0003_ai_provider.sql", "0004_events.sql", "0005_delete_scope.sql", "0006_fix_model_high.sql", "0007_defer_reason.sql", "0008_cancel_task.sql", "0009_cancel_reason.sql"]
   .map((f) => readFileSync(join(here, "../migrations/" + f), "utf8")).join("\n");
 const env: Env = { DB: makeD1(schema) };
 const raw = rawOf(env.DB);
@@ -400,6 +400,27 @@ ok("취소 task는 달성률 평균에서 제외 — 70 유지(오염 방지)", 
 const tCanFin = (await api("POST", "/api/tasks", { title: "완료라취소불가" })).json.id as string;
 await api("POST", `/api/tasks/${tCanFin}/complete`);
 ok("완료된 task 취소 409", (await api("POST", `/api/tasks/${tCanFin}/cancel`)).status === 409);
+
+// (7) 취소 사유 (0009) — append-only. 취소 시 한 번 쓰고, 해제해도 지우지 않는다.
+const mkCan = async (title: string) => (await api("POST", "/api/tasks", { title })).json.id as string;
+const tRz = await mkCan("사유와 함께 취소");
+ok("사유와 함께 취소 200", (await api("POST", `/api/tasks/${tRz}/cancel`, { reason: "방향이 바뀌어서" })).status === 200);
+const rzStat = (await api("GET", `/api/tasks/${tRz}`)).json;
+ok("사유가 tasks에 남음 · cancelled_by='user'",
+  rzStat.cancel_reason === "방향이 바뀌어서" && rzStat.cancelled_by === "user", JSON.stringify(rzStat.cancel_reason));
+const tRzNone = await mkCan("사유 없이 취소");
+await api("POST", `/api/tasks/${tRzNone}/cancel`);
+ok("사유 없이 취소 → cancel_reason null", (await api("GET", `/api/tasks/${tRzNone}`)).json.cancel_reason === null);
+const tRzBlank = await mkCan("공백만 사유");
+await api("POST", `/api/tasks/${tRzBlank}/cancel`, { reason: "   " });
+ok("공백만 사유 → NULL로 정규화", (await api("GET", `/api/tasks/${tRzBlank}`)).json.cancel_reason === null);
+const tRzLong = await mkCan("긴 사유");
+ok("사유 501자 400", (await api("POST", `/api/tasks/${tRzLong}/cancel`, { reason: "가".repeat(501) })).status === 400);
+// ★ append-only 핵심 — 해제해도 사유는 남는다(다음 취소가 덮어쓴다).
+await api("POST", `/api/tasks/${tRz}/uncancel`);
+const rzAfter = (await api("GET", `/api/tasks/${tRz}`)).json;
+ok("취소 해제 후에도 사유 보존 · state=not_finished",
+  rzAfter.cancel_reason === "방향이 바뀌어서" && rzAfter.state === "not_finished", JSON.stringify(rzAfter.cancel_reason));
 
 // ── 10. 인증 ─────────────────────────────────────────────────
 console.log("\n[10] 인증 — API_TOKEN 있으면 Bearer 필수");
