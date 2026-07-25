@@ -178,6 +178,18 @@ ok("마감 = 확인 모달", $("#confirm").classList.contains("on") && $("#cf-ti
 $("#cf-no").dispatchEvent(new w.Event("click")); await sleep(200);
 ok("취소하면 닫힘 · 마감 안 됨", !$("#confirm").classList.contains("on"));
 
+// S3' — 상태 서술은 마감 후 못 쓰므로 비었을 때만 확인 박스에서 한 줄 유도(강제 아님)
+const feelOrig = ev(`(S.today.daily && S.today.daily.feelings_text) || ""`);
+ev(`S.today.daily = S.today.daily || {}; S.today.daily.feelings_text = "";`);
+$("#btn-close").dispatchEvent(new w.Event("click")); await sleep(300);
+ok("상태 서술 비었을 때 — 마감 확인 박스에 한 줄 입력칸", !!$("#cf-feel"));
+$("#cf-no").dispatchEvent(new w.Event("click")); await sleep(200);
+ev(`S.today.daily.feelings_text = "이미 적어 둔 상태 서술";`);
+$("#btn-close").dispatchEvent(new w.Event("click")); await sleep(300);
+ok("이미 적었으면 입력칸 없음", !$("#cf-feel"));
+$("#cf-no").dispatchEvent(new w.Event("click")); await sleep(200);
+ev(`S.today.daily.feelings_text = ${JSON.stringify(feelOrig)};`);
+
 w.applyTheme("dark"); await sleep(100);
 ok("다크 테마 적용", w.document.documentElement.getAttribute("data-theme") === "dark");
 w.applyTheme("auto");

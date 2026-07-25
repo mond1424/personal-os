@@ -1985,14 +1985,24 @@ async function boot() {
   tick(); setInterval(tick, 20_000);
 
   // 마감
+  // 상태 서술은 '기록'이라 마감 후엔 어떤 경로로도 못 쓴다(트리거가 막는다).
+  // 게다가 cron이 30분마다 지난 날을 auto 마감하므로 받을 수 있는 창은 수동 마감 직전뿐이다.
+  // → 비어 있을 때만 확인 박스에 한 줄 유도. 강제하지 않는다.
   const askClose = (kind) => run(async () => {
+    const cur = ((S.today.daily && S.today.daily.feelings_text) || "").trim();
+    const extra = cur ? "" :
+      `<textarea id="cf-feel" rows="2" style="margin-top:10px;width:100%;box-sizing:border-box"
+         placeholder="오늘 상태를 한 줄로 (선택) — 마감 후엔 못 써요"></textarea>`;
     const okd = await confirmAsk(
       kind === "brief" ? "간략히 마감할까요?" : "오늘 하루를 마감할까요?",
-      kind === "brief"
+      (kind === "brief"
         ? "Feelings만 확정하고 닫아요. 마감하면 오늘의 Log·점수는 더 이상 고칠 수 없고, memo만 덧붙일 수 있어요."
-        : "마감하면 오늘의 기록이 봉인돼요 — 이후에는 memo만 추가할 수 있어요. 남은 할 일은 Missed로 확정돼요.",
+        : "마감하면 오늘의 기록이 봉인돼요 — 이후에는 memo만 추가할 수 있어요. 남은 할 일은 Missed로 확정돼요.") + extra,
       "마감하기");
     if (!okd) return;
+    // confirmAsk는 .on만 벗기고 요소는 남기므로 resolve 직후 읽을 수 있다. 마감 전에 저장해야 트리거에 안 막힌다.
+    const ft = ($("#cf-feel")?.value || "").trim();
+    if (ft) await Api.feelingsText(ft);
     await Api.closeDay(kind);
     toast(kind === "brief" ? "간략히 마감했어요" : "하루 마감 — 기록이 봉인됐어요", "ok");
     refreshToday();
