@@ -123,6 +123,17 @@ $("#anal-depth .wseg[data-d='normal']").click(); await sleep(60);
 ok("보통 클릭 → .on 이동", $("#anal-depth .wseg.on")?.dataset.d === "normal", $("#anal-depth .wseg.on")?.dataset.d);
 ok("works 세그는 영향 없음", $("#scr-works .wseg.on")?.dataset.w === "sched", $("#scr-works .wseg.on")?.dataset.w);
 $("#anal-depth .wseg[data-d='detailed']").click(); await sleep(60);
+// 분량 라벨은 목록 SELECT에 context_meta가 없어 '펼쳤을 때' 채워진다.
+// 분석 생성은 AI 키가 없으면 503이라 실 데이터를 만들 수 없다 → Api 2개만 임시 교체하고 되돌린다.
+await ev(`(async()=>{
+  const oList = Api.analyses, oGet = Api.analysis;
+  Api.analyses = async () => [{ id:"MOCK-001", prompt:"분량 라벨 확인", created_at:"2026-07-26T09:00:00.000Z", preview:"미리보기" }];
+  Api.analysis  = async () => ({ id:"MOCK-001", prompt:"분량 라벨 확인", pass1:"1차 본문", pass2:"2차 본문", context_meta:{ depth:"deep" } });
+  try { await renderAnalysis(); await toggleAna("MOCK-001", null); }
+  finally { Api.analyses = oList; Api.analysis = oGet; }
+})()`);
+ok("펼친 분석 카드에 분량 라벨", txt("#adep-MOCK-001").includes("매우 자세히"), txt("#adep-MOCK-001"));
+await ev("renderAnalysis()"); await sleep(400);
 
 console.log("\n[Me · 설정]");
 w.switchTab("me"); await sleep(1200);

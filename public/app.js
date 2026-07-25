@@ -1210,6 +1210,7 @@ function showStale(o) {
 function staleClose() { $("#stale").classList.remove("on"); }
 
 /* ── Analysis (조회 + 5.2 미리보기 — 생성은 구현 2) ────── */
+const DEPTH_LABEL = { normal: "보통", detailed: "자세히", deep: "매우 자세히" };
 async function renderAnalysis() {
   const [pv, list] = await Promise.all([Api.ctxPreview(), Api.analyses()]);
   $("#ctx-lines").innerHTML = [
@@ -1224,7 +1225,7 @@ async function renderAnalysis() {
     `<div class="card"${i ? ' style="margin-top:8px"' : ""}>
       <button class="ahead" onclick="toggleAna('${a.id}',this)">
         <b>“${esc(a.prompt)}”</b>
-        <span class="cap mono" style="flex:none">${md(a.created_at.slice(0, 10))} · <span class="tg">열기</span></span></button>
+        <span class="cap mono" style="flex:none">${md(a.created_at.slice(0, 10))} · <span id="adep-${a.id}"></span><span class="tg">열기</span></span></button>
       <p class="abody" id="ana-${a.id}" style="display:none;margin:9px 0 0"></p>
     </div>`).join("") ||
     `<div class="card"><p class="cap" style="margin:0">아직 분석이 없어요 — 생성은 구현 2에서 연결돼요.</p></div>`;
@@ -1242,6 +1243,11 @@ async function toggleAna(id, btn) {
   if (!el) return;
   if (!el.dataset.loaded) {
     const a = await Api.analysis(id);
+    // 출력 분량(5.3)은 목록 SELECT에 context_meta가 없어 못 싣는다 → 펼칠 때 헤더에 채운다.
+    // board 경로는 4번째 이후도 열 수 있는데 #ana-list는 slice(0,3)이라 카드가 없다 → dEl 가드.
+    const dp = a.context_meta && a.context_meta.depth;
+    const dEl = $("#adep-" + id);
+    if (dEl && dp) dEl.textContent = (DEPTH_LABEL[dp] || dp) + " · ";  // 없으면(S1 이전 분석) 아무것도 안 그린다
     el.textContent = a.pass1 + (a.pass2 ? "\n\n" + a.pass2 : ""); // 통합 산문 표시 (5.4)
     el.dataset.loaded = "1";
   }
