@@ -411,15 +411,17 @@ nav,.logbar{background:var(--bar)}
 /* ── 상단 알림 — 종류별 색 + 등장 애니메이션 ─────────── */
 .toast{animation:toastIn .24s cubic-bezier(.2,.9,.3,1)}
 @keyframes toastIn{from{opacity:0;transform:translateY(-10px) scale(.98)}to{opacity:1;transform:none}}
-.toast.info{background:var(--card);border-color:var(--line);color:var(--ink)}
-.toast.ok{background:#E9F6EF;border-color:#BEE2D0;color:#1E6B47}
-.toast.warn{background:#FCF3DA;border-color:#EAD8A5;color:#7A5B1B}
-.toast.err{background:var(--brick-soft);border-color:#EBC9BB;color:var(--brick)}
-:root[data-theme="dark"] .toast.ok{background:#17301F;border-color:#2A4E38;color:#7FCFA4}
-:root[data-theme="dark"] .toast.warn{background:#312A16;border-color:#4C4222;color:#DCC276}
+/* 종류 클래스에 t- 접두사 — 무접두사 .warn은 79행의 15px 원형 배지와 같은 이름이라
+ * toast가 그 width:15px·inline-grid·border-radius:50%를 뒤집어썼다(노란 알림이 접히던 원인). */
+.toast.t-info{background:var(--card);border-color:var(--line);color:var(--ink)}
+.toast.t-ok{background:#E9F6EF;border-color:#BEE2D0;color:#1E6B47}
+.toast.t-warn{background:#FCF3DA;border-color:#EAD8A5;color:#7A5B1B}
+.toast.t-err{background:var(--brick-soft);border-color:#EBC9BB;color:var(--brick)}
+:root[data-theme="dark"] .toast.t-ok{background:#17301F;border-color:#2A4E38;color:#7FCFA4}
+:root[data-theme="dark"] .toast.t-warn{background:#312A16;border-color:#4C4222;color:#DCC276}
 @media (prefers-color-scheme:dark){
-  :root:not([data-theme="light"]) .toast.ok{background:#17301F;border-color:#2A4E38;color:#7FCFA4}
-  :root:not([data-theme="light"]) .toast.warn{background:#312A16;border-color:#4C4222;color:#DCC276}
+  :root:not([data-theme="light"]) .toast.t-ok{background:#17301F;border-color:#2A4E38;color:#7FCFA4}
+  :root:not([data-theme="light"]) .toast.t-warn{background:#312A16;border-color:#4C4222;color:#DCC276}
 }
 
 /* ── 완료된 일정 표시 ─────────────────────────────────── */

@@ -195,7 +195,8 @@ let toastTimer = null;
 /** kind: info(기본) · ok(성공) · warn(주의) · err(실패) */
 function toast(msg, kind = "info") {
   const el = $("#toast");
-  el.className = "lockbar toast " + kind;
+  // 종류 클래스는 t- 접두사 필수 — 무접두사 warn/ok는 전역 배지 클래스(.warn=15px 원형)와 충돌한다.
+  el.className = "lockbar toast t-" + kind;
   el.textContent = msg;
   el.style.display = "none";       // 애니메이션 재시작
   void el.offsetWidth;
