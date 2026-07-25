@@ -13,6 +13,7 @@
 - README0722     https://raw.githubusercontent.com/mond1424/personal-os/main/README0722.md
 - 사용설명서0722 https://raw.githubusercontent.com/mond1424/personal-os/main/사용설명서0722.md
 - REFACTOR-PLAN  https://raw.githubusercontent.com/mond1424/personal-os/main/REFACTOR-PLAN.md
+- WORK-PLAN-0726 https://raw.githubusercontent.com/mond1424/personal-os/main/WORK-PLAN-0726.md
 - STATE.md       https://raw.githubusercontent.com/mond1424/personal-os/main/STATE.md
 - api-surface    https://raw.githubusercontent.com/mond1424/personal-os/main/docs/api-surface.md
 - schema         https://raw.githubusercontent.com/mond1424/personal-os/main/docs/schema-current.sql
@@ -52,7 +53,7 @@ typecheck 통과 / smoke 145 / front 157 / 실패 0
 - `0007_defer_reason`: `schedule_entries`에 `defer_reason TEXT` 추가(미루기 사유). **WORK-PLAN의 `task_entries` 표기는 오기** — 실제 테이블은 `schedule_entries`(예정 항목·rate가 있는 곳).
 
 ## 이번 세션 (2026-07-26) — WORK-PLAN-0726 설계 결정 (코드 무변경)
-산출물은 지시 문서 **WORK-PLAN-0726 하나이며 소스는 한 줄도 바뀌지 않았다.** 기준선(smoke 145 / front 157)도 그대로다. 아래는 이번 세션에서 확정된 **정책 결정**이고, 구현은 다음 세션이 단계별로 진행한다.
+산출물은 지시 문서 **`WORK-PLAN-0726.md`(리포 루트, rev.2) 하나이며 소스는 한 줄도 바뀌지 않았다.** 단계별 구현 지시(파일·행 번호·검사 항목)는 그 문서를 따르고, 아래는 확정된 결정만 요약한다. 기준선(smoke 145 / front 157)도 그대로다. 아래는 이번 세션에서 확정된 **정책 결정**이고, 구현은 다음 세션이 단계별로 진행한다.
 - **[S1 분석 출력량]** 분석 요청에 `depth`(`normal`/`detailed`/`deep`)를 받아 **문단 지시 + maxTokens를 함께** 바꾼다. 기본 `detailed`, 잘못된 값은 400이 아니라 `detailed` fallback. 선택값은 `analyses.context_meta`(이미 JSON TEXT)에 넣어 **신규 컬럼 없이** 보존한다. 기존 고정 출력(2~5문단 / 1400·1000)은 detailed와 deep의 중간이었다.
 - **[S2 공용 모달]** `.modal`이 `display:grid` + `place-items:center`인데 `.mbox`가 `width:100%`라, `justify-items:center`가 stretch를 끄면서 **퍼센트 너비가 auto 트랙 기준으로 해석돼 트랙이 min-content로 접힌다.** → 박스가 글자 폭까지 좁아지고 본문이 넘친다(모바일 WebKit에서 발현). flex로 교체해 기준을 명확히 한다. 현재 사용처는 `#stale`·`#confirm` 둘뿐이며 설정·분석은 시트(`sh-*`), 튜토리얼은 `.tut`, Guard는 `.guard`로 별도다 — 다만 앞으로 만들 모달은 전부 이 규칙을 상속하므로 지금 고친다. **3줄 CSS 교체이지 컴포넌트 리팩토링이 아니다.**
 - **[S3 상태 서술 — 폐기]** 아래 '설계 정책' 참조. 대안 S3′(마감 시 유도)만 남는다.
