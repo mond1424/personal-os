@@ -34,7 +34,7 @@
 | POST `/api/tasks/:id/schedule` | `{date}` | `{id, date}` | `tasks.scheduleTask` |
 | POST `/api/tasks/:id/extend` | — | `{id, anchor, deadline}` | `tasks.extendWait` |
 | POST `/api/tasks/:id/complete` | — | `{id, finished_on, planned_on, rate_applied}` | `tasks.completeTask` |
-| POST `/api/tasks/:id/cancel` | — | `{id, cancelled_at, cancelled_on, kept_dates}` | `tasks.cancelTask` |
+| POST `/api/tasks/:id/cancel` | `{reason?}` | `{id, cancelled_at, cancelled_on, kept_dates, cancel_reason}` | `tasks.cancelTask` |
 | POST `/api/tasks/:id/uncancel` | — | `{id, cancelled, waiting}` | `tasks.uncancelTask` |
 | DELETE `/api/tasks/:id` | — | `{id, deleted}` (마감·Guard 기록 있으면 409 `{suggest:"cancel"}`) | `tasks.deleteTask` |
 | PUT `/api/tasks/:id/rate` | `{date, rate}` | `{id, date, rate}` | `tasks.setRate` |
@@ -55,7 +55,7 @@
 | GET `/api/ai/connections` | — | `{connections, low, high, fallback}` | `lib/ai.aiConfig` |
 | POST `/api/ai/test` | `{which?: low\|high}` | `{ok, provider, model, ms, ...}` | `lib/ai.testConnection` |
 | GET `/api/analyses` | — | 목록 | `analysis.list` |
-| POST `/api/analyses` | `{prompt}` | 생성된 분석(2-pass) | `analysis.create` |
+| POST `/api/analyses` | `{prompt, depth?: normal\|detailed\|deep}` | 생성된 분석(2-pass) | `analysis.create` |
 | GET `/api/analyses/context-raw` | — | `{text, meta, chars}` | `analysis.assembleContext` |
 | GET `/api/analyses/context-preview` | — | 윈도우 미리보기 | `analysis.contextPreview` |
 | GET `/api/analyses/:id` | — | 분석 + `{context_meta}` | `analysis.get` |
@@ -92,7 +92,7 @@
 - `scheduleTask(env, t, id, date)` → `{id, date}` · 대기→확정
 - `extendWait(env, t, id)` → `{id, anchor, deadline}` · 앵커=now(이력은 트리거)
 - `completeTask(env, t, id)` → `{id, finished_on, planned_on, rate_applied}` · live 항목 rate 100(마감된 날은 안 건드림)
-- `cancelTask(env, t, id)` → `{id, cancelled_at, cancelled_on, kept_dates}` · 열린 날 예정만 비우고 마감된 날 항목은 보존(0008). state='cancelled'
+- `cancelTask(env, t, id, reason?)` → `{id, cancelled_at, cancelled_on, kept_dates, cancel_reason}` · 열린 날 예정만 비우고 마감된 날 항목은 보존(0008). state='cancelled'. 사유는 append-only(0009) — 500자 제한, 빈값 정규화
 - `uncancelTask(env, id)` → `{id, cancelled:false, waiting}` · 예정 복구 없이 대기로 복귀
 - `deleteTask(env, id)` → `{id, deleted}` · 마감·Guard 기록 있으면 409 `{suggest:"cancel"}`(사유 날짜로), 삭제 순서 연장이력→항목→task
 - `setRate(env, id, date, rate)` → `{id, date, rate}`
@@ -126,7 +126,7 @@
 - `models(env)` → `{low, high}`
 - `contextPreview(env, t)` → 5.2 윈도우 미리보기
 - `assembleContext(env, t)` → `{text, meta}` · Me+기간+지난주+raw+Today 조립
-- `create(env, t, prompt)` → 2-pass 생성(1차 독립·2차 추가), high 모델
+- `create(env, t, prompt, depth?)` → 2-pass 생성(1차 독립·2차 추가), high 모델. depth(normal/detailed/deep, 기본 detailed)가 문단 지시+maxTokens 결정, 잘못된 값은 400 아니라 detailed로 fallback. 선택값은 `context_meta.depth`에 보존
 
 ### guard.ts — 구현 3 자리
 - `events(env)` → guard_events 목록(조회만)
@@ -162,7 +162,7 @@
 **컨텍스트 범위 조회** — `dailyRange` · `logsRange` · `feelingsRange` · `memosRange` (각 `(env, start, end)`) · `analysesRecentFull(env, n)` · `stInsertAnalysis(env, id, prompt, pass1, pass2, meta, now)`
 **guard** — `guardEventsList(env)`
 
-**뷰(스키마)**: `v_task_stats`(**state**=상태의 유일한 진실 `not_finished`/`finished`/`cancelled` · cancelled_at·cancelled_on · entry_count·defer_count·latest_date·current_rate·is_waiting) · `v_period_achievement`(달성률=current_rate 평균, **취소 제외**). 상태 판정은 언제나 `state`(status는 원시 컬럼).
+**뷰(스키마)**: `v_task_stats`(**state**=상태의 유일한 진실 `not_finished`/`finished`/`cancelled` · cancelled_at·cancelled_on·cancel_reason·cancelled_by(0009, append-only) · entry_count·defer_count·latest_date·current_rate·is_waiting) · `v_period_achievement`(달성률=current_rate 평균, **취소 제외**). 상태 판정은 언제나 `state`(status는 원시 컬럼).
 
 ---
 

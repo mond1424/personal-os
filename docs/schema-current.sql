@@ -1,6 +1,6 @@
 -- Personal OS · D1 스키마 스냅샷 (자동 생성 — 손으로 고치지 말 것)
--- 적용 마이그레이션: 0001_init · 0002_models · 0003_ai_provider · 0004_events · 0005_delete_scope · 0006_fix_model_high · 0007_defer_reason · 0008_cancel_task
--- 생성일: 2026-07-23
+-- 적용 마이그레이션: 0001_init · 0002_models · 0003_ai_provider · 0004_events · 0005_delete_scope · 0006_fix_model_high · 0007_defer_reason · 0008_cancel_task · 0009_cancel_reason
+-- 생성일: 2026-07-26
 -- 재생성: migrations/ 전체를 인메모리 sqlite에 적용한 뒤 sqlite_master를 덤프한다.
 --         (새 마이그레이션 추가 시 이 파일도 다시 만든다 — 세션 종료 규칙, CLAUDE.md 참조)
 
@@ -132,6 +132,8 @@ CREATE TABLE summaries (
 -- tasks는 FK 대상이자 뷰·트리거의 소스라 D1 위에서 위험하다. 따라서
 -- status='not_finished' + cancelled_at IS NOT NULL 이 곧 '취소'이며, 이 조합을
 -- 코드가 직접 판정하지 않도록 v_task_stats.state가 대신 계산한다. 읽을 땐 언제나 state.
+-- cancel_reason·cancelled_by (0009)는 append-only — 취소 시점에 한 번 쓰고, 취소 상태인
+-- 동안 수정하지 않는다. 취소 해제 시에도 NULL로 지우지 않고 남긴다(다음 취소가 덮어쓴다).
 CREATE TABLE tasks (
   id             TEXT PRIMARY KEY,   -- 불변 id
   title          TEXT NOT NULL,      -- 자유 변경
@@ -145,6 +147,8 @@ CREATE TABLE tasks (
   finished_on    TEXT,               -- 완료가 귀속된 날 (경계 반영, 기록 시점 확정)
   cancelled_at   TEXT,               -- 취소 시각(ISO). NULL = 살아 있음 (0008)
   cancelled_on   TEXT,               -- 취소가 귀속된 날 (경계 반영, YYYY-MM-DD) (0008)
+  cancel_reason  TEXT,               -- 취소 사유(자유 텍스트, NULL 허용). append-only (0009)
+  cancelled_by   TEXT,               -- 'user' | 'guard' — 취소 주체 (0009)
   wait_anchor_at TEXT NOT NULL,      -- 대기 21일 시계의 기준점 (1.4, v0.8 확정)
                  -- 생성 시 = created_at · 연장 시 = 연장한 현재 시각
                  -- 기한 = anchor + 21일. 갱신하면 아래 트리거가 이력을 자동 기록.
@@ -182,6 +186,7 @@ SELECT
        WHEN t.status = 'finished'      THEN 'finished'
        ELSE 'not_finished' END AS state,                                       -- ★ task 상태의 유일한 진실
   t.finished_on, t.cancelled_at, t.cancelled_on,
+  t.cancel_reason, t.cancelled_by,                                              -- (0009) append-only
   t.wait_anchor_at, t.created_at,
   (SELECT COUNT(*) FROM schedule_entries e WHERE e.task_id = t.id)             AS entry_count,
   MAX((SELECT COUNT(*) FROM schedule_entries e WHERE e.task_id = t.id) - 1, 0) AS defer_count,   -- 이월 횟수

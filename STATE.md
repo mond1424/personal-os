@@ -3,9 +3,10 @@
 ## 저장소
 - repo: https://github.com/mond1424/personal-os
 - branch: main
-- 마지막 커밋: CANCEL-0723 취소 상태 도입 (마이그레이션 0008). 직전: CAL-PLAN `3a26bbb`·`0160ea3`·`2fad8ad`·`d0d3157`.
+- 마지막 커밋: WORK-PLAN-0726 S1~S4 구현 완료(분석 출력량·공용 모달·마감 유도·취소 사유, 마이그레이션 0009). 직전: CANCEL-0723 취소 상태 도입(0008).
   - ✅ **push 완료** (main → origin/main).
-  - ✅ **원격 마이그레이션 0008 적용 + `deploy` 완료** (2026-07-26 사용자 확인). **라이브 = 최신.**
+  - ⚠️ **원격 마이그레이션 0009 미적용 + `deploy` 대기 — 사용자가 직접**(`npx wrangler d1 migrations apply personal-os --remote` → `npm run deploy`). 로컬은 적용 완료. 아래 '마이그레이션' 절 참조.
+  - 0008까지는 원격 적용 + deploy 완료(2026-07-26 확인).
 
 ## raw 링크 (Chat이 직접 읽는 주소)
 - 설계문서(권위) https://raw.githubusercontent.com/mond1424/personal-os/main/personal-agent-design_v0.9.md
@@ -38,27 +39,29 @@
 - style.css      https://raw.githubusercontent.com/mond1424/personal-os/main/public/style.css
 
 ## 기준선
-typecheck 통과 / smoke 145 / front 157 / 실패 0
-(2026-07-26 재확인 — 코드 무변경이므로 숫자 그대로.
- CAL-PLAN: smoke 129 유지(diary→memos 재타겟), front 151 유지.
- CANCEL(0008): smoke 129→145 취소 16건, front 151→157 취소 UI 6건.)
+typecheck 통과 / smoke 154 / front 167 / 실패 0
+(WORK-PLAN-0726: smoke 148→154 취소 사유 6건, front 164→167 취소 사유 3건.
+ 그 앞 S1 분석 depth·S3′ 마감 유도 포함 누적치 — smoke 145→154, front 157→167.)
 
 ## 마이그레이션
-최신: `0008_cancel_task` (…0006_fix_model_high · 0007_defer_reason · 0008_cancel_task)
-- **0008_cancel_task**: `tasks`에 `cancelled_at`/`cancelled_on` + 트리거 `trg_task_cancel_excl`(완료·취소 상호배제) + 뷰 재생성(`v_task_stats.state` 추가, `v_period_achievement`·`is_waiting` 취소 제외). smoke 스키마 목록에도 등록.
-  - ✅ **로컬·원격 모두 적용 완료 + `deploy` 완료** (2026-07-26 사용자 확인).
-- **다음 번호는 0009 — 아직 작성 전.** 2026-07-26 확인 시 `migrations/0009_*.sql` 파일 없음, `docs/schema-current.sql` 헤더도 …`0008_cancel_task`에서 끝난다. WORK-PLAN-0726 S4에서 `0009_cancel_reason`으로 신규 작성 예정.
-- ✅ 0007까지는 로컬·원격 모두 적용 완료 (2026-07-23 확인 — `migrations list` 양쪽 "No migrations to apply").
-  검증: 원격 `schedule_entries.defer_reason` 컬럼 존재(0007) · 원격 `settings.model_high = claude-sonnet-4-6`(0006 반영, 버그값 sonnet-5 아님).
+최신: `0009_cancel_reason` (…0007_defer_reason · 0008_cancel_task · 0009_cancel_reason)
+- **0009_cancel_reason**: `tasks`에 `cancel_reason`(자유 텍스트)·`cancelled_by`(`'user'`/`'guard'`) 추가 + 뷰 재생성(`v_task_stats`에 두 컬럼 노출, 0008의 `state` CASE·`is_waiting`·`v_period_achievement` 조건은 그대로 보존). 트리거 `trg_task_cancel_excl` 미접촉. smoke 스키마 목록에도 등록.
+  - ✅ **로컬 적용 완료.** ⚠️ **원격 미적용 — 사용자가 `npx wrangler d1 migrations apply personal-os --remote` 실행 필요**(배포보다 먼저, `--local`→`--remote` 순서).
+- **0008_cancel_task**: `tasks`에 `cancelled_at`/`cancelled_on` + 트리거 `trg_task_cancel_excl`(완료·취소 상호배제) + 뷰 재생성(`v_task_stats.state` 추가, `v_period_achievement`·`is_waiting` 취소 제외).
+  - ✅ 로컬·원격 모두 적용 완료 + deploy 완료 (2026-07-26 확인).
+- ✅ 0007까지는 로컬·원격 모두 적용 완료 (2026-07-23 확인).
 - `0007_defer_reason`: `schedule_entries`에 `defer_reason TEXT` 추가(미루기 사유). **WORK-PLAN의 `task_entries` 표기는 오기** — 실제 테이블은 `schedule_entries`(예정 항목·rate가 있는 곳).
 
-## 이번 세션 (2026-07-26) — WORK-PLAN-0726 설계 결정 (코드 무변경)
-산출물은 지시 문서 **`WORK-PLAN-0726.md`(리포 루트, rev.2) 하나이며 소스는 한 줄도 바뀌지 않았다.** 단계별 구현 지시(파일·행 번호·검사 항목)는 그 문서를 따르고, 아래는 확정된 결정만 요약한다. 기준선(smoke 145 / front 157)도 그대로다. 아래는 이번 세션에서 확정된 **정책 결정**이고, 구현은 다음 세션이 단계별로 진행한다.
-- **[S1 분석 출력량]** 분석 요청에 `depth`(`normal`/`detailed`/`deep`)를 받아 **문단 지시 + maxTokens를 함께** 바꾼다. 기본 `detailed`, 잘못된 값은 400이 아니라 `detailed` fallback. 선택값은 `analyses.context_meta`(이미 JSON TEXT)에 넣어 **신규 컬럼 없이** 보존한다. 기존 고정 출력(2~5문단 / 1400·1000)은 detailed와 deep의 중간이었다.
-- **[S2 공용 모달]** `.modal`이 `display:grid` + `place-items:center`인데 `.mbox`가 `width:100%`라, `justify-items:center`가 stretch를 끄면서 **퍼센트 너비가 auto 트랙 기준으로 해석돼 트랙이 min-content로 접힌다.** → 박스가 글자 폭까지 좁아지고 본문이 넘친다(모바일 WebKit에서 발현). flex로 교체해 기준을 명확히 한다. 현재 사용처는 `#stale`·`#confirm` 둘뿐이며 설정·분석은 시트(`sh-*`), 튜토리얼은 `.tut`, Guard는 `.guard`로 별도다 — 다만 앞으로 만들 모달은 전부 이 규칙을 상속하므로 지금 고친다. **3줄 CSS 교체이지 컴포넌트 리팩토링이 아니다.**
-- **[S3 상태 서술 — 폐기]** 아래 '설계 정책' 참조. 대안 S3′(마감 시 유도)만 남는다.
-- **[S4 취소 사유]** `0009_cancel_reason`으로 `tasks.cancel_reason` + `cancelled_by` 추가. append-only 규칙은 아래 '설계 정책' 참조.
-- **[S5 event 취소 — 보류]** 아래 '설계 정책' 참조.
+## 이번 세션 (2026-07-26) — WORK-PLAN-0726 S1~S4 구현 완료
+산출물은 지시 문서 **`WORK-PLAN-0726.md`(리포 루트, rev.2) 그대로** — 설계 결정은 직전 세션에 이미 확정했고, 이번 세션에 단계별로 구현·검증했다. plan의 "단계 단위로 진행·정지" 원칙대로 S1→S2→S3′→S4 순서, 각 단계 후 typecheck+smoke+front 확인.
+- **[S1 분석 출력량]** `analysis.ts`에 `DEPTH` 상수(`normal`/`detailed`/`deep`, 기본 `detailed`) + `create(…, depth?)`. 잘못된 값·누락은 400 아니라 `detailed` fallback. 선택값은 `context_meta.depth`에 보존(신규 컬럼 없음). `#anal-depth` 세그(`.wsegs`/`.wseg` 재사용) + 펼친 분석 카드에 분량 라벨(추가 보강, 사용자 지시).
+  - **plan에 없던 보정**: `boot()`·`goInbox()`가 `$$(".wseg")`로 **전역**을 훑고 있어, depth 세그를 works 뷰 전환과 분리하려면 선택자를 `#scr-works .wseg`/`#anal-depth .wseg`로 좁혀야 했다(아래 전역 클래스명 충돌 항목 참조).
+- **[S2 공용 모달]** `.modal`/`.mbox` grid→flex(S2-a) + `#cf-text` `overflow-wrap:anywhere`(S2-b). **다만 사용자가 실제로 겪던 증상은 `#confirm`이 아니라 취소 후 뜨는 노란 toast였다** — `toast(msg,"warn")`이 붙이는 무접두사 `warn`이 전역 15px 원형 배지 규칙(`style.css:79`)과 충돌해 27px로 접혀 있었다. `.toast.warn`→`.toast.t-warn`(app.js·style.css)으로 별도 수정. S2-a 자체는 Chrome 390px·데스크톱 양쪽에서 무해·유효함을 측정으로 확인.
+- **[S3′ 마감 시 상태 서술 유도]** `askClose(kind)` — `feelings_text`가 빈 날에만 확인 박스에 `#cf-feel` textarea. `closeDay`보다 먼저 저장(순서 뒤집히면 트리거 409). 백엔드 무변경.
+- **[S4 취소 사유]** `0009_cancel_reason`(로컬만 적용) + `cancelTask(env,t,id,reason?)`(500자 제한, append-only) + 취소 확인 박스 `#cf-reason` + 상세 시트 사유 표시(해제 상태에선 미노출).
+  - **plan에 없던 보정**: 라우터가 `body(c)`(본문 없으면 400)를 그대로 쓰면 무본문 `POST /cancel`이 깨진다 — smoke가 6건 실패로 잡음. 선택적 본문 헬퍼 `bodyOpt` 추가로 해결.
+- 세션 종료 문서화: `docs/api-surface.md`(analyses `depth`, cancel `reason`/`cancel_reason` 응답) · `docs/schema-current.sql`(0009 헤더·tasks 컬럼·view) 재생성.
+- 검증 누적: typecheck 통과 · smoke 145→148(S1)→154(S4) · front 157→162(S1)→164(S3′)→167(S4) · 실패 0. **로컬 마이그레이션만(0009). 원격 적용·deploy는 사용자.**
 
 ## 직전 세션 (2026-07-23) — CANCEL-0723 취소 상태 도입 (마이그레이션 0008)
 - **제3의 종결 '취소'** — 삭제가 1.3 불변성(마감/Guard 참조)에 막히는 일을 기록 보존한 채 목록에서 내린다. 삭제는 분리 유지, 409에서 취소 안내.
@@ -118,9 +121,9 @@ typecheck 통과 / smoke 145 / front 157 / 실패 0
 - **기준선 smoke 124 · front 147→145**(A-3에서 인라인 완료율 검사를 미루기 시트 재탭 검사로 이동·통합). 매 커밋 전 검증, 실패 0
 
 ## 미해결 / 다음 할 것
-- ✅ **마이그레이션 0006·0007·0008 원격 적용 + 코드 `deploy` 완료**(0008은 2026-07-26 확인). 라이브 = 최신.
-- **다음 세션 구현 대기 (WORK-PLAN-0726)**: S1 분석 출력량 3단계 · S2 공용 모달 레이아웃(3줄 CSS) · S3′ 마감 시 상태 서술 유도 · S4 취소 사유(`0009_cancel_reason`).
-  - **S2 → S4 순서 고정** — S4가 취소 확인 박스에 textarea를 넣으므로, 박스가 성한 뒤에 해야 원인 분리가 된다.
+- ✅ **마이그레이션 0006·0007·0008 원격 적용 + 코드 `deploy` 완료**(0008은 2026-07-26 확인). 라이브 = 최신(0009 제외).
+- ⚠️ **마이그레이션 0009 원격 적용 + `deploy` 대기 — 사용자**. `npx wrangler d1 migrations apply personal-os --remote` → `npm run deploy` 순서. 로컬은 적용 완료.
+- **폰 실측 대기 (WORK-PLAN-0726 결과물)**: S1 분석 세 가지 분량(보통/자세히/매우 자세히)의 실제 출력 길이 차이 · S2 노란 toast가 정상 폭으로 펼쳐지는지 · S3′ 마감 확인 박스 유도 문구 · S4 취소 사유 입력·표시. 코드는 검증 완료(typecheck·smoke·front)이나 실제 렌더는 폰 확인 필요.
 - **`#cf-no` 라벨 충돌**: 공용 확인 모달의 부정 버튼 라벨이 "취소"(=닫기)라 0008의 새 '취소' 기능과 혼동된다. 공용 모달이라 문구를 바꾸면 모든 확인 박스가 흔들리므로 **별도 항목으로 보류**.
 - **★ 전역 클래스명 충돌 — 세 번째다. 새 컴포넌트에 짧고 일반적인 클래스명을 쓰기 전 반드시 `grep`으로 기존 사용처를 확인한다.**
   - `.tt` (CAL-PLAN, 2026-07-23) — 캘린더 셀 제목에 썼다가 전역 `.tt`(14.5px 시트 제목)와 충돌해 셀 글자가 커졌다 → `.etxt`로 개명.
