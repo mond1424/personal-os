@@ -190,8 +190,8 @@ app.delete("/api/events/:id", async (c) => c.json(await events.remove(c.env, c.r
 // ── Analysis (5장) ──────────────────────────────────────────
 app.get("/api/analyses", async (c) => c.json(await analysis.list(c.env)));
 app.post("/api/analyses", async (c) => {
-  const b = await body<{ prompt: string }>(c);
-  return c.json(await analysis.create(c.env, c.get("t"), b.prompt));
+  const b = await body<{ prompt: string; depth?: unknown }>(c);
+  return c.json(await analysis.create(c.env, c.get("t"), b.prompt, b.depth));
 });
 // 조립될 컨텍스트 원문 — 무엇이 모델에 들어가는지 사용자가 직접 확인 (토큰 통제)
 app.get("/api/analyses/context-raw", async (c) => {

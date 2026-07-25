@@ -1018,7 +1018,7 @@ function extendTask(id) {
 }
 function goInbox() {
   switchTab("works");
-  $$(".wseg").forEach((x) => x.classList.toggle("on", x.dataset.w === "inbox"));
+  $$("#scr-works .wseg").forEach((x) => x.classList.toggle("on", x.dataset.w === "inbox"));
   $$(".wview").forEach((v) => v.classList.toggle("on", v.id === "w-inbox"));
 }
 
@@ -1648,12 +1648,13 @@ function bindLogSheet() {
 async function runAnalysis() {
   const q = $("#anal-q").value.trim();
   if (!q) return toast("무엇이 궁금한지 적어 주세요");
+  const d = ($("#anal-depth .wseg.on")?.dataset.d) || "detailed";
   const btn = $("#btn-run-anal");
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner"></span> 분석 중 — 2-pass';
   try {
-    const a = await Api.runAnalysis(q);
-    $("#anal-q").value = "";
+    const a = await Api.runAnalysis(q, d);
+    $("#anal-q").value = "";   // 세그 선택은 초기화하지 않는다(다음 분석에도 같은 분량을 쓰는 게 보통).
     await renderAnalysis();
     toggleAna(a.id, document.querySelector(`[onclick="toggleAna('${a.id}',this)"]`));
     toast("분석을 저장했어요 — 영구 보존", "ok");
@@ -1949,9 +1950,14 @@ async function boot() {
     $("#cal-list").style.display = b.dataset.cv === "list" ? "" : "none";
     if (b.dataset.cv === "list") run(renderDiaryList);
   }));
-  $$(".wseg").forEach((b) => (b.onclick = () => {
-    $$(".wseg").forEach((x) => x.classList.toggle("on", x === b));
+  // .wseg 스타일은 works·분석 depth가 공유하지만 동작은 다르다 → 선택자를 컨테이너로 좁힌다.
+  $$("#scr-works .wseg").forEach((b) => (b.onclick = () => {
+    $$("#scr-works .wseg").forEach((x) => x.classList.toggle("on", x === b));
     $$(".wview").forEach((v) => v.classList.toggle("on", v.id === "w-" + b.dataset.w));
+  }));
+  // 분석 출력 분량 — 선택만 바꾸고 분석을 자동 실행하지 않는다.
+  $$("#anal-depth .wseg").forEach((b) => (b.onclick = () => {
+    $$("#anal-depth .wseg").forEach((x) => x.classList.toggle("on", x === b));
   }));
 
   // Log 입력줄

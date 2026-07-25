@@ -288,6 +288,11 @@ ok("컨텍스트 조립 — Me·기간·raw 포함", ctxRaw.text.includes("[Me �
 ok("컨텍스트 meta — weekly 출처 기록", ctxRaw.meta.weekly.source === "mech" || ctxRaw.meta.weekly.source === "ai");
 ok("분석 prompt 없으면 400", (await api("POST", "/api/analyses", {})).status === 400);
 ok("키 없으면 분석 503", (await api("POST", "/api/analyses", { prompt: "이번 주 리듬" })).status === 503);
+// 5.3 출력 분량 — 키가 없어 생성까지는 못 가므로(503) '검증 단계를 통과하는지'만 본다.
+// depth가 400을 내지 않고 AI 호출까지 도달하면 통과. context_meta.depth 실값은 폰에서 확인.
+ok("분석 depth normal — 400 아님", (await api("POST", "/api/analyses", { prompt: "이번 주 리듬", depth: "normal" })).status === 503);
+ok("분석 depth deep — 400 아님", (await api("POST", "/api/analyses", { prompt: "이번 주 리듬", depth: "deep" })).status === 503);
+ok("분석 depth 잘못된 값 — 400 아니라 detailed fallback", (await api("POST", "/api/analyses", { prompt: "이번 주 리듬", depth: "garbage" })).status === 503);
 ok("서술 없으면 분류 400", (await api("POST", "/api/daily/classify-feelings")).status === 400);
 
 // AI 연결 — 제공자 전환 · 개인 키 마스킹

@@ -143,6 +143,12 @@
   <div class="card">
     <b style="font-size:14.5px">새 분석</b>
     <textarea rows="2" id="anal-q" style="margin-top:10px" placeholder="무엇이 궁금해? 예: 이번 주 리듬이 왜 무너졌는지"></textarea>
+    <!-- 출력 분량 (5.3) — works 세그와 같은 .wsegs 스타일 재사용. 바인딩은 컨테이너별로 분리(app.js). -->
+    <div class="wsegs" id="anal-depth" style="margin-top:10px">
+      <button class="wseg" data-d="normal">보통</button>
+      <button class="wseg on" data-d="detailed">자세히</button>
+      <button class="wseg" data-d="deep">매우 자세히</button>
+    </div>
     <div class="ctxbox">
       <div class="kicker" style="font-size:10px;margin-bottom:4px">조립될 컨텍스트 — 자동</div>
       <div id="ctx-lines"></div>

@@ -116,6 +116,13 @@ console.log("\n[Analysis]");
 w.switchTab("anal"); await sleep(1200);
 ok("컨텍스트 미리보기 4줄", $("#ctx-lines").querySelectorAll(".cl").length === 4);
 ok("빈 목록 안내", $("#ana-list").textContent.length > 0);
+// 5.3 출력 분량 세그 — 기본 detailed, 클릭 시 .on 이동(분석은 자동 실행되지 않는다)
+ok("출력 분량 세그 3개", $("#anal-depth").querySelectorAll(".wseg").length === 3);
+ok("기본 선택 = 자세히", $("#anal-depth .wseg.on")?.dataset.d === "detailed", $("#anal-depth .wseg.on")?.dataset.d);
+$("#anal-depth .wseg[data-d='normal']").click(); await sleep(60);
+ok("보통 클릭 → .on 이동", $("#anal-depth .wseg.on")?.dataset.d === "normal", $("#anal-depth .wseg.on")?.dataset.d);
+ok("works 세그는 영향 없음", $("#scr-works .wseg.on")?.dataset.w === "sched", $("#scr-works .wseg.on")?.dataset.w);
+$("#anal-depth .wseg[data-d='detailed']").click(); await sleep(60);
 
 console.log("\n[Me · 설정]");
 w.switchTab("me"); await sleep(1200);

@@ -137,22 +137,33 @@ export async function assembleContext(env: Env, t: TimeCtx) {
   };
 }
 
+/** 5.3 출력 분량 — 요청 시 사용자가 고른다. 기본 detailed(기존 고정 출력에 가장 가깝다). */
+const DEPTH = {
+  normal:   { label: "보통",        para: "2~3문단으로 핵심만 간결히 쓴다.",                          p1: 900,  p2: 600  },
+  detailed: { label: "자세히",      para: "3~5문단으로 쓴다.",                                        p1: 1300, p2: 900  },
+  deep:     { label: "매우 자세히", para: "6문단 이상으로, 근거가 되는 날짜·수치를 충분히 인용한다.", p1: 2600, p2: 1800 },
+} as const;
+type Depth = keyof typeof DEPTH;
+
 const SYS_BASE =
   "너는 개인 기록 시스템 'Personal OS'의 분석 계층이다. 사용자의 기록(Me·기간·일기 raw)만을 근거로 " +
   "패턴을 찾고, 기록의 날짜·수치를 인용해 한국어 산문으로 답한다. 근거 없는 단정과 과잉 일반화를 피하고, " +
-  "실행 가능한 관찰이 있으면 규칙 형태로 제안한다. 소제목·불릿 없이 2~5문단.";
+  "실행 가능한 관찰이 있으면 규칙 형태로 제안한다. 소제목·불릿 없이 한국어 산문으로 쓴다.";
 
 /** 5.3 2-pass: 1차 독립(앵커링 방지) -> 2차는 과거를 읽으며 '추가'만 (1차 수정 금지). */
-export async function create(env: Env, t: TimeCtx, prompt: unknown) {
+export async function create(env: Env, t: TimeCtx, prompt: unknown, depth?: unknown) {
   if (typeof prompt !== "string" || !prompt.trim()) throw new ApiError(400, "prompt가 필요해요");
   if (prompt.length > 500) throw new ApiError(400, "prompt는 500자 이내로");
+  // 잘못된 값·누락은 400이 아니라 detailed fallback (기존 클라이언트 호환).
+  const dk: Depth = (typeof depth === "string" && depth in DEPTH) ? (depth as Depth) : "detailed";
+  const D = DEPTH[dk];
   const p = prompt.trim();
 
   const [{ text, meta }, m] = await Promise.all([assembleContext(env, t), models(env)]);
 
   const pass1 = await callModel(env, {
-    model: m.high, maxTokens: 1400,
-    system: SYS_BASE + " 과거 분석 결과는 주어지지 않는다 — 이번 기록만으로 독립적으로 판단하라.",
+    model: m.high, maxTokens: D.p1,
+    system: SYS_BASE + " 과거 분석 결과는 주어지지 않는다 — 이번 기록만으로 독립적으로 판단하라." + " " + D.para,
     user: `${text}\n\n[사용자 질문]\n${p}`,
   });
 
@@ -161,15 +172,16 @@ export async function create(env: Env, t: TimeCtx, prompt: unknown) {
     ? past.map((a) => `(${a.created_at.slice(0, 10)}) 질문: ${a.prompt}\n${a.pass1}\n${a.pass2}`).join("\n---\n")
     : "(없음)";
   const pass2 = await callModel(env, {
-    model: m.high, maxTokens: 1000,
+    model: m.high, maxTokens: D.p2,
     system: SYS_BASE +
       " 아래에 방금 작성된 1차 분석과 과거 분석들이 주어진다. 1차를 수정·재요약하지 말고, " +
-      "과거 분석과의 연결·변화·반복 패턴 등 '추가' 관찰만 작성하라. 과거 분석이 없으면 첫 분석임을 짧게 밝혀라.",
+      "과거 분석과의 연결·변화·반복 패턴 등 '추가' 관찰만 작성하라. 과거 분석이 없으면 첫 분석임을 짧게 밝혀라." +
+      " " + D.para,
     user: `${text}\n\n[사용자 질문]\n${p}\n\n[1차 분석]\n${pass1}\n\n[과거 분석]\n${pastText}`,
   });
 
   const id = await nextId(env, "analyses", t.compact);
-  const fullMeta = { ...meta, models: m };
+  const fullMeta = { ...meta, models: m, depth: dk };
   await db.stInsertAnalysis(env, id, p, pass1, pass2, JSON.stringify(fullMeta), t.now).run();
   return { id, prompt: p, pass1, pass2, context_meta: fullMeta, created_at: t.now };
 }
