@@ -3,6 +3,10 @@
   --line:#E7E2D8; --line2:#F0ECE3;
   --mint:#7ED4A9; --amber:#F3C05F; --brick:#C4401F; --brick-soft:#F9E9E2;
   --r:16px;
+  /* 팝업 그림자·배경 농도 — 겹침 깊이는 .phone[data-depth]가 정한다 */
+  --sh-sheet:0 -14px 40px rgba(40,34,24,.22);
+  --sh-box:0 18px 48px rgba(40,34,24,.30);
+  --dim-rgb:30,26,20; --dim-a:.38; --dim-step:0;
 }
 *{box-sizing:border-box; -webkit-tap-highlight-color:transparent}
 html,body{margin:0;padding:0}
@@ -320,12 +324,19 @@ input[type=date]:focus, select:focus{border-color:var(--sub)}
     --shell:#0F0D0A; --paper:#1A1713; --card:#221E18; --ink:#EDE7DA; --sub:#A79E8D;
     --faint:#7C7466; --line:#332F27; --line2:#2A261F;
     --mint:#5FAE8A; --amber:#C79B49; --brick:#E0704A; --brick-soft:#38231B;
+    /* 어두운 표면에서는 그림자가 흐려진다 — 더 짙고 넓게 */
+    --sh-sheet:0 -14px 44px rgba(0,0,0,.58);
+    --sh-box:0 20px 56px rgba(0,0,0,.64);
+    --dim-rgb:0,0,0; --dim-a:.52;
   }
 }
 :root[data-theme="dark"]{
   --shell:#0F0D0A; --paper:#1A1713; --card:#221E18; --ink:#EDE7DA; --sub:#A79E8D;
   --faint:#7C7466; --line:#332F27; --line2:#2A261F;
   --mint:#5FAE8A; --amber:#C79B49; --brick:#E0704A; --brick-soft:#38231B;
+  --sh-sheet:0 -14px 44px rgba(0,0,0,.58);
+  --sh-box:0 20px 56px rgba(0,0,0,.64);
+  --dim-rgb:0,0,0; --dim-a:.52;
 }
 body{background:var(--shell)}
 :root[data-theme="dark"] .ev{background:rgba(255,255,255,.06)}
@@ -390,6 +401,39 @@ nav{height:calc(64px + env(safe-area-inset-bottom,0px));
 .fab{bottom:calc(84px + env(safe-area-inset-bottom,0px))}
 .board{bottom:calc(64px + env(safe-area-inset-bottom,0px))}
 .screen{padding-bottom:calc(150px + env(safe-area-inset-bottom,0px))}
+
+/* ── 상태바 영역 확보 (Android 앱 셸) ─────────────────────
+   브라우저에서는 주소창이 위를 먹어 드러나지 않던 문제.
+   앱은 상태바가 웹뷰 위에 겹쳐 그려져서 Today 헤더·캘린더 월 제목이 가렸다.
+   .phone에 걸면 flex 자식(.screens·nav)이 통째로 내려가 한 번에 해결된다.
+   inset:0 오버레이(.boot·.modal·.tut)의 containing block은 padding box라
+   여전히 화면 전체를 덮는다 — 의도한 대로다. */
+.phone{padding-top:env(safe-area-inset-top,0px)}
+
+/* 아래에 붙는 오버레이도 제스처 바를 피해야 한다.
+   .tut은 justify-content:flex-end, .sheet은 bottom:0 — 둘 다 바닥에 붙는다. */
+.tut{padding-bottom:calc(22px + env(safe-area-inset-bottom,0px))}
+.sheet{padding-bottom:calc(26px + env(safe-area-inset-bottom,0px))}
+
+/* ── 팝업 입체감 · 겹침 깊이 ──────────────────────────────
+   ① 그림자 — 시트·모달·튜토리얼이 '떠 있는 것'으로 읽히게.
+      바닥에서 올라오는 시트는 위로, 가운데 뜨는 상자는 아래로 드리운다.
+   ② 깊이 — 시트가 겹쳐 열릴수록 배경을 더 어둡게 하고 아래 시트를 눌러 준다.
+      깊이는 app.js의 syncOverlay()가 .phone[data-depth]로 알려 준다.
+      모달은 자기 배경(.45)이 따로 있어 시트 위에 뜨면 이미 어두워진다 — 세지 않는다. */
+.sheet{box-shadow:var(--sh-sheet)}
+.mbox,.tutbox{box-shadow:var(--sh-box)}
+/* 깊이는 기본 농도에 '더한다' — 라이트(.38)·다크(.52) 어느 쪽에서도
+   같은 폭으로 짙어진다. 덮어쓰면 다크에서 오히려 밝아진다. */
+.backdrop{background:rgba(var(--dim-rgb),calc(var(--dim-a) + var(--dim-step)));
+  transition:background .18s ease}
+
+.phone[data-depth="2"]{--dim-step:.12}
+.phone[data-depth="3"]{--dim-step:.22}
+
+/* 겹친 시트 중 위가 아닌 것 — 한 단계 눌러 위계를 만든다.
+   transform은 쓰지 않는다(.sheet.on의 translateY와 충돌하고, 바닥 정렬이 깨진다). */
+.sheet.under{filter:brightness(.92)}
 
 /* ── 부팅·재시도 오버레이 ─────────────────────────────── */
 .boot{position:absolute;inset:0;z-index:25;display:none;place-items:center;

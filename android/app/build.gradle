@@ -1,0 +1,102 @@
+apply plugin: 'com.android.application'
+
+android {
+    namespace = "dev.mond1424.personalos"
+    compileSdk = rootProject.ext.compileSdkVersion
+    defaultConfig {
+        applicationId "dev.mond1424.personalos"
+        minSdkVersion rootProject.ext.minSdkVersion
+        targetSdkVersion rootProject.ext.targetSdkVersion
+        versionCode 1
+        versionName "1.0"
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        aaptOptions {
+             // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
+             // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
+            ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
+        }
+    }
+    signingConfigs {
+        release {
+            // 자격증명은 두 경로 중 하나. 파일이 있으면 파일이 이긴다.
+            //   ① android/keystore.properties  (권장 — Windows에서 특수문자 안전. .gitignore 처리됨)
+            //   ② 환경변수 POS_*               (CI·다른 기계용)
+            def props = new Properties()
+            def propFile = rootProject.file("keystore.properties")
+            if (propFile.exists()) {
+                propFile.withInputStream { props.load(it) }
+            }
+
+            def pick = { String key, String env ->
+                def v = props.getProperty(key) ?: System.getenv(env)
+                return v?.trim()   // 따옴표 앞 공백·개행이 붙는 사고가 잦다
+            }
+
+            def ksPath = pick("storeFile",     "POS_KEYSTORE")
+            def ksPass = pick("storePassword", "POS_KEYSTORE_PASSWORD")
+            def kAlias = pick("keyAlias",      "POS_KEY_ALIAS")
+            def kPass  = pick("keyPassword",   "POS_KEY_PASSWORD")
+
+            // 자격증명이 없으면 여기서 멈춘다.
+            // 없는 채로 두면 gradle이 조용히 디버그 키로 서명해 버리고,
+            // 그렇게 만든 APK는 나중에 릴리스 키 APK로 업데이트할 수 없다.
+            if (!ksPath || !ksPass || !kAlias || !kPass) {
+                throw new GradleException(
+                    "서명 자격증명이 없습니다. android/keystore.properties 를 만들거나 " +
+                    "POS_KEYSTORE · POS_KEYSTORE_PASSWORD · POS_KEY_ALIAS · POS_KEY_PASSWORD 를 설정하세요."
+                )
+            }
+
+            def ksFile = file(ksPath)
+            if (!ksFile.exists()) {
+                throw new GradleException("keystore를 찾을 수 없습니다: ${ksFile.absolutePath}")
+            }
+
+            // 진단용 — 비밀번호는 찍지 않고 길이만. 오타·공백 혼입을 눈으로 잡는다
+            logger.lifecycle("[signing] keystore=${ksFile.name} alias=${kAlias} " +
+                             "storePassword.length=${ksPass.length()} keyPassword.length=${kPass.length()}")
+
+            storeFile     ksFile
+            storePassword ksPass
+            keyAlias      kAlias
+            keyPassword   kPass
+        }
+    }
+    buildTypes {
+        release {
+            signingConfig signingConfigs.release
+            minifyEnabled false
+            shrinkResources false
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+        }
+    }
+}
+
+repositories {
+    flatDir{
+        dirs '../capacitor-cordova-android-plugins/src/main/libs', 'libs'
+    }
+}
+
+dependencies {
+    implementation fileTree(include: ['*.jar'], dir: 'libs')
+    implementation "androidx.appcompat:appcompat:$androidxAppCompatVersion"
+    implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"
+    implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
+    implementation project(':capacitor-android')
+    testImplementation "junit:junit:$junitVersion"
+    androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
+    androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
+    implementation project(':capacitor-cordova-android-plugins')
+}
+
+apply from: 'capacitor.build.gradle'
+
+try {
+    def servicesJSON = file('google-services.json')
+    if (servicesJSON.text) {
+        apply plugin: 'com.google.gms.google-services'
+    }
+} catch(Exception e) {
+    logger.info("google-services.json not found, google-services plugin not applied. Push Notifications won't work")
+}

@@ -1,0 +1,109 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+          xmlns:tools="http://schemas.android.com/tools">
+<!-- ══════════ 알림 ══════════ -->
+
+<!-- Android 13+ 런타임 권한. 없으면 알림이 아예 안 뜬다 -->
+<uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+<!-- 잠금화면 점유(FSI). Android 14+는 '알람·통화 앱'만 기본 부여 —
+     setAlarmClock으로 실제 알람을 예약하면 그 조건에 부합한다.
+     그래도 canUseFullScreenIntent()로 확인하고 설정 페이지로 유도해야 한다 -->
+<uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+
+<!-- 잠긴 화면 깨우기 -->
+<uses-permission android:name="android.permission.WAKE_LOCK" />
+
+
+<!-- ══════════ 알람 ══════════ -->
+
+<!-- Android 12~13(API 31~33): 사용자가 설정에서 허용해야 한다 -->
+<uses-permission
+    android:name="android.permission.SCHEDULE_EXACT_ALARM"
+    android:maxSdkVersion="33" />
+
+<!-- Android 14+(API 34): 알람이 핵심 기능인 앱에 자동 부여.
+     사이드로드라 Play 심사가 없고, setAlarmClock이 실제 알람이므로 정당하다 -->
+<uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+
+<!-- 재부팅 시 알람 재등록. 없으면 시험 전날 폰을 껐다 켜는 순간
+     예약이 전부 사라진다 — 조용한 전면 실패 -->
+<uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
+
+<!-- ══════════ 포그라운드 서비스 (S1.4) ══════════ -->
+
+<uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+<!-- Android 14+는 타입 선언 필수. 자기통제 목적 사용 감시는 specialUse -->
+<uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+
+
+<!-- ══════════ 배터리 ══════════ -->
+
+<!-- 이걸 안 받으면 Doze에서 서비스가 죽는다.
+     삼성은 이것만으로 부족 — '절전 시 사용 중지 앱'에서도 빼야 한다(수동) -->
+<uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
+
+<!-- ══════════ 감지 (S1.4·S2.5) ══════════ -->
+
+<!-- 서명 권한이라 lint가 막는다. 앱 정보 → 우상단 → '제한된 설정 허용' 후
+     설정 > 특별한 앱 액세스 > 사용 정보 접근에서 수동 허용 -->
+<uses-permission
+    android:name="android.permission.PACKAGE_USAGE_STATS"
+    tools:ignore="ProtectedPermissions" />
+
+<!-- 설치된 앱 목록 조회 (감시목록 대조). Android 11+ -->
+<uses-permission
+    android:name="android.permission.QUERY_ALL_PACKAGES"
+    tools:ignore="QueryAllPackagesPermission" />
+
+
+<!-- ══════════ 9월 이후 — 오버레이 ══════════ -->
+<!-- 지금은 선언만. 권한 요청은 실제로 쓸 때 -->
+<uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+
+
+    <application
+        android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/AppTheme">
+
+        <!-- S1.4에서 GuardService를 선언할 때, 그 <service> 안에 넣는다:
+             <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                       android:value="self_control_intervention" />
+             <application>이 아니라 <service>의 자식이다 -->
+
+        <activity
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode|navigation|density"
+            android:name=".MainActivity"
+            android:label="@string/title_activity_main"
+            android:theme="@style/AppTheme.NoActionBarLaunch"
+            android:launchMode="singleTask"
+            android:exported="true">
+
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+        </activity>
+
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths"></meta-data>
+        </provider>
+    </application>
+
+    <!-- Permissions -->
+
+    <uses-permission android:name="android.permission.INTERNET" />
+</manifest>

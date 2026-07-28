@@ -259,12 +259,25 @@ function endTutorial() {
   localStorage.setItem("tutorial_done", "1");
 }
 
-function openSheet(id) { $("#bk").classList.add("on"); $("#" + id).classList.add("on"); }
-function closeSheet(id) { $("#" + id).classList.remove("on"); }   // 겹쳐 뜬 시트 하나만
+/* 열린 오버레이 상태를 셸에 반영한다 — 배경 on/off · 겹침 깊이 · 아래 시트 눌림.
+   시트를 여닫는 모든 경로에서 호출한다. 깊이는 시트만 센다:
+   모달은 자기 배경(.45)이 따로 있어 시트 위에 뜨면 이미 어두워진다.
+   '위' 판정은 DOM 순서 — 시트끼리 z-index가 같아 나중 것이 위에 그려진다. */
+function syncOverlay() {
+  const open = $$(".sheet.on");
+  const bk = $("#bk"), ph = $("#phone");
+  if (bk) bk.classList.toggle("on", open.length > 0);
+  $$(".sheet").forEach((s) => s.classList.remove("under"));
+  open.slice(0, -1).forEach((s) => s.classList.add("under"));
+  if (ph) ph.dataset.depth = Math.min(open.length, 3);   // 셸이 없어도 던지지 않는다(검사 하네스)
+}
+
+function openSheet(id) { $("#" + id).classList.add("on"); syncOverlay(); }
+function closeSheet(id) { $("#" + id).classList.remove("on"); syncOverlay(); }   // 겹쳐 뜬 시트 하나만
 function closeAll() {
-  $("#bk").classList.remove("on");
   $$(".sheet").forEach((s) => s.classList.remove("on"));
   evxCtx = null; dfxCtx = null;   // 배경 탭으로 닫아도 진행 중인 입력은 버린다
+  syncOverlay();
 }
 
 /* ── Today ─────────────────────────────────────────────── */
