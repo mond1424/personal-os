@@ -63,6 +63,10 @@ android/app/src/main/java/dev/mond1424/personalos/guard/
 
 ## raw 링크 (Chat이 직접 읽는 주소)
 - 설계문서(권위) https://raw.githubusercontent.com/mond1424/personal-os/main/personal-agent-design_v0.9.md
+- APP-PLAN      https://raw.githubusercontent.com/mond1424/personal-os/main/APP-PLAN.md
+- APP-ADR       https://raw.githubusercontent.com/mond1424/personal-os/main/APP-ADR.md
+- APP-BUILD     https://raw.githubusercontent.com/mond1424/personal-os/main/APP-BUILD.md
+- GUARD-DEV-LOOP https://raw.githubusercontent.com/mond1424/personal-os/main/GUARD-DEV-LOOP.md
 - CLAUDE.md      https://raw.githubusercontent.com/mond1424/personal-os/main/CLAUDE.md
 - README0722     https://raw.githubusercontent.com/mond1424/personal-os/main/README0722.md
 - 사용설명서0722 https://raw.githubusercontent.com/mond1424/personal-os/main/사용설명서0722.md
