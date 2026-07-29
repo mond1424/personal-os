@@ -62,7 +62,7 @@
 | PUT `/api/events/:id/protect` | `{protect_from?, protect_level?, protect_sleep_min?, protect_prep_min?}` 또는 `{protect:false}` | `{id, protected, ...}` · **본문 수정과 분리**(마감된 날에도 부착 가능) | `events.setProtect` |
 | GET `/api/guard/events?limit` | — | 발동 이력 rows | `guard.events` |
 | GET `/api/guard/schedule?days` | — | `{d, mode, friction_mult, events:[{event_id, start, deadline, fires[]}]}` · **기기가 하루 1회 pull** | `guard.schedule` |
-| POST `/api/guard/events` | `{cause, level, fired_at?, event_id?, risk_score?, risk_snapshot?, foreground_app?, source?, ai_used?, ai_verdict?}` | `{id, on_date, level, mode}` (201) | `guard.record` |
+| POST `/api/guard/events` | `{cause, level, client_id?, fired_at?, event_id?, risk_score?, risk_snapshot?, foreground_app?, source?, reaction?, reason?}` | `{id, on_date, level, mode, duplicate?}` (201) · **upsert** — `client_id`로 재전송 멱등, 반응 후행 채움 | `guard.record` |
 | POST `/api/guard/events/:id/react` | `{reaction, reason?, reacted_at?}` | `{id, reaction, reacted_at}` · 두 번째는 409 | `guard.react` |
 | POST `/api/guard/events/:id/outcome` | `{outcome}` | `{id, outcome, outcome_at}` · 재확정 409 | `guard.setOutcome` |
 | GET `/api/guard/pending-outcome` | — | outcome 미확정 rows(+event_title) | `guard.pendingOutcome` |
@@ -147,7 +147,9 @@
 - `schedule(env, t, days)` → 기기가 알람을 예약할 재료. **데드라인을 여기서 역산**한다(저장 X, 원칙 4):
   `deadline = 일정시각 − protect_prep_min − protect_sleep_min` (기본 90·360 → 09:00 시험이면 01:30, 설계 §6.1 예시)
   Level 1(진입)·2(−2h·−1h)·3(데드라인)·4(+30m부터 30분 간격 6회)를 전부 시각으로 펼쳐 준다. 활성 모드의 `max_level`로 상한
-- `record(env, t, input)` → `{id, on_date, level, mode}` · **`fired_at`은 기기 시각**이고 귀속일도 그걸로 계산(오프라인 큐가 나중에 올라오므로)
+- `record(env, t, input)` → `{id, on_date, level, mode, duplicate?}` · **`fired_at`은 기기 시각**이고 귀속일도 그걸로 계산(오프라인 큐가 나중에 올라오므로)
+  - **upsert(0011)**: `client_id`가 이미 있으면 그 행을 돌려주고, 반응만 왔으면 그것만 채운다. 셋을 한 엔드포인트로 받는다 — 발동만 / 발동+반응 동시(오프라인) / 반응 후행
+  - `applyReaction`을 `react()`와 공유 — 사유 20자 검증이 한 곳에만 있다
 - `react(env, t, id, input)` → 반응 한 번만(409). Override는 사유 20자 이상(§6.3)
 - `setOutcome(env, t, id, outcome)` → 사후 확정 한 번만(409). **Guard가 판단하지 않는다**(§6.5)
 - `pendingOutcome(env)` → outcome 미확정 목록(Today 확정 카드용)

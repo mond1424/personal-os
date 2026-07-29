@@ -97,6 +97,9 @@ export async function schedule(env: Env, t: TimeCtx, days = 30) {
 
   return {
     d: t.d,                                  // 서버 귀속일 — 기기는 이걸 그대로 쓴다(ADR-011)
+    // 하루 경계는 사용자 설정이다. 기기의 재동기화 시각이 여기에 붙어야
+    // '그날 일정이 확정된 뒤' 받는다는 전제가 유지된다.
+    boundary: t.boundary,                    // 'HH:MM'
     mode: mode?.key ?? null,
     friction_mult: mode?.friction_mult ?? 1,
     events: plans,
@@ -110,6 +113,21 @@ export async function schedule(env: Env, t: TimeCtx, days = 30) {
  * 그래서 `fired_at`은 서버 시각이 아니라 **기기가 보낸 시각**이고, 귀속일도 그걸로 계산한다.
  */
 export async function record(env: Env, t: TimeCtx, input: any) {
+  const clientId = typeof input?.client_id === "string" && input.client_id.trim()
+    ? input.client_id.trim() : null;
+
+  // 재시도 멱등 — POST가 닿았는데 응답만 유실된 경우 두 번째는 같은 행을 가리킨다.
+  // 반응이 뒤늦게 왔으면 그것만 채운다(트리거가 'NULL → 값'만 허용한다).
+  if (clientId) {
+    const dup = await db.guardEventByClient(env, clientId);
+    if (dup) {
+      if (!dup.reaction && input?.reaction) {
+        await applyReaction(env, t, dup.id, input);
+      }
+      return { id: dup.id, on_date: dup.on_date, level: dup.level, mode: dup.mode, duplicate: true };
+    }
+  }
+
   const level = Number(input?.level);
   if (!LEVELS.includes(level)) throw new ApiError(400, "level은 1~4");
   if (typeof input?.cause !== "string" || !input.cause.trim()) {
@@ -134,18 +152,18 @@ export async function record(env: Env, t: TimeCtx, input: any) {
     task_id: input.task_id ?? null,
     period_id: input.period_id ?? null,
     event_id: input.event_id ?? null,
+    client_id: clientId,
     created_at: t.now,
   }).run();
+
+  // 기기가 발동과 반응을 한 번에 올리는 경우(오프라인에서 둘 다 일어난 뒤 나중에 동기화).
+  if (input?.reaction) await applyReaction(env, t, id, input);
 
   return { id, on_date: onDate, level, mode };
 }
 
-/** 반응 — 한 번만 쓸 수 있다(0010 트리거). 두 번째는 409. */
-export async function react(env: Env, t: TimeCtx, id: string, input: any) {
-  const cur = await db.guardEventGet(env, id);
-  if (!cur) throw new ApiError(404, "해당 Guard 이벤트가 없어요");
-  if (cur.reaction) throw new ApiError(409, "이미 반응이 기록됐어요 — 개입 이력은 고칠 수 없어요");
-
+/** react()와 record()가 공유하는 반응 기록. 검증은 한 곳에만 둔다. */
+async function applyReaction(env: Env, t: TimeCtx, id: string, input: any) {
   const reaction = String(input?.reaction ?? "");
   if (!REACTIONS.includes(reaction)) {
     throw new ApiError(400, "reaction은 accepted·override·ignored");
@@ -154,10 +172,17 @@ export async function react(env: Env, t: TimeCtx, id: string, input: any) {
   if (reaction === "override" && reason.length < MIN_REASON) {
     throw new ApiError(400, `Override에는 사유가 ${MIN_REASON}자 이상 필요해요`);
   }
-
   const at = typeof input?.reacted_at === "string" ? input.reacted_at : t.now;
   await db.stReactGuardEvent(env, id, reaction, reaction === "override" ? reason : null, at).run();
   return { id, reaction, reacted_at: at };
+}
+
+/** 반응 — 한 번만 쓸 수 있다(0010 트리거). 두 번째는 409. */
+export async function react(env: Env, t: TimeCtx, id: string, input: any) {
+  const cur = await db.guardEventGet(env, id);
+  if (!cur) throw new ApiError(404, "해당 Guard 이벤트가 없어요");
+  if (cur.reaction) throw new ApiError(409, "이미 반응이 기록됐어요 — 개입 이력은 고칠 수 없어요");
+  return applyReaction(env, t, id, input);
 }
 
 /** outcome은 Guard가 판단하지 않는다 — 사용자가 사후 확정한다(§6.5). */

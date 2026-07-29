@@ -13,7 +13,7 @@ import type { Env } from "../src/types";
 import { makeD1, rawOf } from "./d1shim";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const schema = ["0001_init.sql", "0002_models.sql", "0003_ai_provider.sql", "0004_events.sql", "0005_delete_scope.sql", "0006_fix_model_high.sql", "0007_defer_reason.sql", "0008_cancel_task.sql", "0009_cancel_reason.sql", "0010_guard.sql"]
+const schema = ["0001_init.sql", "0002_models.sql", "0003_ai_provider.sql", "0004_events.sql", "0005_delete_scope.sql", "0006_fix_model_high.sql", "0007_defer_reason.sql", "0008_cancel_task.sql", "0009_cancel_reason.sql", "0010_guard.sql", "0011_guard_sync.sql"]
   .map((f) => readFileSync(join(here, "../migrations/" + f), "utf8")).join("\n");
 const env: Env = { DB: makeD1(schema) };
 const raw = rawOf(env.DB);
@@ -496,6 +496,25 @@ ok("risk_snapshot이 JSON으로 보존됨",
   !!gRow && JSON.parse(gRow.risk_snapshot).sleepEst === 3.2, gRow?.risk_snapshot);
 ok("foreground_app · mode · source 기록됨",
   !!gRow && gRow.foreground_app === "com.android.chrome" && gRow.mode === "coach" && gRow.source === "android");
+
+// (7.5) client_id 멱등 (0011) — 밀어 올리기 재시도가 두 행을 만들면 안 된다
+const cidBody = { cause: "protect:test", level: 3, client_id: "dev-uuid-1", fired_at: "2026-08-15T02:00:00+09:00" };
+const c1 = await api("POST", "/api/guard/events", cidBody);
+const c2 = await api("POST", "/api/guard/events", cidBody);          // 응답 유실 후 재시도 흉내
+ok("같은 client_id 재전송 → 같은 행 · duplicate 표시",
+  c1.json.id === c2.json.id && c2.json.duplicate === true, `${c1.json.id} / ${c2.json.id}`);
+// 오프라인에서 발동과 반응이 둘 다 일어난 뒤 한 번에 올라오는 경우
+const c3 = await api("POST", "/api/guard/events", {
+  ...cidBody, client_id: "dev-uuid-2", reaction: "override", reason: "내일 시험인데 이것만 마무리하고 자겠습니다",
+});
+ok("발동+반응 동시 전송 201", c3.status === 201);
+const c3row = ((await api("GET", "/api/guard/events")).json as any[]).find((r) => r.client_id === "dev-uuid-2");
+ok("반응이 같이 기록됨", !!c3row && c3row.reaction === "override", c3row?.reaction);
+// 발동만 먼저 올라간 뒤, 반응이 나중에 같은 client_id로 도착
+const c4 = await api("POST", "/api/guard/events", { ...cidBody, client_id: "dev-uuid-3" });
+await api("POST", "/api/guard/events", { client_id: "dev-uuid-3", reaction: "ignored" });
+const c4row = ((await api("GET", "/api/guard/events")).json as any[]).find((r) => r.id === c4.json.id);
+ok("나중에 온 반응이 기존 행에 채워짐 (ignored)", !!c4row && c4row.reaction === "ignored", c4row?.reaction);
 
 // (8) 감시 목록 — PC 확장 자리 (ADR-022)
 ok("watch app 추가 201",

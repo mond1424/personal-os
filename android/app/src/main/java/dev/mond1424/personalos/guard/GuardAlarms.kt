@@ -92,6 +92,13 @@ object GuardAlarms {
     /** 테스트 예약은 이 구간을 쓴다. 실제 보호 규칙 예약과 섞이지 않게. */
     const val TEST_ID_BASE = 9000
 
+    /** 서버에서 받아 건 예약. 동기화 때 이 구간만 통째로 갈아엎는다. */
+    const val SYNC_ID_BASE = 100_000
+
+    /** 하루 1회 재동기화 자신의 예약 — 앱을 안 열어도 예약이 갱신된다. */
+    const val SYNC_SELF_ID = 8000
+    const val ACTION_SYNC = "dev.mond1424.personalos.GUARD_SYNC"
+
     private fun am(ctx: Context) =
         ctx.getSystemService(Context.ALARM_SERVICE) as AlarmManager
 
@@ -141,6 +148,48 @@ object GuardAlarms {
     fun cancelAll(ctx: Context) {
         GuardAlarmStore.all(ctx).forEach { runCatching { am(ctx).cancel(operation(ctx, it)) } }
         GuardAlarmStore.clear(ctx)
+    }
+
+    /** 서버발 예약만 지운다 — 테스트 알람은 남긴다. 동기화가 멱등하려면 이 분리가 필요하다. */
+    fun cancelSynced(ctx: Context) {
+        GuardAlarmStore.all(ctx).filter { it.id >= SYNC_ID_BASE }.forEach {
+            runCatching { am(ctx).cancel(operation(ctx, it)) }
+            GuardAlarmStore.remove(ctx, it.id)
+        }
+    }
+
+    /**
+     * 다음 재동기화를 건다. **귀속일 경계 + 10분**에 맞춘다 —
+     * 그날의 보호 일정이 확정된 뒤 받아야 한다.
+     *
+     * ⚠️ 경계는 **사용자 설정**이다(기본 05:00, 지금은 06:00). 하드코딩하면
+     *    경계를 바꾼 순간 동기화가 경계 이전에 돌아 전날 데이터를 받는다.
+     *    서버가 `/api/guard/schedule` 응답에 `boundary`를 실어 주고,
+     *    GuardSync가 그걸 저장해 여기로 넘긴다.
+     *
+     * 이미 지난 시각이면 내일로. 매 동기화마다 다시 걸므로 체인이 끊기지 않는다.
+     */
+    fun scheduleDailySync(ctx: Context) {
+        if (!canScheduleExact(ctx)) return
+        val (bh, bm) = GuardSync.boundaryHm(ctx)
+        val total = bh * 60 + bm + 10
+        val c = java.util.Calendar.getInstance().apply {
+            set(java.util.Calendar.HOUR_OF_DAY, (total / 60) % 24)
+            set(java.util.Calendar.MINUTE, total % 60)
+            set(java.util.Calendar.SECOND, 0)
+            set(java.util.Calendar.MILLISECOND, 0)
+        }
+        if (c.timeInMillis <= System.currentTimeMillis()) c.add(java.util.Calendar.DAY_OF_YEAR, 1)
+
+        val i = Intent(ctx, AlarmReceiver::class.java).apply { action = ACTION_SYNC }
+        val pi = PendingIntent.getBroadcast(
+            ctx, SYNC_SELF_ID, i,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        // 동기화는 개입이 아니다 — 알람 UI에 뜰 이유가 없다. Doze에서 조금 늦어도 무방.
+        runCatching {
+            am(ctx).setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, c.timeInMillis, pi)
+        }
     }
 
     /**

@@ -139,10 +139,19 @@ object GuardNotifications {
         title: String,
         body: String,
         eventId: String? = null,
+        cause: String = "protect",
     ): FireResult {
         ensureChannels(ctx)
 
         val high = level >= 3
+
+        // ① 로컬 기록이 **가장 먼저** — 네트워크를 기다리지 않는다(ADR-023).
+        // 화면·알림보다 앞이어야 client_id를 화면에 넘겨 반응을 같은 항목에 붙일 수 있다.
+        // 발동 경로에 왕복을 넣으면 새벽에 기록이 통째로 사라진다.
+        val clientId = runCatching {
+            GuardEventQueue.recordFire(ctx, level, cause, eventId, null)
+        }.getOrNull()
+
         val alert = Intent(ctx, GuardAlertActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
             putExtra(GuardAlertActivity.EX_LEVEL, level)
@@ -150,13 +159,14 @@ object GuardNotifications {
             putExtra(GuardAlertActivity.EX_BODY, body)
             putExtra(GuardAlertActivity.EX_EVENT, eventId)
             putExtra(GuardAlertActivity.EX_NOTIF_ID, ID_BASE + level)
+            putExtra(GuardAlertActivity.EX_CLIENT_ID, clientId)
         }
         val pi = PendingIntent.getActivity(
             ctx, ID_BASE + level, alert,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
 
-        // ① 개입 화면 먼저 — 채널 선택이 이 결과에 달렸다.
+        // ② 개입 화면 — 채널 선택이 이 결과에 달렸다.
         // FSI는 화면이 잠겼을 때만 Activity를 띄우는 게 계약이라, 깨어 있으면 헤드업으로 끝난다.
         // 깨어 있는 화면까지 덮으려면 백그라운드 액티비티 시작이 필요한데 Android 10+가 막고,
         // '다른 앱 위에 표시'(SYSTEM_ALERT_WINDOW)가 그 예외를 준다.
@@ -166,7 +176,7 @@ object GuardNotifications {
             ctx.startActivity(alert); true
         }.getOrDefault(false)
 
-        // ② 알림 — 화면이 떴으면 **조용한 채널**을 쓴다.
+        // ③ 알림 — 화면이 떴으면 **조용한 채널**을 쓴다.
         // 소리는 화면이 내므로(설정·벨소리 모드를 따르려면 그래야 한다) 채널까지 울면 두 겹이 된다.
         // 화면을 못 띄웠을 때만 소리 나는 채널로 폴백한다.
         val channel = when {
@@ -197,7 +207,7 @@ object GuardNotifications {
             }
             .build()
 
-        // ③ 알림 발송 — 권한이 없으면 건너뛴다. **화면은 이미 떴다**(막지 않는다).
+        // ④ 알림 발송 — 권한이 없으면 건너뛴다. **화면은 이미 떴다**(막지 않는다).
         val cp = canPost(ctx)
         val posted = cp && runCatching {
             NotificationManagerCompat.from(ctx).notify(ID_BASE + level, n)

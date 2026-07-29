@@ -23,10 +23,10 @@
 
 ## 현재 위치
 
-> **S1.1 ✅ · S1.2 ✅ 완료** (2026-07-29)
-> **S1.3 산출 완료 — 실측 대기** ← **1주차의 진짜 게이트**
->   ① 낮 3분 테스트(앱 완전 종료 상태) → ② 재부팅 복구 → ③ 밤 03:00
-> **다음 실행: S1.4 — 포그라운드 서비스 + UsageStats** (게이트 통과 후)
+> **S1.1 ✅ · S1.2 ✅ · S2.1 ✅ · S2.2 ✅ · S2.3 ✅ · S2.4 ✅** (2026-07-29, 배포·APK 갱신 완료)
+> **S1.3 🔄 실측 대기** — ① 낮 3분 ✅ / ② 재부팅 복구 · ③ 밤 03:00 **내일 밤**
+> **다음 실행: S1.4 + S2.5 — 포그라운드 서비스 + UsageStats 감지** (묶어서)
+> 기준선: typecheck 통과 · smoke 184 · front 167 · 실패 0
 > 최종 갱신: 2026-07-29
 
 ---
@@ -87,11 +87,11 @@
 
 | 단계 | 내용 | 산출물 | 상태 |
 |---|---|---|---|
-| **S2.1** | `guard_events` 확장 | `migrations/0010_guard.sql` · `db/index.ts` 조각 | ⬜ |
-| **S2.2** | `events` 보호 필드 + 서비스 | `0010` 후반 · `services/events.ts` · 라우터 | ⬜ |
-| **S2.3** | 보호 일정 pull API + 기기측 예약 | `GET /api/guard/schedule` · `GuardSync.kt` | ⬜ |
-| **S2.4** | 로컬 우선 기록 (ADR-023) | `GuardStore.kt`(로컬 SQLite) · `POST /api/guard/events` · 밀어올리기 | ⬜ |
-| **S2.5** | 감지 수집 | `UsageProbe` 확장 · 화면 on/off 리시버 | ⬜ |
+| **S2.1** | `guard_events` 확장 | `migrations/0010_guard.sql` · `db/index.ts` 조각 | ✅ |
+| **S2.2** | `events` 보호 필드 + 서비스 | `0010` 후반 · `services/events.ts` · 라우터 | ✅ |
+| **S2.3** | 보호 일정 pull API + 기기측 예약 | `GET /api/guard/schedule` · `GuardSync.kt` · 경계+10분 재동기화 | ✅ |
+| **S2.4** | 로컬 우선 기록 (ADR-023) | `GuardEventQueue.kt` · `0011_guard_sync`(client_id) · upsert `POST /api/guard/events` | ✅ |
+| **S2.5** | 감지 수집 | `UsageProbe` 확장 · 화면 on/off 리시버 | ⬜ (S1.4와 묶음) |
 
 ### 3주 (8/12~8/18) — 개입 ★가장 불확실
 

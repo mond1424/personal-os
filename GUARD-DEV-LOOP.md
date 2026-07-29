@@ -62,6 +62,100 @@ console.table([await G.state(), await G.getSettings(), await G.listAlarms()]);
 
 ---
 
+---
+
+## 유선 디버깅 검증 항목
+
+USB 연결 + `chrome://inspect` 상태에서. 위에서 아래 순서로.
+
+### 0. 서버 API 헬퍼
+
+```js
+const G = Capacitor.Plugins.Guard;
+const tok = localStorage.getItem('api_token');
+const g = async (p, m='GET', b) => (await fetch('/api'+p, {
+  method: m,
+  headers: { ...(tok && {Authorization:'Bearer '+tok}), ...(b && {'Content-Type':'application/json'}) },
+  body: b && JSON.stringify(b)
+})).json();
+```
+
+### 1. 권한 — 매번 먼저
+
+```js
+await G.state();     // notifications · overlay · batteryUnrestricted 셋 다 true
+```
+
+### 2. 동기화 상태 (S2.3)
+
+```js
+await G.syncStatus();
+// { configured:true, hasToken:true, lastOkAt, lastCount, boundary, nextSyncAt }
+```
+
+| 확인 | |
+|---|---|
+| `configured: true` · `hasToken: true` | ⬜ |
+| **`boundary`가 실제 설정값과 같다** (지금 06:00) | ⬜ |
+| **`nextSyncAt` = 경계 + 10분** (06:10) | ⬜ |
+| `lastOkAt`이 최근 · `lastError` 없음 | ⬜ |
+
+> 경계를 바꾼 뒤에는 앱을 한 번 열어 재동기화해야 `nextSyncAt`이 따라온다.
+
+### 3. 서버 Guard API + 예약 연결
+
+```js
+await g('/guard/modes');            // coach 활성
+const ev = await g('/events','POST',{ title:'테스트 시험', date:'2026-08-15', time:'09:00' });
+await g(`/events/${ev.id}/protect`,'PUT',{ protect_from:'-1d 00:00', protect_level:4 });
+
+const s = await g('/guard/schedule');
+console.log(s.boundary, s.events[0].deadline, s.events[0].fires.length);
+
+await G.sync();                     // { ok:true, scheduled: N }
+await G.listAlarms();               // fires 개수만큼 잡혀야 한다
+```
+
+| 확인 | |
+|---|---|
+| `deadline`이 08-15 01:30 (09:00 − 90 − 360) | ⬜ |
+| `sync()`의 `scheduled`가 `fires.length`와 일치 | ⬜ |
+| `listAlarms()`에 같은 수가 잡힘 · `atLocal`이 맞음 | ⬜ |
+
+정리:
+
+```js
+await g(`/events/${ev.id}/protect`,'PUT',{ protect:false });
+await G.sync();                     // scheduled: 0 으로 돌아가야 한다 (멱등 확인)
+await G.listAlarms();
+```
+
+### 4. 재부팅 복구 (S1.3 ②)
+
+```js
+await G.cancelAlarms();
+await G.scheduleIn({ seconds: 1800 });
+await G.listAlarms();               // count: 1
+```
+
+→ **폰 재시작** → 잠금 해제 → 앱 열기 →
+
+```js
+await G.listAlarms();               // 여전히 count 1, inSeconds 줄어 있음
+```
+
+### 5. 밤 03:00 (S1.3 ③) — 자기 전, USB 뽑고
+
+```js
+await G.cancelAlarms();
+await G.scheduleAt({ hhmm: "03:00", level: 3 });
+await G.listAlarms();
+```
+
+충전기 꽂지 말 것. 아침에 `await G.listAlarms()` → `count: 0`이면 소비된 것.
+
+---
+
 ## 자주 쓰는 것
 
 ```js

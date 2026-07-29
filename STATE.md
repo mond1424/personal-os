@@ -3,8 +3,8 @@
 ## 저장소
 - repo: https://github.com/mond1424/personal-os
 - branch: main
-- 마지막 커밋: `6804aaf` APP-1 Android 셸(Capacitor) + safe-area + 팝업 그림자. **그 뒤 APP-2(Guard 네이티브 모듈)가 미커밋 상태** — 아래 참조.
-  - ✅ **0009까지 로컬·원격 모두 적용 + deploy 완료** (2026-07-29 `migrations apply --remote` → "No migrations to apply" 확인).
+- 마지막 커밋: `1130a33` APP-2 Guard 네이티브 모듈. **그 뒤 Guard 서버 계층(0010·0011)과 동기화·큐가 미커밋** — 아래 참조.
+  - ✅ **0011까지 로컬·원격 모두 적용 + deploy 완료** (2026-07-29). 폰 APK도 갱신 완료.
 
 ## ★ 진행 중 — 8월 Guard v1 (APP-PLAN)
 
@@ -30,9 +30,16 @@
 |---|---|
 | S2.1 `guard_events` 확장 (마이그레이션 0010) | ✅ |
 | S2.2 `events` 보호 필드 + 서비스·라우트 | ✅ |
-| S2.3 기기측 예약 (`GuardSync.kt`) | ⬜ |
-| S2.4 로컬 우선 기록 (ADR-023) | ⬜ |
-| S2.5 감지 수집 | ⬜ |
+| S2.3 기기측 예약 (`GuardSync.kt`) | ✅ |
+| S2.4 로컬 우선 기록 (ADR-023, 마이그레이션 0011) | ✅ |
+| S2.5 감지 수집 | ⬜ (S1.4 포그라운드 서비스와 함께) |
+
+**S2.3** — 기기가 `/api/guard/schedule`을 받아 `fires[]`를 `setAlarmClock`으로 전부 예약한다. 멱등(서버발 예약만 갈아엎음, 테스트 알람은 보존). **재동기화는 `경계 + 10분`** — 경계가 사용자 설정이라 서버가 응답에 `boundary`를 실어 주고 기기가 그걸 따른다(하드코딩했다가 06:00 설정에서 경계 이전에 도는 버그를 잡음). 앱을 안 열어도 하루 1회 갱신.
+
+**S2.4** — 발동 순서를 뒤집었다: **① 로컬 기록 → ② 개입 화면 → ③ 알림 → (온라인이면) 밀어 올리기.** 발동 경로에 서버 왕복이 있으면 새벽에 기록이 통째로 사라지는데, 개입이 실패하는 밤은 대개 상황이 정상이 아닌 밤이라 하필 그날 데이터가 빈다.
+- 재시도 멱등을 위해 기기가 `client_id`(UUID)를 만든다. 서버가 UNIQUE로 들고 있어(0011) 응답만 유실된 재전송이 두 행이 되지 않는다.
+- `record()`가 upsert처럼 동작 — 발동만 / 발동+반응 동시(오프라인) / 반응 후행, 셋을 한 엔드포인트로 받는다.
+- 큐는 400·409를 버리고 넘어간다. 안 그러면 형식 오류 하나로 큐가 영원히 막힌다.
 
 **0010이 한 것** — `guard_events` 재작성(`reaction`에 `ignored` 추가가 CHECK 변경이라 ALTER 불가) + `risk_snapshot`·`mode`·`source`·`foreground_app`·`ai_*` / `events`에 보호 4필드 / `guard_modes`(ADR-019)·`watch_apps`(ADR-022) 선반영 — **3주차·4주차의 마이그레이션 부담을 없앴다.**
 
@@ -111,16 +118,18 @@ android/app/src/main/java/dev/mond1424/personalos/guard/
 - style.css      https://raw.githubusercontent.com/mond1424/personal-os/main/public/style.css
 
 ## 기준선
-typecheck 통과 / **smoke 180** / front 167 / 실패 0
-(0010 Guard 서버: smoke 154→180 — 보호 규칙·데드라인 역산·모드·발동 기록·불변성·watch_apps 26건.)
+typecheck 통과 / **smoke 184** / front 167 / 실패 0
+(0010 Guard 서버: 154→180 — 보호 규칙·데드라인 역산·모드·발동 기록·불변성·watch_apps 26건.
+ 0011 client_id 멱등: 180→184 — 재전송·발동+반응 동시·반응 후행 4건.)
 (WORK-PLAN-0726: smoke 148→154 취소 사유 6건, front 164→167 취소 사유 3건.
  그 앞 S1 분석 depth·S3′ 마감 유도 포함 누적치 — smoke 145→154, front 157→167.)
 
 ## 마이그레이션
-최신: **`0010_guard`** (Guard v1 — guard_events 재작성 · events 보호 필드 · guard_modes · watch_apps)
-- ✅ **로컬 적용 완료.** ⚠️ **원격 미적용 — 사용자가 `npx wrangler d1 migrations apply personal-os --remote` 실행 필요**(배포보다 먼저).
-- `test/smoke.ts`의 하드코딩 스키마 목록에 `0010_guard.sql` 등록 완료.
-- **다음 번호: 알림 아웃박스=0011 · 인증(9월)=0012.**
+최신: **`0011_guard_sync`** — ✅ **로컬·원격 적용 + deploy 완료** (2026-07-29)
+- `0010_guard` — Guard v1: guard_events 재작성(`reaction`에 `ignored` 추가가 CHECK 변경이라 ALTER 불가) · `events` 보호 4필드 · `guard_modes`(ADR-019) · `watch_apps`(ADR-022)
+- `0011_guard_sync` — `guard_events.client_id` + 부분 UNIQUE 인덱스(NULL 제외). 로컬 우선 기록의 재시도 멱등 키(ADR-023)
+- `test/smoke.ts`의 하드코딩 스키마 목록에 둘 다 등록 완료.
+- **다음 번호: 알림 아웃박스=0012 · 인증(9월)=0013.**
 
 직전: `0009_cancel_reason` (…0007_defer_reason · 0008_cancel_task · 0009_cancel_reason)
 - **0009_cancel_reason**: `tasks`에 `cancel_reason`(자유 텍스트)·`cancelled_by`(`'user'`/`'guard'`) 추가 + 뷰 재생성(`v_task_stats`에 두 컬럼 노출, 0008의 `state` CASE·`is_waiting`·`v_period_achievement` 조건은 그대로 보존). 트리거 `trg_task_cancel_excl` 미접촉. smoke 스키마 목록에도 등록.

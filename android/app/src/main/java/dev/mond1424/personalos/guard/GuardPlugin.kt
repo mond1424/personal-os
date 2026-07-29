@@ -201,6 +201,52 @@ class GuardPlugin : Plugin() {
         }
     }
 
+    // ── 서버 동기화 (S2.3) ───────────────────────────────────
+
+    /**
+     * 웹이 부팅 때 한 번 알려 준다 — 서버 주소와 토큰.
+     * 토큰은 웹뷰 localStorage에 있고 네이티브가 직접 못 읽는다. 9월 Phase 0에서 기기 토큰으로 바뀐다.
+     */
+    @PluginMethod
+    fun configure(call: PluginCall) {
+        val base = call.getString("baseUrl")
+        if (base.isNullOrBlank()) { call.reject("baseUrl이 필요합니다"); return }
+        GuardSync.configure(context, base, call.getString("token"))
+        call.resolve(JSObject.fromJSONObject(GuardSync.status(context)))
+    }
+
+    /** 서버의 예약 재료를 받아 알람으로 전부 건다. 멱등 — 서버발 예약을 통째로 갈아엎는다. */
+    @PluginMethod
+    fun sync(call: PluginCall) {
+        val app = context.applicationContext
+        Thread {
+            val r = GuardSync.syncNow(app)
+            call.resolve(
+                JSObject().put("ok", r.ok).put("scheduled", r.scheduled)
+                    .put("error", r.error)
+                    .put("status", JSObject.fromJSONObject(GuardSync.status(app))),
+            )
+        }.start()
+    }
+
+    @PluginMethod
+    fun syncStatus(call: PluginCall) {
+        call.resolve(
+            JSObject.fromJSONObject(GuardSync.status(context))
+                .put("queued", GuardEventQueue.size(context)),   // 아직 못 올린 발동 기록 수
+        )
+    }
+
+    /** 밀린 발동 기록만 올린다 (예약 갱신 없이). */
+    @PluginMethod
+    fun flushEvents(call: PluginCall) {
+        val app = context.applicationContext
+        Thread {
+            val (sent, left) = GuardEventQueue.flush(app)
+            call.resolve(JSObject().put("sent", sent).put("remaining", left))
+        }.start()
+    }
+
     // ── 예약 (S1.3) ──────────────────────────────────────────
 
     /**

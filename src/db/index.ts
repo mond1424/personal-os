@@ -559,6 +559,10 @@ export const guardEventsList = (env: Env, limit = 100) =>
 export const guardEventGet = (env: Env, id: string) =>
   q(env, "SELECT * FROM guard_events WHERE id = ?").bind(id).first<GuardEventRow>();
 
+/** 기기가 만든 식별자로 찾는다 — 밀어 올리기 재시도의 멱등 키(0011). */
+export const guardEventByClient = (env: Env, clientId: string) =>
+  q(env, "SELECT * FROM guard_events WHERE client_id = ?").bind(clientId).first<GuardEventRow>();
+
 /** 발동 기록. risk_snapshot이 자기 보정의 원재료다 — 소급해서 만들 수 없다. */
 export const stInsertGuardEvent = (
   env: Env,
@@ -568,16 +572,16 @@ export const stInsertGuardEvent = (
     risk_score: number | null; risk_snapshot: string | null;
     ai_used: 0 | 1; ai_verdict: string | null;
     task_id: string | null; period_id: string | null; event_id: string | null;
-    created_at: string;
+    client_id: string | null; created_at: string;
   },
 ) => q(env, `INSERT INTO guard_events
     (id, fired_at, on_date, cause, level, mode, source, foreground_app,
      risk_score, risk_snapshot, ai_used, ai_verdict,
-     task_id, period_id, event_id, created_at)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+     task_id, period_id, event_id, client_id, created_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
   .bind(e.id, e.fired_at, e.on_date, e.cause, e.level, e.mode, e.source, e.foreground_app,
     e.risk_score, e.risk_snapshot, e.ai_used, e.ai_verdict,
-    e.task_id, e.period_id, e.event_id, e.created_at);
+    e.task_id, e.period_id, e.event_id, e.client_id, e.created_at);
 
 /** 반응 — 한 번만. `AND reaction IS NULL`이 트리거보다 먼저 걸러 409를 덜 나게 한다. */
 export const stReactGuardEvent = (

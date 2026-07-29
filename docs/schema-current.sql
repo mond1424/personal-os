@@ -1,6 +1,6 @@
 -- docs/schema-current.sql — 스키마 스냅샷 (자동 생성)
 -- migrations/ 전체를 인메모리 sqlite에 적용한 뒤 sqlite_master를 덤프한 것.
--- 최신 마이그레이션: 0010_guard.sql  ·  갱신 2026-07-29
+-- 최신 마이그레이션: 0011_guard_sync.sql  ·  갱신 2026-07-29
 -- 손으로 고치지 않는다 — 마이그레이션을 추가하고 다시 덤프한다 (CLAUDE.md 세션 종료 규칙).
 
 
@@ -77,7 +77,7 @@ CREATE TABLE "guard_events" (
   event_id        TEXT REFERENCES events(id),       -- 보호 규칙이 붙은 일정
   outcome         TEXT CHECK (outcome IN ('success','failure')),
   outcome_at      TEXT,
-  created_at      TEXT NOT NULL,
+  created_at      TEXT NOT NULL, client_id TEXT,
 
   CHECK (reaction != 'override' OR override_reason IS NOT NULL)   -- Override엔 사유 필수 (§6.3)
 );
@@ -257,6 +257,8 @@ CREATE INDEX idx_entries_task ON schedule_entries(task_id, date);
 CREATE INDEX idx_events_date ON events(date);
 
 CREATE INDEX idx_events_protect ON events(date) WHERE protect_from IS NOT NULL;
+
+CREATE UNIQUE INDEX idx_guard_events_client ON guard_events(client_id) WHERE client_id IS NOT NULL;
 
 CREATE INDEX idx_guard_events_date ON guard_events(on_date);
 

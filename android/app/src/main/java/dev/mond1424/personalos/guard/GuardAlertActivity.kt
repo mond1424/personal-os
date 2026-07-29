@@ -31,9 +31,11 @@ class GuardAlertActivity : Activity() {
         const val EX_BODY = "body"
         const val EX_EVENT = "event_id"
         const val EX_NOTIF_ID = "notif_id"
+        const val EX_CLIENT_ID = "client_id"
     }
 
     private var notifId = -1
+    private var clientId: String? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -45,6 +47,7 @@ class GuardAlertActivity : Activity() {
         val title = intent.getStringExtra(EX_TITLE) ?: "Guard"
         val body = intent.getStringExtra(EX_BODY) ?: ""
         notifId = intent.getIntExtra(EX_NOTIF_ID, -1)
+        clientId = intent.getStringExtra(EX_CLIENT_ID)
 
         findViewById<TextView>(R.id.guard_level).text = "LEVEL $level"
         findViewById<TextView>(R.id.guard_title).text = title
@@ -78,8 +81,19 @@ class GuardAlertActivity : Activity() {
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
     }
 
+    /**
+     * S1.2 시점의 [닫기]는 'accepted'로 기록한다.
+     * S3.2에서 여기가 갈린다 — [지금 자기]=accepted / [사유 적고 계속]=override(사유 20자 + 대기).
+     * 아무것도 안 하고 3분 상한이 지나면 서버가 'ignored'로 확정한다.
+     */
     private fun dismiss() {
         GuardAlarmPlayer.stop()
+        clientId?.let { cid ->
+            runCatching { GuardEventQueue.recordReaction(this, cid, "accepted", null) }
+            // 밀어 올리기는 백그라운드로. 실패해도 큐에 남아 다음 동기화에 간다.
+            val app = applicationContext
+            Thread { runCatching { GuardEventQueue.flush(app) } }.start()
+        }
         if (notifId >= 0) runCatching { NotificationManagerCompat.from(this).cancel(notifId) }
         finish()
     }

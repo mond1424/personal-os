@@ -1958,6 +1958,29 @@ function bindForegroundRefresh() {
   });
 }
 
+/* Guard 네이티브 동기화 — Android 셸에서만 동작한다(웹에서는 조용히 건너뛴다).
+ *
+ * 토큰은 여기 localStorage에 있고 네이티브가 직접 못 읽는다. 그래서 웹이 건네준다.
+ * 건넨 뒤 한 번 sync를 돌려 서버의 보호 일정을 알람으로 걸어 둔다 —
+ * 이후로는 기기가 하루 1회 스스로 갱신하므로 앱을 안 열어도 유지된다(ADR-021).
+ *
+ * 실패해도 화면을 막지 않는다. 이미 걸린 알람은 동기화와 무관하게 발동한다.
+ */
+async function syncGuardNative() {
+  const G = globalThis.Capacitor?.Plugins?.Guard;
+  if (!G) return;                                  // 브라우저·PWA — 네이티브 없음
+  try {
+    await G.configure({
+      baseUrl: location.origin,
+      token: localStorage.getItem("api_token") || null,
+    });
+    const r = await G.sync();
+    if (!r.ok) console.warn("[guard] sync 실패:", r.error);
+  } catch (e) {
+    console.warn("[guard] sync 예외:", e);
+  }
+}
+
 let booted = false;
 async function boot() {
   // DOMContentLoaded가 두 번 오는 환경(테스트 하니스·일부 웹뷰)에서도 바인딩은 한 번만.
@@ -2072,6 +2095,9 @@ async function boot() {
   bindForegroundRefresh();
 
   await loadData();
+
+  // 데이터가 뜬 뒤에 — 네이티브 예약은 화면을 기다리게 할 이유가 없다.
+  syncGuardNative();
 }
 
 if (typeof document !== "undefined") document.addEventListener("DOMContentLoaded", boot);
