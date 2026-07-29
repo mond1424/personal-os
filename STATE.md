@@ -4,8 +4,7 @@
 - repo: https://github.com/mond1424/personal-os
 - branch: main
 - 마지막 커밋: `6804aaf` APP-1 Android 셸(Capacitor) + safe-area + 팝업 그림자. **그 뒤 APP-2(Guard 네이티브 모듈)가 미커밋 상태** — 아래 참조.
-  - ⚠️ **원격 마이그레이션 0009 미적용 + `deploy` 대기 — 사용자가 직접**(`npx wrangler d1 migrations apply personal-os --remote` → `npm run deploy`). 로컬은 적용 완료.
-  - 0008까지는 원격 적용 + deploy 완료(2026-07-26 확인).
+  - ✅ **0009까지 로컬·원격 모두 적용 + deploy 완료** (2026-07-29 `migrations apply --remote` → "No migrations to apply" 확인).
 
 ## ★ 진행 중 — 8월 Guard v1 (APP-PLAN)
 
@@ -24,6 +23,22 @@
 | S1.3 알람 예약 + 재부팅 재등록 | 🔄 **① 낮 3분(앱 완전종료) 통과** · ② 재부팅 복구 재시도 필요 · ③ 밤 03:00 미실시 |
 | S1.4 포그라운드 서비스 + UsageStats | ⬜ |
 | S1.5 게이트 화면 + 권한 배너 | ⬜ |
+
+### 2주차 (8/5~8/11) — 기록 구조 + 감지. **서버는 먼저 끝냈다**
+
+| 단계 | 상태 |
+|---|---|
+| S2.1 `guard_events` 확장 (마이그레이션 0010) | ✅ |
+| S2.2 `events` 보호 필드 + 서비스·라우트 | ✅ |
+| S2.3 기기측 예약 (`GuardSync.kt`) | ⬜ |
+| S2.4 로컬 우선 기록 (ADR-023) | ⬜ |
+| S2.5 감지 수집 | ⬜ |
+
+**0010이 한 것** — `guard_events` 재작성(`reaction`에 `ignored` 추가가 CHECK 변경이라 ALTER 불가) + `risk_snapshot`·`mode`·`source`·`foreground_app`·`ai_*` / `events`에 보호 4필드 / `guard_modes`(ADR-019)·`watch_apps`(ADR-022) 선반영 — **3주차·4주차의 마이그레이션 부담을 없앴다.**
+
+**불변성은 '통짜 금지'가 아니라 '한 번만 채울 수 있다'** — 발동 시 행을 만들고 반응·분류·결과는 나중에 온다. 트리거가 `NULL → 값`만 허용한다. 이래야 "발동했지만 아무 반응이 없었다"(= `ignored`)도 행으로 남는다.
+
+**데드라인은 저장하지 않는다** — `guard.schedule`이 조회 시 역산한다(원칙 4). `일정시각 − 준비(90) − 수면(360)` → 09:00 시험이면 01:30(설계 §6.1 예시와 일치).
 
 **①의 통과가 1주차 게이트의 본체다** — 앱을 완전히 종료한 상태에서 시스템이 스스로 깨워 개입 화면을 띄웠다.
 8월 계획이 서 있는 가정이 증명됐다.
@@ -96,12 +111,18 @@ android/app/src/main/java/dev/mond1424/personalos/guard/
 - style.css      https://raw.githubusercontent.com/mond1424/personal-os/main/public/style.css
 
 ## 기준선
-typecheck 통과 / smoke 154 / front 167 / 실패 0
+typecheck 통과 / **smoke 180** / front 167 / 실패 0
+(0010 Guard 서버: smoke 154→180 — 보호 규칙·데드라인 역산·모드·발동 기록·불변성·watch_apps 26건.)
 (WORK-PLAN-0726: smoke 148→154 취소 사유 6건, front 164→167 취소 사유 3건.
  그 앞 S1 분석 depth·S3′ 마감 유도 포함 누적치 — smoke 145→154, front 157→167.)
 
 ## 마이그레이션
-최신: `0009_cancel_reason` (…0007_defer_reason · 0008_cancel_task · 0009_cancel_reason)
+최신: **`0010_guard`** (Guard v1 — guard_events 재작성 · events 보호 필드 · guard_modes · watch_apps)
+- ✅ **로컬 적용 완료.** ⚠️ **원격 미적용 — 사용자가 `npx wrangler d1 migrations apply personal-os --remote` 실행 필요**(배포보다 먼저).
+- `test/smoke.ts`의 하드코딩 스키마 목록에 `0010_guard.sql` 등록 완료.
+- **다음 번호: 알림 아웃박스=0011 · 인증(9월)=0012.**
+
+직전: `0009_cancel_reason` (…0007_defer_reason · 0008_cancel_task · 0009_cancel_reason)
 - **0009_cancel_reason**: `tasks`에 `cancel_reason`(자유 텍스트)·`cancelled_by`(`'user'`/`'guard'`) 추가 + 뷰 재생성(`v_task_stats`에 두 컬럼 노출, 0008의 `state` CASE·`is_waiting`·`v_period_achievement` 조건은 그대로 보존). 트리거 `trg_task_cancel_excl` 미접촉. smoke 스키마 목록에도 등록.
   - ✅ **로컬 적용 완료.** ⚠️ **원격 미적용 — 사용자가 `npx wrangler d1 migrations apply personal-os --remote` 실행 필요**(배포보다 먼저, `--local`→`--remote` 순서).
 - **0008_cancel_task**: `tasks`에 `cancelled_at`/`cancelled_on` + 트리거 `trg_task_cancel_excl`(완료·취소 상호배제) + 뷰 재생성(`v_task_stats.state` 추가, `v_period_achievement`·`is_waiting` 취소 제외).

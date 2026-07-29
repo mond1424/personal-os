@@ -13,7 +13,7 @@ import type { Env } from "../src/types";
 import { makeD1, rawOf } from "./d1shim";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const schema = ["0001_init.sql", "0002_models.sql", "0003_ai_provider.sql", "0004_events.sql", "0005_delete_scope.sql", "0006_fix_model_high.sql", "0007_defer_reason.sql", "0008_cancel_task.sql", "0009_cancel_reason.sql"]
+const schema = ["0001_init.sql", "0002_models.sql", "0003_ai_provider.sql", "0004_events.sql", "0005_delete_scope.sql", "0006_fix_model_high.sql", "0007_defer_reason.sql", "0008_cancel_task.sql", "0009_cancel_reason.sql", "0010_guard.sql"]
   .map((f) => readFileSync(join(here, "../migrations/" + f), "utf8")).join("\n");
 const env: Env = { DB: makeD1(schema) };
 const raw = rawOf(env.DB);
@@ -421,6 +421,92 @@ await api("POST", `/api/tasks/${tRz}/uncancel`);
 const rzAfter = (await api("GET", `/api/tasks/${tRz}`)).json;
 ok("취소 해제 후에도 사유 보존 · state=not_finished",
   rzAfter.cancel_reason === "방향이 바뀌어서" && rzAfter.state === "not_finished", JSON.stringify(rzAfter.cancel_reason));
+
+// ── 9.5 Guard (0010) — 발동은 기기가, 서버는 재료와 기록 ─────
+console.log("\n[9.5] Guard — 보호 규칙 · 발동 기록 · 불변성");
+
+// (1) 보호 규칙 부착 — 일정 본문 수정과 분리된 경로
+const gEv = (await api("POST", "/api/events", { title: "정보처리기사 실기", date: "2026-08-15", time: "09:00" })).json.id as string;
+ok("보호 없는 일정은 schedule에 안 잡힘",
+  ((await api("GET", "/api/guard/schedule")).json.events as any[]).every((e) => e.event_id !== gEv));
+ok("보호 규칙 부착 200",
+  (await api("PUT", `/api/events/${gEv}/protect`, { protect_from: "-1d 00:00", protect_level: 4 })).status === 200);
+ok("잘못된 protect_from 400",
+  (await api("PUT", `/api/events/${gEv}/protect`, { protect_from: "어제밤" })).status === 400);
+ok("protect_level 5는 400",
+  (await api("PUT", `/api/events/${gEv}/protect`, { protect_level: 5 })).status === 400);
+
+// (2) 데드라인 역산 — 09:00 − 준비 90 − 수면 360 = 01:30 (설계 §6.1 예시와 일치)
+const sched = (await api("GET", "/api/guard/schedule")).json;
+const plan = (sched.events as any[]).find((e) => e.event_id === gEv);
+ok("보호 일정이 schedule에 잡힘", !!plan);
+ok("서버 귀속일 d를 함께 준다 (ADR-011)", typeof sched.d === "string" && /^\d{4}-\d{2}-\d{2}$/.test(sched.d));
+// 오프셋에 묶이지 않게 '간격'으로 본다 — 09:00 − 90분 − 360분 = 01:30 (설계 §6.1 예시)
+ok("데드라인 = 일정시각 − 준비(90) − 수면(360)",
+  !!plan && (new Date(plan.start).getTime() - new Date(plan.deadline).getTime()) === 450 * 60_000,
+  `${plan?.start} → ${plan?.deadline}`);
+ok("발동 예정이 Level별로 생성됨",
+  !!plan && plan.fires.length > 0 && plan.fires.every((f: any) => f.level >= 1 && f.level <= 4));
+
+// (3) 모드 — 파라미터 프로파일 (ADR-019)
+const modes = (await api("GET", "/api/guard/modes")).json;
+ok("모드 2종 · coach 활성", modes.modes.length === 2 && modes.active.key === "coach");
+await api("PUT", "/api/guard/modes/active", { key: "secretary" });
+const sec = (await api("GET", "/api/guard/schedule")).json;
+const secPlan = (sec.events as any[]).find((e) => e.event_id === gEv);
+ok("secretary 모드는 Level 2로 상한 — L3·L4 발동 없음",
+  !!secPlan && secPlan.max_level === 2 && secPlan.fires.every((f: any) => f.level <= 2));
+ok("없는 모드 404", (await api("PUT", "/api/guard/modes/active", { key: "없음" })).status === 404);
+await api("PUT", "/api/guard/modes/active", { key: "coach" });
+
+// (4) 발동 기록 — 기기가 밀어 올린다
+const gRec = await api("POST", "/api/guard/events", {
+  cause: "protect:sleep-deadline", level: 3, event_id: gEv,
+  fired_at: "2026-08-15T01:30:00+09:00", foreground_app: "com.android.chrome",
+  risk_score: 62, risk_snapshot: { hour: 1.5, sleepEst: 3.2, logsLastHour: 4 },
+});
+ok("발동 기록 201", gRec.status === 201);
+const gId = gRec.json.id as string;
+ok("귀속일이 기기 시각 기준 (01:30 → 전날 08-14)", gRec.json.on_date === "2026-08-14", gRec.json.on_date);
+ok("level 5는 400", (await api("POST", "/api/guard/events", { cause: "x", level: 5 })).status === 400);
+ok("cause 없으면 400", (await api("POST", "/api/guard/events", { level: 3 })).status === 400);
+
+// (5) 반응 — 한 번만. Override엔 사유 20자 (§6.3 마찰)
+ok("짧은 사유 Override 400",
+  (await api("POST", `/api/guard/events/${gId}/react`, { reaction: "override", reason: "좀만더" })).status === 400);
+const gReason = "내일 시험인데 이것만 마무리하고 바로 자겠습니다";   // 26자 — 경계(20)보다 확실히 위
+ok("사유 20자 이상 Override 200",
+  (await api("POST", `/api/guard/events/${gId}/react`, { reaction: "override", reason: gReason })).status === 200,
+  `사유 ${gReason.length}자`);
+ok("두 번째 반응은 409 (개입 이력 불변)",
+  (await api("POST", `/api/guard/events/${gId}/react`, { reaction: "accepted" })).status === 409);
+
+// (6) outcome — Guard가 판단하지 않는다 (§6.5)
+ok("outcome 확정 200",
+  (await api("POST", `/api/guard/events/${gId}/outcome`, { outcome: "failure" })).status === 200);
+ok("outcome 재확정 409",
+  (await api("POST", `/api/guard/events/${gId}/outcome`, { outcome: "success" })).status === 409);
+ok("잘못된 outcome 400",
+  (await api("POST", `/api/guard/events/${gId}/outcome`, { outcome: "몰라" })).status === 400);
+
+// (7) risk_snapshot 보존 — 자기 보정의 원재료. 소급 생성이 불가능하므로 반드시 남아야 한다.
+const gList = (await api("GET", "/api/guard/events")).json as any[];
+const gRow = gList.find((r) => r.id === gId);
+ok("risk_snapshot이 JSON으로 보존됨",
+  !!gRow && JSON.parse(gRow.risk_snapshot).sleepEst === 3.2, gRow?.risk_snapshot);
+ok("foreground_app · mode · source 기록됨",
+  !!gRow && gRow.foreground_app === "com.android.chrome" && gRow.mode === "coach" && gRow.source === "android");
+
+// (8) 감시 목록 — PC 확장 자리 (ADR-022)
+ok("watch app 추가 201",
+  (await api("POST", "/api/guard/watch-apps", { source: "pc", identifier: "Code.exe", label: "VS Code" })).status === 201);
+ok("source로 필터",
+  ((await api("GET", "/api/guard/watch-apps?source=pc")).json as any[]).length === 1);
+
+// (9) 보호 해제
+await api("PUT", `/api/events/${gEv}/protect`, { protect: false });
+ok("보호 해제 후 schedule에서 빠짐",
+  ((await api("GET", "/api/guard/schedule")).json.events as any[]).every((e) => e.event_id !== gEv));
 
 // ── 10. 인증 ─────────────────────────────────────────────────
 console.log("\n[10] 인증 — API_TOKEN 있으면 Bearer 필수");

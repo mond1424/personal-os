@@ -327,6 +327,11 @@ export const worksDone = (env: Env) => q(env, `
 export interface EventRow {
   id: string; title: string; date: string; time: string | null;
   period_id: string | null; note: string | null; created_at: string;
+  // 보호 규칙 (0010) — NULL이면 보호 없음. 데드라인은 저장하지 않고 역산한다(원칙 4).
+  protect_from?: string | null;       // '-1d 00:00' 일정 기준 상대
+  protect_level?: number | null;      // 활성화할 최대 Level
+  protect_sleep_min?: number | null;  // 필요 수면(분)
+  protect_prep_min?: number | null;   // 기상~출발 준비(분)
 }
 export const eventGet = (env: Env, id: string) =>
   q(env, "SELECT * FROM events WHERE id = ?").bind(id).first<EventRow>();
@@ -352,6 +357,25 @@ export const stUpdateEvent = (
   time: string | null, periodId: string | null, note: string | null,
 ) => q(env, "UPDATE events SET title=?, date=?, time=?, period_id=?, note=? WHERE id=?")
   .bind(title, date, time, periodId, note, id);
+
+/** 보호 규칙만 따로 건다 — 일정 본문 수정과 분리해야 마감된 날 트리거에 안 걸린다. */
+export const stSetProtect = (
+  env: Env, id: string,
+  from: string | null, level: number | null, sleepMin: number | null, prepMin: number | null,
+) => q(env, `UPDATE events SET protect_from=?, protect_level=?, protect_sleep_min=?, protect_prep_min=?
+             WHERE id=?`).bind(from, level, sleepMin, prepMin, id);
+
+/**
+ * 보호 규칙이 붙은 앞으로의 일정 — 기기가 알람을 예약할 재료.
+ * 하루 1회 pull한다. 발동 자체는 기기가 한다(ADR-021).
+ */
+export const protectedEvents = (env: Env, fromDate: string, days = 30) =>
+  q(env, `SELECT id, title, date, time, protect_from, protect_level,
+                 protect_sleep_min, protect_prep_min
+          FROM events
+          WHERE protect_from IS NOT NULL AND date >= ? AND date <= date(?, '+' || ? || ' days')
+          ORDER BY date, COALESCE(time,'99:99')`)
+    .bind(fromDate, fromDate, days).all<EventRow>();
 
 export const stDeleteEvent = (env: Env, id: string) =>
   q(env, "DELETE FROM events WHERE id = ?").bind(id);
@@ -513,6 +537,112 @@ export const stInsertAnalysis = (
   q(env, "INSERT INTO analyses (id, prompt, pass1, pass2, context_meta, created_at) VALUES (?, ?, ?, ?, ?, ?)")
     .bind(id, prompt, pass1, pass2, meta, now);
 
-// guard (6.5) — 구현 1은 조회만 (설정 화면의 이벤트 수)
-export const guardEventsList = (env: Env) =>
-  q(env, "SELECT * FROM guard_events ORDER BY fired_at DESC").all<Record<string, unknown>>();
+// ── guard (6.5) — Guard Memory ────────────────────────────────
+// 발동 시점에 행을 만들고, 반응·분류·결과는 나중에 채운다.
+// 트리거가 'NULL → 값'만 허용하므로 각 사후 필드는 한 번만 쓸 수 있다(0010).
+
+export interface GuardEventRow {
+  id: string; fired_at: string; on_date: string; cause: string; level: number;
+  mode: string | null; source: "android" | "pc"; foreground_app: string | null;
+  risk_score: number | null; risk_snapshot: string | null;
+  ai_used: 0 | 1; ai_verdict: "approve" | "deny" | "unavailable" | null;
+  reaction: "accepted" | "override" | "ignored" | null; reacted_at: string | null;
+  override_reason: string | null; override_class: "avoidant" | "legitimate" | null;
+  task_id: string | null; period_id: string | null; event_id: string | null;
+  outcome: "success" | "failure" | null; outcome_at: string | null; created_at: string;
+}
+
+export const guardEventsList = (env: Env, limit = 100) =>
+  q(env, "SELECT * FROM guard_events ORDER BY fired_at DESC LIMIT ?")
+    .bind(limit).all<GuardEventRow>();
+
+export const guardEventGet = (env: Env, id: string) =>
+  q(env, "SELECT * FROM guard_events WHERE id = ?").bind(id).first<GuardEventRow>();
+
+/** 발동 기록. risk_snapshot이 자기 보정의 원재료다 — 소급해서 만들 수 없다. */
+export const stInsertGuardEvent = (
+  env: Env,
+  e: {
+    id: string; fired_at: string; on_date: string; cause: string; level: number;
+    mode: string | null; source: string; foreground_app: string | null;
+    risk_score: number | null; risk_snapshot: string | null;
+    ai_used: 0 | 1; ai_verdict: string | null;
+    task_id: string | null; period_id: string | null; event_id: string | null;
+    created_at: string;
+  },
+) => q(env, `INSERT INTO guard_events
+    (id, fired_at, on_date, cause, level, mode, source, foreground_app,
+     risk_score, risk_snapshot, ai_used, ai_verdict,
+     task_id, period_id, event_id, created_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+  .bind(e.id, e.fired_at, e.on_date, e.cause, e.level, e.mode, e.source, e.foreground_app,
+    e.risk_score, e.risk_snapshot, e.ai_used, e.ai_verdict,
+    e.task_id, e.period_id, e.event_id, e.created_at);
+
+/** 반응 — 한 번만. `AND reaction IS NULL`이 트리거보다 먼저 걸러 409를 덜 나게 한다. */
+export const stReactGuardEvent = (
+  env: Env, id: string, reaction: string, reason: string | null, at: string,
+) => q(env, `UPDATE guard_events SET reaction=?, override_reason=?, reacted_at=?
+             WHERE id=? AND reaction IS NULL`)
+  .bind(reaction, reason, at, id);
+
+/** Override 사유 분류 (model_low, 사후) — 보정의 입력. */
+export const stClassifyOverride = (env: Env, id: string, cls: string) =>
+  q(env, "UPDATE guard_events SET override_class=? WHERE id=? AND override_class IS NULL")
+    .bind(cls, id);
+
+/** outcome은 Guard가 판단하지 않는다 — 실제 결과와 연결해 사후 확정(§6.5). */
+export const stSetGuardOutcome = (env: Env, id: string, outcome: string, at: string) =>
+  q(env, "UPDATE guard_events SET outcome=?, outcome_at=? WHERE id=? AND outcome IS NULL")
+    .bind(outcome, at, id);
+
+/** 반응이 없는 발동 = 무시된 것. 일정 시간이 지나면 'ignored'로 확정한다. */
+export const guardEventsUnreacted = (env: Env, before: string) =>
+  q(env, "SELECT * FROM guard_events WHERE reaction IS NULL AND fired_at < ? ORDER BY fired_at")
+    .bind(before).all<GuardEventRow>();
+
+/** outcome 미확정 — Today의 확정 카드가 이걸 읽는다. */
+export const guardEventsPendingOutcome = (env: Env) =>
+  q(env, `SELECT g.*, e.title AS event_title, e.date AS event_date
+          FROM guard_events g LEFT JOIN events e ON e.id = g.event_id
+          WHERE g.outcome IS NULL AND g.reaction IS NOT NULL
+          ORDER BY g.fired_at DESC LIMIT 20`)
+    .all<GuardEventRow & { event_title: string | null; event_date: string | null }>();
+
+/** ADR-024 지출 통제 ③ — model_high 일일 상한 판정용. */
+export const guardAiCallsOn = (env: Env, onDate: string) =>
+  q(env, "SELECT COUNT(*) AS n FROM guard_events WHERE on_date = ? AND ai_used = 1")
+    .bind(onDate).first<{ n: number }>();
+
+// ── guard_modes (ADR-019) — 규칙이 아니라 파라미터 프로파일 ────
+export interface GuardModeRow {
+  key: string; label: string; max_level: number; risk_threshold: number;
+  friction_mult: number; use_fsi: 0 | 1; use_overlay: 0 | 1;
+  ai_daily_cap: number; sort: number; active: 0 | 1;
+}
+export const guardModes = (env: Env) =>
+  q(env, "SELECT * FROM guard_modes ORDER BY sort").all<GuardModeRow>();
+
+export const guardActiveMode = (env: Env) =>
+  q(env, "SELECT * FROM guard_modes WHERE active = 1").first<GuardModeRow>();
+
+// 부분 유니크 인덱스(active=1) 때문에 반드시 해제 → 설정 순서로 batch한다.
+export const stClearActiveMode = (env: Env) =>
+  q(env, "UPDATE guard_modes SET active = 0 WHERE active = 1");
+export const stSetActiveMode = (env: Env, key: string) =>
+  q(env, "UPDATE guard_modes SET active = 1 WHERE key = ?").bind(key);
+
+// ── watch_apps (ADR-022) — PC 확장 자리 ───────────────────────
+export const watchApps = (env: Env, source?: string) =>
+  source
+    ? q(env, "SELECT * FROM watch_apps WHERE source = ? ORDER BY identifier").bind(source)
+      .all<{ source: string; identifier: string; label: string | null; created_at: string }>()
+    : q(env, "SELECT * FROM watch_apps ORDER BY source, identifier")
+      .all<{ source: string; identifier: string; label: string | null; created_at: string }>();
+
+export const stAddWatchApp = (env: Env, source: string, identifier: string, label: string | null, now: string) =>
+  q(env, "INSERT OR REPLACE INTO watch_apps (source,identifier,label,created_at) VALUES (?,?,?,?)")
+    .bind(source, identifier, label, now);
+
+export const stRemoveWatchApp = (env: Env, source: string, identifier: string) =>
+  q(env, "DELETE FROM watch_apps WHERE source=? AND identifier=?").bind(source, identifier);

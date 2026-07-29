@@ -1,12 +1,13 @@
--- Personal OS · D1 스키마 스냅샷 (자동 생성 — 손으로 고치지 말 것)
--- 적용 마이그레이션: 0001_init · 0002_models · 0003_ai_provider · 0004_events · 0005_delete_scope · 0006_fix_model_high · 0007_defer_reason · 0008_cancel_task · 0009_cancel_reason
--- 생성일: 2026-07-26
--- 재생성: migrations/ 전체를 인메모리 sqlite에 적용한 뒤 sqlite_master를 덤프한다.
---         (새 마이그레이션 추가 시 이 파일도 다시 만든다 — 세션 종료 규칙, CLAUDE.md 참조)
+-- docs/schema-current.sql — 스키마 스냅샷 (자동 생성)
+-- migrations/ 전체를 인메모리 sqlite에 적용한 뒤 sqlite_master를 덤프한 것.
+-- 최신 마이그레이션: 0010_guard.sql  ·  갱신 2026-07-29
+-- 손으로 고치지 않는다 — 마이그레이션을 추가하고 다시 덤프한다 (CLAUDE.md 세션 종료 규칙).
 
-PRAGMA foreign_keys = ON;
 
--- ─────────────────────────── TABLES ───────────────────────────
+-- ==========================================================
+-- 테이블
+-- ==========================================================
+
 CREATE TABLE analyses (
   id           TEXT PRIMARY KEY,     -- YYYYMMDD-NNN
   prompt       TEXT NOT NULL,
@@ -15,6 +16,7 @@ CREATE TABLE analyses (
   context_meta TEXT,                 -- 조립된 윈도우 기록 (JSON) — 재현·감사용 (v0.8 확정, 5.4)
   created_at   TEXT NOT NULL
 );
+
 CREATE TABLE daily (
   date          TEXT PRIMARY KEY,    -- YYYY-MM-DD = id (귀속일)
   status        TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','closed')),
@@ -25,6 +27,7 @@ CREATE TABLE daily (
   created_at    TEXT NOT NULL,
   CHECK ((status = 'closed') = (closed_at IS NOT NULL))
 );
+
 CREATE TABLE events (
   id         TEXT PRIMARY KEY,
   title      TEXT NOT NULL,
@@ -33,7 +36,8 @@ CREATE TABLE events (
   period_id  TEXT REFERENCES periods(id) ON DELETE SET NULL,
   note       TEXT,
   created_at TEXT NOT NULL
-);
+, protect_from      TEXT, protect_level     INTEGER, protect_sleep_min INTEGER, protect_prep_min  INTEGER);
+
 CREATE TABLE feelings (
   date   TEXT NOT NULL REFERENCES daily(date),
   field  TEXT NOT NULL,
@@ -41,20 +45,56 @@ CREATE TABLE feelings (
   source TEXT NOT NULL DEFAULT 'scale' CHECK (source IN ('scale','ai')),
   PRIMARY KEY (date, field)
 );
-CREATE TABLE guard_events (
-  id              TEXT PRIMARY KEY,  -- YYYYMMDD-NNN
-  fired_at        TEXT NOT NULL,     -- 발동 시각
-  cause           TEXT NOT NULL,     -- 발동 원인(규칙 참조)
+
+CREATE TABLE "guard_events" (
+  id              TEXT PRIMARY KEY,                 -- 'YYYYMMDD-NNN'
+  fired_at        TEXT NOT NULL,                    -- 발동 시각 (벽시계 ISO)
+  on_date         TEXT NOT NULL,                    -- 귀속일 (ADR-011 — 기기 날짜 아님)
+  cause           TEXT NOT NULL,                    -- 발동 원인 규칙 키
   level           INTEGER NOT NULL CHECK (level BETWEEN 1 AND 4),
-  reaction        TEXT NOT NULL CHECK (reaction IN ('accepted','override')),
-  override_reason TEXT,              -- 6.3 마찰에서 타이핑한 한 문장
-  task_id         TEXT REFERENCES tasks(id),    -- 연결된 task 또는 period
+
+  mode            TEXT,                             -- 발동 시점의 Guard 모드 (ADR-019)
+                                                    -- 보정 집계를 모드로 나눈다 — 섞으면 오염된다
+  source          TEXT NOT NULL DEFAULT 'android'
+                    CHECK (source IN ('android','pc')),   -- ADR-022 PC 확장 자리
+  foreground_app  TEXT,                             -- 발동 시점에 쓰던 앱/프로세스 (보조 입력)
+
+  risk_score      INTEGER,                          -- 1단계 결정론 점수 (기록만 — 발동 게이트 아님)
+  risk_snapshot   TEXT,                             -- JSON. 판단 시점의 항 값 전부 ★자기 보정의 원재료
+
+  ai_used         INTEGER NOT NULL DEFAULT 0,       -- model_high 호출 여부 (ADR-024)
+  ai_verdict      TEXT CHECK (ai_verdict IN ('approve','deny','unavailable')),
+
+  reaction        TEXT CHECK (reaction IN ('accepted','override','ignored')),
+                                                    -- NULL = 아직 반응 없음. 발동 시점엔 비어 있다
+  reacted_at      TEXT,
+  override_reason TEXT,                             -- §6.3 마찰에서 타이핑한 한 문장
+  override_class  TEXT CHECK (override_class IN ('avoidant','legitimate')),
+                                                    -- model_low 사후 분류 — 보정의 입력
+
+  task_id         TEXT REFERENCES tasks(id),
   period_id       TEXT REFERENCES periods(id),
-  outcome         TEXT CHECK (outcome IN ('success','failure')),  -- 사후 확정 (Guard가 직접 판단하지 않음)
+  event_id        TEXT REFERENCES events(id),       -- 보호 규칙이 붙은 일정
+  outcome         TEXT CHECK (outcome IN ('success','failure')),
   outcome_at      TEXT,
   created_at      TEXT NOT NULL,
-  CHECK (reaction != 'override' OR override_reason IS NOT NULL)   -- Override에는 사유 필수 (6.3)
+
+  CHECK (reaction != 'override' OR override_reason IS NOT NULL)   -- Override엔 사유 필수 (§6.3)
 );
+
+CREATE TABLE guard_modes (
+  key             TEXT PRIMARY KEY,
+  label           TEXT NOT NULL,
+  max_level       INTEGER NOT NULL CHECK (max_level BETWEEN 1 AND 4),
+  risk_threshold  INTEGER NOT NULL,      -- 기록용. v1은 발동 게이트로 쓰지 않는다 (ADR-021)
+  friction_mult   REAL    NOT NULL,      -- Override 대기 시간 배수. 0 = 마찰 없음
+  use_fsi         INTEGER NOT NULL,
+  use_overlay     INTEGER NOT NULL,
+  ai_daily_cap    INTEGER NOT NULL,      -- model_high 일일 상한 (ADR-024 지출 통제 ③)
+  sort            INTEGER NOT NULL DEFAULT 0,
+  active          INTEGER NOT NULL DEFAULT 0
+);
+
 CREATE TABLE logs (
   id         INTEGER PRIMARY KEY,
   date       TEXT NOT NULL REFERENCES daily(date),  -- 귀속일 (05:00 경계 반영, 기록 시점 확정)
@@ -62,11 +102,13 @@ CREATE TABLE logs (
   text       TEXT NOT NULL,
   created_at TEXT NOT NULL
 );
+
 CREATE TABLE me (
   field      TEXT PRIMARY KEY,       -- direction | interests | career | personality | life_pattern …
   value      TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
+
 CREATE TABLE me_history (
   id         INTEGER PRIMARY KEY,
   field      TEXT NOT NULL,
@@ -76,6 +118,7 @@ CREATE TABLE me_history (
                                      -- 'ai' = 승인된 AI 제안(diff) — 구현 2
   changed_at TEXT NOT NULL
 );
+
 CREATE TABLE memos (
   id         TEXT PRIMARY KEY,      -- YYYYMMDD-NNN
   date       TEXT NOT NULL REFERENCES daily(date),
@@ -83,6 +126,7 @@ CREATE TABLE memos (
   text       TEXT NOT NULL,
   created_at TEXT NOT NULL           -- 실제 작성 시각 ("작성 시각과 함께")
 );
+
 CREATE TABLE periods (
   id         TEXT PRIMARY KEY,       -- YYYYMMDD-NNN
   title      TEXT NOT NULL,          -- 문서의 name — 전 엔티티 공통 title 규칙으로 통일
@@ -93,6 +137,7 @@ CREATE TABLE periods (
   created_at TEXT NOT NULL,          -- 겹침 밴드 위→아래 배정 순서 (2.2)
   CHECK (start_date <= end_date)
 );
+
 CREATE TABLE schedule_entries (
   id          INTEGER PRIMARY KEY,
   task_id     TEXT NOT NULL REFERENCES tasks(id),
@@ -108,16 +153,17 @@ CREATE TABLE schedule_entries (
               -- 과거 진행률은 이전 entry에 영구 보존, 새 entry는 새로운 시작점.
   deferred_to TEXT,                  -- 미루기 대상 날짜
   deferred_at TEXT,
-  created_at  TEXT NOT NULL,
-  defer_reason TEXT,                  -- 미루기 사유 (0007 ALTER 추가) — 도착지(새 예정) 항목에 남김
+  created_at  TEXT NOT NULL, defer_reason TEXT,
   UNIQUE (task_id, date),
   CHECK ((deferred_to IS NULL) = (deferred_at IS NULL)),
   CHECK (deferred_to IS NULL OR deferred_to > date)
 );
+
 CREATE TABLE settings (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL                -- 단순 문자열 또는 JSON
 );
+
 CREATE TABLE summaries (
   kind         TEXT NOT NULL CHECK (kind IN ('daily','weekly','monthly')),
   key          TEXT NOT NULL,        -- daily = 'YYYY-MM-DD' · weekly/monthly 키 규약은 구현 2에서
@@ -127,13 +173,7 @@ CREATE TABLE summaries (
   generated_at TEXT NOT NULL,
   PRIMARY KEY (kind, key)
 );
--- 취소 상태는 status enum이 아니라 cancelled_at/cancelled_on으로 표현한다 (0008).
--- 이유: status에 CHECK이 두 개 걸려 있어 값을 늘리려면 테이블 재작성이 필요한데,
--- tasks는 FK 대상이자 뷰·트리거의 소스라 D1 위에서 위험하다. 따라서
--- status='not_finished' + cancelled_at IS NOT NULL 이 곧 '취소'이며, 이 조합을
--- 코드가 직접 판정하지 않도록 v_task_stats.state가 대신 계산한다. 읽을 땐 언제나 state.
--- cancel_reason·cancelled_by (0009)는 append-only — 취소 시점에 한 번 쓰고, 취소 상태인
--- 동안 수정하지 않는다. 취소 해제 시에도 NULL로 지우지 않고 남긴다(다음 취소가 덮어쓴다).
+
 CREATE TABLE tasks (
   id             TEXT PRIMARY KEY,   -- 불변 id
   title          TEXT NOT NULL,      -- 자유 변경
@@ -145,16 +185,13 @@ CREATE TABLE tasks (
                  CHECK (status IN ('not_finished','finished')),
   finished_at    TEXT,               -- 실제 완료 시각
   finished_on    TEXT,               -- 완료가 귀속된 날 (경계 반영, 기록 시점 확정)
-  cancelled_at   TEXT,               -- 취소 시각(ISO). NULL = 살아 있음 (0008)
-  cancelled_on   TEXT,               -- 취소가 귀속된 날 (경계 반영, YYYY-MM-DD) (0008)
-  cancel_reason  TEXT,               -- 취소 사유(자유 텍스트, NULL 허용). append-only (0009)
-  cancelled_by   TEXT,               -- 'user' | 'guard' — 취소 주체 (0009)
   wait_anchor_at TEXT NOT NULL,      -- 대기 21일 시계의 기준점 (1.4, v0.8 확정)
                  -- 생성 시 = created_at · 연장 시 = 연장한 현재 시각
                  -- 기한 = anchor + 21일. 갱신하면 아래 트리거가 이력을 자동 기록.
-  created_at     TEXT NOT NULL,
+  created_at     TEXT NOT NULL, cancelled_at TEXT, cancelled_on TEXT, cancel_reason TEXT, cancelled_by  TEXT,
   CHECK (status = 'not_finished' OR finished_on IS NOT NULL)
 );
+
 CREATE TABLE wait_extensions (
   id             INTEGER PRIMARY KEY,
   task_id        TEXT NOT NULL REFERENCES tasks(id),
@@ -162,117 +199,189 @@ CREATE TABLE wait_extensions (
   extended_at    TEXT NOT NULL
 );
 
--- ─────────────────────────── INDEXES ───────────────────────────
-CREATE INDEX idx_events_date ON events(date);
-CREATE INDEX idx_logs_date ON logs(date, ts);
-CREATE INDEX idx_memos_date ON memos(date);
-CREATE INDEX idx_entries_date ON schedule_entries(date);
-CREATE INDEX idx_entries_task ON schedule_entries(task_id, date);
-CREATE INDEX idx_tasks_period ON tasks(period_id);
-CREATE INDEX idx_tasks_status ON tasks(status);
-CREATE INDEX idx_wait_ext_task ON wait_extensions(task_id, extended_at);
+CREATE TABLE watch_apps (
+  source     TEXT NOT NULL CHECK (source IN ('android','pc')),
+  identifier TEXT NOT NULL,              -- 패키지명 또는 프로세스명
+  label      TEXT,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (source, identifier)
+);
 
--- ─────────────────────────── VIEWS ───────────────────────────
+
+-- ==========================================================
+-- 뷰
+-- ==========================================================
+
 CREATE VIEW v_period_achievement AS
 SELECT p.id, p.title, ROUND(AVG(s.current_rate), 1) AS achievement
 FROM periods p LEFT JOIN v_task_stats s
-  ON s.period_id = p.id AND s.state <> 'cancelled'                             -- 취소 제외 (0008, 오염 방지)
+  ON s.period_id = p.id AND s.state <> 'cancelled'
 GROUP BY p.id;
+
 CREATE VIEW v_task_stats AS
 SELECT
   t.id, t.title, t.period_id,
-  t.status,          -- 원시 저장 컬럼. 상태 판정에 쓰지 말 것 — 아래 state를 쓴다 (0008).
+  t.status,          -- 원시 저장 컬럼. 상태 판정에 쓰지 말 것 — 아래 state 를 쓴다.
+  -- ★ 이 프로젝트에서 task 상태의 유일한 진실.
+  --   'cancelled' 는 물리적으로 status='not_finished' AND cancelled_at IS NOT NULL 이다.
+  --   status enum 을 안 쓴 이유는 schema-current.sql 의 tasks 주석 참조.
   CASE WHEN t.cancelled_at IS NOT NULL THEN 'cancelled'
        WHEN t.status = 'finished'      THEN 'finished'
-       ELSE 'not_finished' END AS state,                                       -- ★ task 상태의 유일한 진실
+       ELSE 'not_finished' END AS state,
   t.finished_on, t.cancelled_at, t.cancelled_on,
-  t.cancel_reason, t.cancelled_by,                                              -- (0009) append-only
+  t.cancel_reason, t.cancelled_by,   -- (0009) append-only
   t.wait_anchor_at, t.created_at,
   (SELECT COUNT(*) FROM schedule_entries e WHERE e.task_id = t.id)             AS entry_count,
-  MAX((SELECT COUNT(*) FROM schedule_entries e WHERE e.task_id = t.id) - 1, 0) AS defer_count,   -- 이월 횟수
+  MAX((SELECT COUNT(*) FROM schedule_entries e WHERE e.task_id = t.id) - 1, 0) AS defer_count,
   (SELECT MAX(e.date) FROM schedule_entries e WHERE e.task_id = t.id)          AS latest_date,
   CASE WHEN t.status = 'finished' THEN 100
        ELSE COALESCE((SELECT e.rate FROM schedule_entries e
                       WHERE e.task_id = t.id ORDER BY e.date DESC LIMIT 1), 0)
-  END AS current_rate,                                                          -- 완료율 다이얼 값
+  END AS current_rate,
+  -- ★ 취소를 대기에서 제외한다. 빠뜨리면 취소한 일에 21일 시계가 계속 돌아간다.
   CASE WHEN t.status = 'not_finished'
         AND t.cancelled_at IS NULL
         AND NOT EXISTS (SELECT 1 FROM schedule_entries e WHERE e.task_id = t.id)
-       THEN 1 ELSE 0 END AS is_waiting                                         -- 취소 제외 대기 (0008)
+       THEN 1 ELSE 0 END AS is_waiting
 FROM tasks t;
 
--- ─────────────────────────── TRIGGERS ───────────────────────────
+
+-- ==========================================================
+-- 인덱스
+-- ==========================================================
+
+CREATE INDEX idx_entries_date ON schedule_entries(date);
+
+CREATE INDEX idx_entries_task ON schedule_entries(task_id, date);
+
+CREATE INDEX idx_events_date ON events(date);
+
+CREATE INDEX idx_events_protect ON events(date) WHERE protect_from IS NOT NULL;
+
+CREATE INDEX idx_guard_events_date ON guard_events(on_date);
+
+CREATE INDEX idx_guard_events_event ON guard_events(event_id);
+
+CREATE INDEX idx_guard_events_task ON guard_events(task_id);
+
+CREATE UNIQUE INDEX idx_guard_modes_active ON guard_modes(active) WHERE active = 1;
+
+CREATE INDEX idx_logs_date ON logs(date, ts);
+
+CREATE INDEX idx_memos_date ON memos(date);
+
+CREATE INDEX idx_tasks_period ON tasks(period_id);
+
+CREATE INDEX idx_tasks_status ON tasks(status);
+
+CREATE INDEX idx_wait_ext_task ON wait_extensions(task_id, extended_at);
+
+
+-- ==========================================================
+-- 트리거
+-- ==========================================================
+
 CREATE TRIGGER trg_analyses_no_del BEFORE DELETE ON analyses
 BEGIN SELECT RAISE(ABORT, 'analysis는 영구 보존 — 삭제 불가'); END;
+
 CREATE TRIGGER trg_analyses_no_upd BEFORE UPDATE ON analyses
 BEGIN SELECT RAISE(ABORT, 'analysis는 영구 보존 — 수정 불가'); END;
+
 CREATE TRIGGER trg_daily_frozen BEFORE UPDATE ON daily
 WHEN OLD.status = 'closed'
 BEGIN SELECT RAISE(ABORT, '마감된 daily는 수정할 수 없음 — memo만 추가 가능'); END;
-CREATE TRIGGER trg_events_frozen_del BEFORE DELETE ON events
-WHEN EXISTS (SELECT 1 FROM daily WHERE date = OLD.date AND status = 'closed')
-BEGIN SELECT RAISE(ABORT, '마감된 날의 일정은 삭제할 수 없음'); END;
-CREATE TRIGGER trg_events_frozen_upd BEFORE UPDATE ON events
-WHEN EXISTS (SELECT 1 FROM daily WHERE date = OLD.date AND status = 'closed')
-BEGIN SELECT RAISE(ABORT, '마감된 날의 일정은 수정할 수 없음'); END;
-CREATE TRIGGER trg_feelings_frozen_del BEFORE DELETE ON feelings
-WHEN (SELECT status FROM daily WHERE date = OLD.date) = 'closed'
-BEGIN SELECT RAISE(ABORT, '마감된 날의 Feelings는 삭제할 수 없음'); END;
-CREATE TRIGGER trg_feelings_frozen_ins BEFORE INSERT ON feelings
-WHEN (SELECT status FROM daily WHERE date = NEW.date) = 'closed'
-BEGIN SELECT RAISE(ABORT, '마감된 날에는 Feelings를 추가할 수 없음'); END;
-CREATE TRIGGER trg_feelings_frozen_upd BEFORE UPDATE ON feelings
-WHEN (SELECT status FROM daily WHERE date = OLD.date) = 'closed'
-BEGIN SELECT RAISE(ABORT, '마감된 날의 Feelings는 수정할 수 없음'); END;
-CREATE TRIGGER trg_guard_frozen BEFORE UPDATE ON guard_events
-WHEN NEW.id              IS NOT OLD.id
-  OR NEW.fired_at        IS NOT OLD.fired_at
-  OR NEW.cause           IS NOT OLD.cause
-  OR NEW.level           IS NOT OLD.level
-  OR NEW.reaction        IS NOT OLD.reaction
-  OR NEW.override_reason IS NOT OLD.override_reason
-  OR NEW.task_id         IS NOT OLD.task_id
-  OR NEW.period_id       IS NOT OLD.period_id
-  OR NEW.created_at      IS NOT OLD.created_at
-BEGIN SELECT RAISE(ABORT, 'guard_event는 outcome만 사후 갱신 가능'); END;
-CREATE TRIGGER trg_guard_no_del BEFORE DELETE ON guard_events
-BEGIN SELECT RAISE(ABORT, 'guard_event는 삭제할 수 없음'); END;
-CREATE TRIGGER trg_logs_frozen_del BEFORE DELETE ON logs
-WHEN (SELECT status FROM daily WHERE date = OLD.date) = 'closed'
-BEGIN SELECT RAISE(ABORT, '마감된 날의 Log는 삭제할 수 없음'); END;
-CREATE TRIGGER trg_logs_frozen_ins BEFORE INSERT ON logs
-WHEN (SELECT status FROM daily WHERE date = NEW.date) = 'closed'
-BEGIN SELECT RAISE(ABORT, '마감된 날에는 Log를 추가할 수 없음 — memo로'); END;
-CREATE TRIGGER trg_logs_frozen_upd BEFORE UPDATE ON logs
-WHEN (SELECT status FROM daily WHERE date = OLD.date) = 'closed'
-BEGIN SELECT RAISE(ABORT, '마감된 날의 Log는 수정할 수 없음 — memo로 추가'); END;
-CREATE TRIGGER trg_memos_no_del BEFORE DELETE ON memos
-BEGIN SELECT RAISE(ABORT, 'memo는 삭제할 수 없음'); END;
-CREATE TRIGGER trg_memos_no_upd BEFORE UPDATE ON memos
-BEGIN SELECT RAISE(ABORT, 'memo는 수정할 수 없음 — 새 memo로 추가'); END;
+
 CREATE TRIGGER trg_entries_frozen_del BEFORE DELETE ON schedule_entries
 WHEN (SELECT status FROM daily WHERE date = OLD.date) = 'closed'
 BEGIN SELECT RAISE(ABORT, '마감된 날의 schedule 항목은 삭제할 수 없음'); END;
+
 CREATE TRIGGER trg_entries_frozen_ins BEFORE INSERT ON schedule_entries
 WHEN (SELECT status FROM daily WHERE date = NEW.date) = 'closed'
 BEGIN SELECT RAISE(ABORT, '마감된 날짜에는 일정을 추가할 수 없음'); END;
+
 CREATE TRIGGER trg_entries_frozen_upd BEFORE UPDATE ON schedule_entries
 WHEN (SELECT status FROM daily WHERE date = OLD.date) = 'closed'
 BEGIN SELECT RAISE(ABORT, '마감된 날의 schedule 항목은 수정할 수 없음'); END;
+
+CREATE TRIGGER trg_events_frozen_del BEFORE DELETE ON events
+WHEN EXISTS (SELECT 1 FROM daily WHERE date = OLD.date AND status = 'closed')
+BEGIN SELECT RAISE(ABORT, '마감된 날의 일정은 삭제할 수 없음'); END;
+
+CREATE TRIGGER trg_events_frozen_upd BEFORE UPDATE ON events
+WHEN EXISTS (SELECT 1 FROM daily WHERE date = OLD.date AND status = 'closed')
+BEGIN SELECT RAISE(ABORT, '마감된 날의 일정은 수정할 수 없음'); END;
+
+CREATE TRIGGER trg_feelings_frozen_del BEFORE DELETE ON feelings
+WHEN (SELECT status FROM daily WHERE date = OLD.date) = 'closed'
+BEGIN SELECT RAISE(ABORT, '마감된 날의 Feelings는 삭제할 수 없음'); END;
+
+CREATE TRIGGER trg_feelings_frozen_ins BEFORE INSERT ON feelings
+WHEN (SELECT status FROM daily WHERE date = NEW.date) = 'closed'
+BEGIN SELECT RAISE(ABORT, '마감된 날에는 Feelings를 추가할 수 없음'); END;
+
+CREATE TRIGGER trg_feelings_frozen_upd BEFORE UPDATE ON feelings
+WHEN (SELECT status FROM daily WHERE date = OLD.date) = 'closed'
+BEGIN SELECT RAISE(ABORT, '마감된 날의 Feelings는 수정할 수 없음'); END;
+
+CREATE TRIGGER trg_guard_event_immutable BEFORE UPDATE ON guard_events
+WHEN
+     OLD.id            != NEW.id
+  OR OLD.fired_at      != NEW.fired_at
+  OR OLD.on_date       != NEW.on_date
+  OR OLD.cause         != NEW.cause
+  OR OLD.level         != NEW.level
+  OR IFNULL(OLD.mode,'')          != IFNULL(NEW.mode,'')
+  OR OLD.source        != NEW.source
+  OR IFNULL(OLD.risk_snapshot,'') != IFNULL(NEW.risk_snapshot,'')
+  OR IFNULL(OLD.risk_score,-1)    != IFNULL(NEW.risk_score,-1)
+  OR (OLD.reaction       IS NOT NULL AND IFNULL(NEW.reaction,'')       != OLD.reaction)
+  OR (OLD.override_reason IS NOT NULL AND IFNULL(NEW.override_reason,'') != OLD.override_reason)
+  OR (OLD.override_class IS NOT NULL AND IFNULL(NEW.override_class,'') != OLD.override_class)
+  OR (OLD.outcome        IS NOT NULL AND IFNULL(NEW.outcome,'')        != OLD.outcome)
+BEGIN
+  SELECT RAISE(ABORT, 'Guard 이벤트는 수정할 수 없음 — 사후 확정 필드만 한 번 채울 수 있음');
+END;
+
+CREATE TRIGGER trg_guard_event_nodelete BEFORE DELETE ON guard_events
+BEGIN
+  SELECT RAISE(ABORT, 'Guard 이벤트는 삭제할 수 없음 — 개입 이력은 영구 보존');
+END;
+
+CREATE TRIGGER trg_logs_frozen_del BEFORE DELETE ON logs
+WHEN (SELECT status FROM daily WHERE date = OLD.date) = 'closed'
+BEGIN SELECT RAISE(ABORT, '마감된 날의 Log는 삭제할 수 없음'); END;
+
+CREATE TRIGGER trg_logs_frozen_ins BEFORE INSERT ON logs
+WHEN (SELECT status FROM daily WHERE date = NEW.date) = 'closed'
+BEGIN SELECT RAISE(ABORT, '마감된 날에는 Log를 추가할 수 없음 — memo로'); END;
+
+CREATE TRIGGER trg_logs_frozen_upd BEFORE UPDATE ON logs
+WHEN (SELECT status FROM daily WHERE date = OLD.date) = 'closed'
+BEGIN SELECT RAISE(ABORT, '마감된 날의 Log는 수정할 수 없음 — memo로 추가'); END;
+
+CREATE TRIGGER trg_memos_no_del BEFORE DELETE ON memos
+BEGIN SELECT RAISE(ABORT, 'memo는 삭제할 수 없음'); END;
+
+CREATE TRIGGER trg_memos_no_upd BEFORE UPDATE ON memos
+BEGIN SELECT RAISE(ABORT, 'memo는 수정할 수 없음 — 새 memo로 추가'); END;
+
+CREATE TRIGGER trg_task_cancel_excl BEFORE UPDATE ON tasks
+WHEN NEW.cancelled_at IS NOT NULL AND NEW.status = 'finished'
+BEGIN SELECT RAISE(ABORT, '완료된 task는 취소할 수 없음'); END;
+
 CREATE TRIGGER trg_wait_ext_log AFTER UPDATE OF wait_anchor_at ON tasks
 WHEN OLD.wait_anchor_at IS NOT NEW.wait_anchor_at
 BEGIN
   INSERT INTO wait_extensions (task_id, prev_anchor_at, extended_at)
   VALUES (NEW.id, OLD.wait_anchor_at, NEW.wait_anchor_at);
 END;
+
 CREATE TRIGGER trg_wait_ext_no_del BEFORE DELETE ON wait_extensions
 WHEN EXISTS (
   SELECT 1 FROM schedule_entries e JOIN daily d ON d.date = e.date
    WHERE e.task_id = OLD.task_id AND d.status = 'closed'
 )
 BEGIN SELECT RAISE(ABORT, '마감 기록이 있는 task의 연장 이력은 삭제할 수 없음'); END;
+
 CREATE TRIGGER trg_wait_ext_no_upd BEFORE UPDATE ON wait_extensions
 BEGIN SELECT RAISE(ABORT, '연장 이력은 수정할 수 없음'); END;
-CREATE TRIGGER trg_task_cancel_excl BEFORE UPDATE ON tasks
-WHEN NEW.cancelled_at IS NOT NULL AND NEW.status = 'finished'
-BEGIN SELECT RAISE(ABORT, '완료된 task는 취소할 수 없음'); END;

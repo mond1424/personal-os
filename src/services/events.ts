@@ -46,6 +46,47 @@ export async function update(env: Env, id: string, input: any) {
   return { ...next, id };
 }
 
+/**
+ * 보호 규칙 부착·해제 (설계 §6.2 사전 서약).
+ *
+ * 일정 본문 수정과 **분리한다** — `stUpdateEvent`를 타면 마감된 날 트리거에 걸린다.
+ * 보호 규칙은 '기록'이 아니라 '계획'이므로 마감과 무관하게 붙일 수 있어야 한다.
+ * 데드라인은 저장하지 않는다 — 조회 시 역산한다(원칙 4, guard.schedule).
+ */
+export async function setProtect(env: Env, id: string, input: any) {
+  const cur = await db.eventGet(env, id);
+  if (!cur) throw new ApiError(404, "해당 일정이 없어요");
+
+  if (input?.protect === false || input?.protect_from === null) {
+    await db.stSetProtect(env, id, null, null, null, null).run();
+    return { id, protected: false };
+  }
+
+  const from = input?.protect_from ?? "-1d 00:00";
+  if (typeof from !== "string" || !/^([+-]?\d+)d\s+([01]\d|2[0-3]):([0-5]\d)$/.test(from.trim())) {
+    throw new ApiError(400, "protect_from 형식은 '-1d 00:00' (일정 기준 상대)");
+  }
+  const level = input?.protect_level === undefined ? 4 : Number(input.protect_level);
+  if (!Number.isInteger(level) || level < 1 || level > 4) {
+    throw new ApiError(400, "protect_level은 1~4");
+  }
+  const num = (v: unknown, name: string) => {
+    if (v === undefined || v === null) return null;
+    const n = Number(v);
+    if (!Number.isInteger(n) || n < 0 || n > 24 * 60) throw new ApiError(400, `${name}은 0~1440분`);
+    return n;
+  };
+  const sleep = num(input?.protect_sleep_min, "protect_sleep_min");
+  const prep = num(input?.protect_prep_min, "protect_prep_min");
+
+  await db.stSetProtect(env, id, from.trim(), level, sleep, prep).run();
+  return {
+    id, protected: true,
+    protect_from: from.trim(), protect_level: level,
+    protect_sleep_min: sleep, protect_prep_min: prep,
+  };
+}
+
 export async function remove(env: Env, id: string) {
   const cur = await db.eventGet(env, id);
   if (!cur) throw new ApiError(404, "해당 일정이 없어요");

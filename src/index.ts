@@ -208,8 +208,49 @@ app.get("/api/analyses/context-preview", async (c) =>
   c.json(await analysis.contextPreview(c.env, c.get("t"))));
 app.get("/api/analyses/:id", async (c) => c.json(await analysis.get(c.env, c.req.param("id"))));
 
-// ── Guard (구현 3 자리 — 조회만) ────────────────────────────
-app.get("/api/guard/events", async (c) => c.json(await guard.events(c.env)));
+// ── 일정 보호 규칙 (6.2 사전 서약) ──────────────────────────
+// 본문 수정과 분리한다 — 보호 규칙은 계획이라 마감된 날에도 붙일 수 있어야 한다.
+app.put("/api/events/:id/protect", async (c) =>
+  c.json(await events.setProtect(c.env, c.req.param("id"), await body(c))));
+
+// ── Guard (6장) ─────────────────────────────────────────────
+// 발동은 기기가 한다(ADR-021). 서버는 예약 재료를 주고 결과를 받아 적는다.
+app.get("/api/guard/events", async (c) =>
+  c.json(await guard.events(c.env, Number(c.req.query("limit") ?? 100))));
+
+/** 기기가 하루 1회 pull — 보호 일정과 발동 예정 시각 전부. */
+app.get("/api/guard/schedule", async (c) =>
+  c.json(await guard.schedule(c.env, c.get("t"), Number(c.req.query("days") ?? 30))));
+
+/** 발동 기록. 오프라인이면 기기에 쌓였다가 나중에 온다(ADR-023) — fired_at은 기기 시각. */
+app.post("/api/guard/events", async (c) =>
+  c.json(await guard.record(c.env, c.get("t"), await body(c)), 201));
+
+/** 반응 — 한 번만. 두 번째는 409(불변성 §1.3). */
+app.post("/api/guard/events/:id/react", async (c) =>
+  c.json(await guard.react(c.env, c.get("t"), c.req.param("id"), await body(c))));
+
+/** outcome은 Guard가 판단하지 않는다 — 사후 확정(§6.5). */
+app.post("/api/guard/events/:id/outcome", async (c) => {
+  const b = await body<{ outcome: string }>(c);
+  return c.json(await guard.setOutcome(c.env, c.get("t"), c.req.param("id"), b.outcome));
+});
+app.get("/api/guard/pending-outcome", async (c) => c.json(await guard.pendingOutcome(c.env)));
+
+// 모드 — 규칙이 아니라 파라미터 프로파일 (ADR-019)
+app.get("/api/guard/modes", async (c) => c.json(await guard.modes(c.env)));
+app.put("/api/guard/modes/active", async (c) => {
+  const b = await body<{ key: string }>(c);
+  return c.json(await guard.setMode(c.env, b.key));
+});
+
+// 감시 목록 — PC 확장 자리 (ADR-022)
+app.get("/api/guard/watch-apps", async (c) =>
+  c.json(await guard.listWatchApps(c.env, c.req.query("source"))));
+app.post("/api/guard/watch-apps", async (c) =>
+  c.json(await guard.addWatchApp(c.env, c.get("t"), await body(c)), 201));
+app.delete("/api/guard/watch-apps/:source/:identifier", async (c) =>
+  c.json(await guard.removeWatchApp(c.env, c.req.param("source"), c.req.param("identifier"))));
 
 // ── 운영 ────────────────────────────────────────────────────
 app.get("/api/health", (c) => c.json({ ok: true, date: c.get("t").d, now: c.get("t").now }));

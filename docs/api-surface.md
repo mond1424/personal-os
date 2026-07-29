@@ -59,7 +59,18 @@
 | GET `/api/analyses/context-raw` | — | `{text, meta, chars}` | `analysis.assembleContext` |
 | GET `/api/analyses/context-preview` | — | 윈도우 미리보기 | `analysis.contextPreview` |
 | GET `/api/analyses/:id` | — | 분석 + `{context_meta}` | `analysis.get` |
-| GET `/api/guard/events` | — | guard 이벤트(구현 3 전 빈 목록) | `guard.events` |
+| PUT `/api/events/:id/protect` | `{protect_from?, protect_level?, protect_sleep_min?, protect_prep_min?}` 또는 `{protect:false}` | `{id, protected, ...}` · **본문 수정과 분리**(마감된 날에도 부착 가능) | `events.setProtect` |
+| GET `/api/guard/events?limit` | — | 발동 이력 rows | `guard.events` |
+| GET `/api/guard/schedule?days` | — | `{d, mode, friction_mult, events:[{event_id, start, deadline, fires[]}]}` · **기기가 하루 1회 pull** | `guard.schedule` |
+| POST `/api/guard/events` | `{cause, level, fired_at?, event_id?, risk_score?, risk_snapshot?, foreground_app?, source?, ai_used?, ai_verdict?}` | `{id, on_date, level, mode}` (201) | `guard.record` |
+| POST `/api/guard/events/:id/react` | `{reaction, reason?, reacted_at?}` | `{id, reaction, reacted_at}` · 두 번째는 409 | `guard.react` |
+| POST `/api/guard/events/:id/outcome` | `{outcome}` | `{id, outcome, outcome_at}` · 재확정 409 | `guard.setOutcome` |
+| GET `/api/guard/pending-outcome` | — | outcome 미확정 rows(+event_title) | `guard.pendingOutcome` |
+| GET `/api/guard/modes` | — | `{modes, active}` | `guard.modes` |
+| PUT `/api/guard/modes/active` | `{key}` | `{active}` | `guard.setMode` |
+| GET `/api/guard/watch-apps?source` | — | rows | `guard.listWatchApps` |
+| POST `/api/guard/watch-apps` | `{source, identifier, label?}` | `{source, identifier}` (201) | `guard.addWatchApp` |
+| DELETE `/api/guard/watch-apps/:source/:identifier` | — | `{deleted}` | `guard.removeWatchApp` |
 | GET `/api/health` | — | `{ok, date, now}` | (인라인) |
 | POST `/api/admin/auto-close` | — | `{closed, orphaned, as_of}` | `scheduled.autoClose` |
 
@@ -128,8 +139,20 @@
 - `assembleContext(env, t)` → `{text, meta}` · Me+기간+지난주+raw+Today 조립
 - `create(env, t, prompt, depth?)` → 2-pass 생성(1차 독립·2차 추가), high 모델. depth(normal/detailed/deep, 기본 detailed)가 문단 지시+maxTokens 결정, 잘못된 값은 400 아니라 detailed로 fallback. 선택값은 `context_meta.depth`에 보존
 
-### guard.ts — 구현 3 자리
-- `events(env)` → guard_events 목록(조회만)
+### events.ts — 보호 규칙 (0010)
+- `setProtect(env, id, input)` → `{id, protected, ...}` · **`stUpdateEvent`를 타지 않는다** — 보호 규칙은 '계획'이라 마감된 날 트리거에 걸리면 안 된다. `stSetProtect` 전용 경로
+
+### guard.ts — Guard v1 (8월). **기록과 조회만 한다 — 발동은 기기가**(ADR-021)
+- `events(env, limit)` → 발동 이력
+- `schedule(env, t, days)` → 기기가 알람을 예약할 재료. **데드라인을 여기서 역산**한다(저장 X, 원칙 4):
+  `deadline = 일정시각 − protect_prep_min − protect_sleep_min` (기본 90·360 → 09:00 시험이면 01:30, 설계 §6.1 예시)
+  Level 1(진입)·2(−2h·−1h)·3(데드라인)·4(+30m부터 30분 간격 6회)를 전부 시각으로 펼쳐 준다. 활성 모드의 `max_level`로 상한
+- `record(env, t, input)` → `{id, on_date, level, mode}` · **`fired_at`은 기기 시각**이고 귀속일도 그걸로 계산(오프라인 큐가 나중에 올라오므로)
+- `react(env, t, id, input)` → 반응 한 번만(409). Override는 사유 20자 이상(§6.3)
+- `setOutcome(env, t, id, outcome)` → 사후 확정 한 번만(409). **Guard가 판단하지 않는다**(§6.5)
+- `pendingOutcome(env)` → outcome 미확정 목록(Today 확정 카드용)
+- `modes(env)` / `setMode(env, key)` → 파라미터 프로파일(ADR-019). active는 부분 유니크 인덱스라 **해제 → 설정 batch**
+- `listWatchApps` / `addWatchApp` / `removeWatchApp` → PC 확장 자리(ADR-022)
 
 ### scheduled.ts — Cron
 - `autoClose(env)` → `{closed, orphaned, as_of}` · 열린 과거 마감 + 고아 예정일 처리
@@ -160,7 +183,11 @@
 **settings** — `settingsAll(env)` · `stSettingPut(env, key, value)`
 **analyses/summary** — `analysesList(env)` · `analysisGet(env, id)` · `weeklySummaryGet(env, key)` · `weeklySummaryFull(env, key)` · `mechDaily(env, key)`
 **컨텍스트 범위 조회** — `dailyRange` · `logsRange` · `feelingsRange` · `memosRange` (각 `(env, start, end)`) · `analysesRecentFull(env, n)` · `stInsertAnalysis(env, id, prompt, pass1, pass2, meta, now)`
-**guard** — `guardEventsList(env)`
+**보호 규칙(0010)** — `stSetProtect(env, id, from, level, sleepMin, prepMin)`(본문 수정과 분리) · `protectedEvents(env, fromDate, days)`(앞으로의 보호 일정 — 예약 재료)
+**guard(0010)** — `guardEventsList(env, limit)` · `guardEventGet(env, id)` · `stInsertGuardEvent(env, e)` · `stReactGuardEvent(env, id, reaction, reason, at)`(`AND reaction IS NULL`) · `stClassifyOverride` · `stSetGuardOutcome`(`AND outcome IS NULL`) · `guardEventsUnreacted(env, before)` · `guardEventsPendingOutcome(env)` · `guardAiCallsOn(env, onDate)`(ADR-024 일일 상한)
+**guard_modes** — `guardModes(env)` · `guardActiveMode(env)` · `stClearActiveMode` · `stSetActiveMode` (부분 유니크 인덱스 때문에 **해제 → 설정** 순서)
+**watch_apps** — `watchApps(env, source?)` · `stAddWatchApp` · `stRemoveWatchApp`
+**guard(구)** — `guardEventsList(env)`
 
 **뷰(스키마)**: `v_task_stats`(**state**=상태의 유일한 진실 `not_finished`/`finished`/`cancelled` · cancelled_at·cancelled_on·cancel_reason·cancelled_by(0009, append-only) · entry_count·defer_count·latest_date·current_rate·is_waiting) · `v_period_achievement`(달성률=current_rate 평균, **취소 제외**). 상태 판정은 언제나 `state`(status는 원시 컬럼).
 
