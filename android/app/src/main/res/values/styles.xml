@@ -19,4 +19,15 @@
     <style name="AppTheme.NoActionBarLaunch" parent="Theme.SplashScreen">
         <item name="android:background">@drawable/splash</item>
     </style>
+
+    <!-- Guard 개입 화면 (S1.2) — 잠금화면 위에 전체로 뜬다.
+         ActionBar·타이틀 없음. 앱 헤더가 보이면 '앱 화면'으로 읽혀 개입의 성격이 흐려진다.
+         상태바·내비바 색을 레이아웃 배경(#1A1713)과 맞춰 한 덩어리로 보이게 한다. -->
+    <style name="Theme.GuardAlert" parent="Theme.AppCompat.NoActionBar">
+        <item name="windowActionBar">false</item>
+        <item name="windowNoTitle">true</item>
+        <item name="android:windowBackground">#1A1713</item>
+        <item name="android:statusBarColor">#1A1713</item>
+        <item name="android:navigationBarColor">#1A1713</item>
+    </style>
 </resources>

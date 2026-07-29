@@ -1,12 +1,65 @@
-# STATE — 최종 갱신 2026-07-26
+# STATE — 최종 갱신 2026-07-29
 
 ## 저장소
 - repo: https://github.com/mond1424/personal-os
 - branch: main
-- 마지막 커밋: WORK-PLAN-0726 S1~S4 구현 완료(분석 출력량·공용 모달·마감 유도·취소 사유, 마이그레이션 0009). 직전: CANCEL-0723 취소 상태 도입(0008).
-  - ✅ **push 완료** (main → origin/main).
-  - ⚠️ **원격 마이그레이션 0009 미적용 + `deploy` 대기 — 사용자가 직접**(`npx wrangler d1 migrations apply personal-os --remote` → `npm run deploy`). 로컬은 적용 완료. 아래 '마이그레이션' 절 참조.
+- 마지막 커밋: `6804aaf` APP-1 Android 셸(Capacitor) + safe-area + 팝업 그림자. **그 뒤 APP-2(Guard 네이티브 모듈)가 미커밋 상태** — 아래 참조.
+  - ⚠️ **원격 마이그레이션 0009 미적용 + `deploy` 대기 — 사용자가 직접**(`npx wrangler d1 migrations apply personal-os --remote` → `npm run deploy`). 로컬은 적용 완료.
   - 0008까지는 원격 적용 + deploy 완료(2026-07-26 확인).
+
+## ★ 진행 중 — 8월 Guard v1 (APP-PLAN)
+
+**목표: 8/31까지 Guard 탑재 Android 앱, 9/1 실사용 시작.**
+계획은 `APP-PLAN.md`, 결정 근거는 `APP-ADR.md`, 진행 상태는 `APP-BUILD.md`, 개발 절차는 `GUARD-DEV-LOOP.md`.
+
+완성의 정의 — 시험 일정 하나를 등록하면 전날 00:00에 보호 모드가 걸리고, 01:30(=일정시각−준비−수면 역산)에
+알람 소리로 잠금화면을 점유하는 알림이 뜨고, 해제에 사유 20자 + 60초 대기가 들고, 전부 `guard_events`에 남는다.
+
+### 1주차 (7/29~8/4) — 폰이 허용하는가만 실측. 규칙 코드 0줄.
+
+| 단계 | 상태 |
+|---|---|
+| S1.1 Capacitor 골격·권한·서명 | ✅ 실기기 6항목 통과 |
+| S1.2 알림 채널·FSI·개입 화면·소리/진동 정책 | ✅ 실기기 통과 (일반/진동/무음 3모드) |
+| S1.3 알람 예약 + 재부팅 재등록 | 🔄 **① 낮 3분(앱 완전종료) 통과** · ② 재부팅 복구 재시도 필요 · ③ 밤 03:00 미실시 |
+| S1.4 포그라운드 서비스 + UsageStats | ⬜ |
+| S1.5 게이트 화면 + 권한 배너 | ⬜ |
+
+**①의 통과가 1주차 게이트의 본체다** — 앱을 완전히 종료한 상태에서 시스템이 스스로 깨워 개입 화면을 띄웠다.
+8월 계획이 서 있는 가정이 증명됐다.
+
+### 미커밋 (APP-2) — Guard 네이티브 모듈
+
+```
+android/app/src/main/java/dev/mond1424/personalos/guard/
+  GuardNotifications.kt  채널 4종·발동(알림 ∥ 개입화면 독립)
+  GuardAlertActivity.kt  FSI 대상 화면·뒤로가기 차단·소리 주인
+  GuardAlarmPlayer.kt    소리·진동 재생(벨소리 모드 반영)
+  GuardSettings.kt       sound/vibration/overrideSilentAtL4 + 정책
+  GuardAlarms.kt         setAlarmClock 예약·취소·복구 + 예약 원본 저장소
+  AlarmReceiver.kt       실제 발동 지점(시스템이 앱을 깨움)
+  BootReceiver.kt        재부팅·앱 업데이트 후 복구
+  GuardPlugin.kt         웹 브리지
++ res/layout/activity_guard_alert.xml · res/drawable/ic_guard.xml
++ AndroidManifest(권한·Activity·Receiver 2종) · styles.xml(Theme.GuardAlert)
++ build.gradle(Kotlin 2.1.0) · MainActivity.java(registerPlugin)
++ capacitor.config.ts(webContentsDebuggingEnabled) · test/e2e.mjs(CI=true)
++ public/app.js(syncOverlay — 팝업 겹침 깊이)
+```
+
+### 1주차에 물린 것 (전부 해결)
+
+- **Android 14+ `setOngoing(true)` 무력화** — 앱이 만드는 '못 지우는 알림'은 없다. 마찰을 화면 + 재발동 주기로 이전
+- **targetSdk 35+ 예측형 뒤로가기** — `onBackPressed()` 미호출. `OnBackInvokedDispatcher` 필요
+- **`VIBRATE` 권한 미선언** — 진동이 예외 없이 조용히 무시됨
+- **채널 설정 불변** — 소리를 설정으로 끄려면 채널이 아니라 화면이 소리의 주인이어야 한다. `guard_high_v1` 폐기 → 조용한 채널 + 폴백 채널
+- **디버그/릴리스 서명 혼용** — 삭제 후 재설치를 강제해 권한·예약 원본이 매번 초기화. **릴리스 빌드만 쓴다**(`webContentsDebuggingEnabled: true`)
+- **wrangler 4.1x 마이그레이션 프롬프트** — `e2e.mjs`에 `CI=true`(capacitor 설치 시 락파일 갱신 여파)
+
+### 다음 마이그레이션 번호
+
+`0009_cancel_reason`이 최신. **Guard=0010 · 알림 아웃박스=0011 · 인증(9월)=0012.**
+추가 시 `test/smoke.ts`의 하드코딩 스키마 목록에도 파일명을 넣는다.
 
 ## raw 링크 (Chat이 직접 읽는 주소)
 - 설계문서(권위) https://raw.githubusercontent.com/mond1424/personal-os/main/personal-agent-design_v0.9.md

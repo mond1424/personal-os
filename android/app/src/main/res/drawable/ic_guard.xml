@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- android/app/src/main/res/drawable/ic_guard.xml
+     알림 작은 아이콘. 시스템이 실루엣으로만 그리므로 단색 도형이어야 한다.
+     ic_launcher를 그대로 쓰면 흰 원으로 뭉개진다 — 흔한 실수. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24"
+    android:tint="#FFFFFF">
+    <!-- 방패 -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M12,2L4,5.2v6.1c0,4.6 3.4,8.9 8,10.7c4.6,-1.8 8,-6.1 8,-10.7V5.2L12,2zM12,4.2l6,2.4v4.7c0,3.6 -2.5,7 -6,8.6c-3.5,-1.6 -6,-5 -6,-8.6V6.6L12,4.2z" />
+    <!-- 가운데 느낌표 — 개입의 표시 -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M11,7h2v6h-2zM11,15h2v2h-2z" />
+</vector>

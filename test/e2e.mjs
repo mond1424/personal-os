@@ -54,7 +54,10 @@ try {
   execFileSync(
     process.execPath,
     [wranglerCli, "d1", "migrations", "apply", "personal-os", "--local", "--persist-to", persistDir],
-    { cwd: root, stdio: "inherit" },
+    // CI=true — wrangler 4.1x부터 --local 마이그레이션에도 확인 프롬프트가 붙는다.
+    // stdio:inherit이라 TTY가 그대로 넘어가 검사가 입력을 기다리다 멈춘다.
+    // 여기 DB는 매번 새로 만드는 임시본이라 물어볼 것이 없다.
+    { cwd: root, stdio: "inherit", env: { ...process.env, CI: "true" } },
   );
 
   // 2) 임시 DB 로 dev 서버 기동 (자식 프로세스)

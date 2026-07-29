@@ -29,6 +29,16 @@ const config: CapacitorConfig = {
     allowMixedContent: false,
     // 부팅 순간의 흰 번쩍임 방지 (style.css의 --bg와 맞춤)
     backgroundColor: '#FBFAF7',
+
+    // 릴리스 빌드도 chrome://inspect로 붙을 수 있게 한다.
+    //
+    // 왜 필요한가 — 디버그 빌드와 릴리스 빌드는 **서명이 다르다.** 번갈아 설치하면
+    // 매번 삭제 후 재설치가 되고, 그때 권한(알림·오버레이·배터리)과
+    // SharedPreferences(GuardAlarmStore의 예약 원본)가 통째로 날아간다.
+    // 빌드 종류를 하나로 고정하는 것이 개발 중 사고를 가장 많이 줄인다.
+    //
+    // 개인용 사이드로드라 노출 위험은 본인 PC에 USB로 붙었을 때뿐이다.
+    webContentsDebuggingEnabled: true,
   },
 };
 

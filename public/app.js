@@ -264,11 +264,11 @@ function endTutorial() {
    모달은 자기 배경(.45)이 따로 있어 시트 위에 뜨면 이미 어두워진다.
    '위' 판정은 DOM 순서 — 시트끼리 z-index가 같아 나중 것이 위에 그려진다. */
 function syncOverlay() {
-  const open = $$(".sheet.on");
+  const open = $$(".sheet.on");            // NodeList — slice 없음. forEach 인덱스로 판정한다
   const bk = $("#bk"), ph = $("#phone");
   if (bk) bk.classList.toggle("on", open.length > 0);
   $$(".sheet").forEach((s) => s.classList.remove("under"));
-  open.slice(0, -1).forEach((s) => s.classList.add("under"));
+  open.forEach((s, i) => { if (i < open.length - 1) s.classList.add("under"); });
   if (ph) ph.dataset.depth = Math.min(open.length, 3);   // 셸이 없어도 던지지 않는다(검사 하네스)
 }
 
