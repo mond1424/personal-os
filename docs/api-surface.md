@@ -59,6 +59,13 @@
 | GET `/api/analyses/context-raw` | — | `{text, meta, chars}` | `analysis.assembleContext` |
 | GET `/api/analyses/context-preview` | — | 윈도우 미리보기 | `analysis.contextPreview` |
 | GET `/api/analyses/:id` | — | 분석 + `{context_meta}` | `analysis.get` |
+| GET `/api/lm/sections` | — | `{sections:[{section, schema_version, n, last}]}` | `lifemodel.sections` |
+| POST `/api/lm/import-me` | — | `{imported, skipped}` · 원본 `me`는 지우지 않는다 · 멱등 | `lifemodel.importFromMe` |
+| PATCH `/api/lm/item/:id` | `{title?, body?, data?}` | 갱신된 항목(version 포함) | `lifemodel.update` |
+| DELETE `/api/lm/item/:id` | — | `{id, deleted}` | `lifemodel.remove` |
+| GET `/api/lm/:section/schema` | — | `{section, version, schema, fields}` — 검증·프롬프트·폼이 같은 것을 읽는다 | `lifemodel.schema` |
+| GET `/api/lm/:section` | — | 항목 rows(data는 객체로 복원) | `lifemodel.list` |
+| POST `/api/lm/:section` | `{title, body?, data?}` | `{id, section, title, schema_version}` (201) · **data는 스키마 검증 통과분만** | `lifemodel.create` |
 | PUT `/api/events/:id/protect` | `{protect_from?, protect_level?, protect_sleep_min?, protect_prep_min?}` 또는 `{protect:false}` | `{id, protected, ...}` · **본문 수정과 분리**(마감된 날에도 부착 가능) | `events.setProtect` |
 | GET `/api/guard/events?limit` | — | 발동 이력 rows | `guard.events` |
 | GET `/api/guard/schedule?days` | — | `{d, mode, friction_mult, events:[{event_id, start, deadline, fires[]}]}` · **기기가 하루 1회 pull** | `guard.schedule` |
@@ -74,7 +81,9 @@
 | GET `/api/health` | — | `{ok, date, now}` | (인라인) |
 | POST `/api/admin/auto-close` | — | `{closed, orphaned, as_of}` | `scheduled.autoClose` |
 
-> 라우트 순서 주의: `/api/analyses/context-*`·`context-preview`는 `/api/analyses/:id`보다 **앞**에 둔다(:id가 먼저 잡으면 안 됨).
+> **라우트 순서 주의** — 리터럴 경로를 와일드카드보다 **앞**에 둔다. 실제로 두 번 물렸다:
+> `/api/analyses/context-*`는 `/api/analyses/:id`보다 앞 · `/api/lm/{sections,import-me,item/:id}`는 `/api/lm/:section`보다 앞.
+> 뒤에 두면 `POST /api/lm/import-me`가 `:section`에 잡혀 `section="import-me"`로 들어간다.
 
 ---
 
@@ -139,6 +148,13 @@
 - `assembleContext(env, t)` → `{text, meta}` · Me+기간+지난주+raw+Today 조립
 - `create(env, t, prompt, depth?)` → 2-pass 생성(1차 독립·2차 추가), high 모델. depth(normal/detailed/deep, 기본 detailed)가 문단 지시+maxTokens 결정, 잘못된 값은 400 아니라 detailed로 fallback. 선택값은 `context_meta.depth`에 보존
 
+### lifemodel.ts — Life Model (0012, me-reinforcement-plan Phase 1)
+- `sections(env)` → 스키마가 등록된 섹션만. **만들지 않은 섹션은 빈 껍데기로 노출하지 않는다**(§1)
+- `schema(env, section)` → `{schema, fields}` · `fields`는 스키마에서 파생 — 폼을 손으로 만들면 스키마와 어긋난다
+- `list` / `create` / `update` / `remove` — `data`는 저장 전 스키마 검증(§0-6). **빈칸 허용**이라 `data` 없이도 저장된다(§0-2)
+- `importFromMe(env, t)` → 기존 `me` 5필드를 Overview로 **복사**. 원본은 지우지 않는다(`me_history`가 분석 입력이므로). 제목이 같으면 건너뛰어 멱등
+- `version`은 서비스가 아니라 **트리거**가 올린다 — 서비스가 빠뜨려도 stale 체인(§5)이 안 깨진다
+
 ### events.ts — 보호 규칙 (0010)
 - `setProtect(env, id, input)` → `{id, protected, ...}` · **`stUpdateEvent`를 타지 않는다** — 보호 규칙은 '계획'이라 마감된 날 트리거에 걸리면 안 된다. `stSetProtect` 전용 경로
 
@@ -185,6 +201,8 @@
 **settings** — `settingsAll(env)` · `stSettingPut(env, key, value)`
 **analyses/summary** — `analysesList(env)` · `analysisGet(env, id)` · `weeklySummaryGet(env, key)` · `weeklySummaryFull(env, key)` · `mechDaily(env, key)`
 **컨텍스트 범위 조회** — `dailyRange` · `logsRange` · `feelingsRange` · `memosRange` (각 `(env, start, end)`) · `analysesRecentFull(env, n)` · `stInsertAnalysis(env, id, prompt, pass1, pass2, meta, now)`
+**Life Model(0012)** — `lmItems(env, section)` · `lmItemGet` · `lmSections`(섹션별 개수) · `stInsertLmItem` · `stUpdateLmItem`(version은 트리거) · `stDeleteLmItem` · `lmSchemaActive(env, section)` · `lmSchemasAll`
+**analysis 앵커(0012)** — `stInsertAnalysis(..., anchorType, anchorId, modelTier, sourceVersions)` · `analysesByAnchor(env, type, id)`
 **보호 규칙(0010)** — `stSetProtect(env, id, from, level, sleepMin, prepMin)`(본문 수정과 분리) · `protectedEvents(env, fromDate, days)`(앞으로의 보호 일정 — 예약 재료)
 **guard(0010)** — `guardEventsList(env, limit)` · `guardEventGet(env, id)` · `stInsertGuardEvent(env, e)` · `stReactGuardEvent(env, id, reaction, reason, at)`(`AND reaction IS NULL`) · `stClassifyOverride` · `stSetGuardOutcome`(`AND outcome IS NULL`) · `guardEventsUnreacted(env, before)` · `guardEventsPendingOutcome(env)` · `guardAiCallsOn(env, onDate)`(ADR-024 일일 상한)
 **guard_modes** — `guardModes(env)` · `guardActiveMode(env)` · `stClearActiveMode` · `stSetActiveMode` (부분 유니크 인덱스 때문에 **해제 → 설정** 순서)

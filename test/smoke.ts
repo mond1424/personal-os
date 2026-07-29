@@ -13,7 +13,7 @@ import type { Env } from "../src/types";
 import { makeD1, rawOf } from "./d1shim";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const schema = ["0001_init.sql", "0002_models.sql", "0003_ai_provider.sql", "0004_events.sql", "0005_delete_scope.sql", "0006_fix_model_high.sql", "0007_defer_reason.sql", "0008_cancel_task.sql", "0009_cancel_reason.sql", "0010_guard.sql", "0011_guard_sync.sql"]
+const schema = ["0001_init.sql", "0002_models.sql", "0003_ai_provider.sql", "0004_events.sql", "0005_delete_scope.sql", "0006_fix_model_high.sql", "0007_defer_reason.sql", "0008_cancel_task.sql", "0009_cancel_reason.sql", "0010_guard.sql", "0011_guard_sync.sql", "0012_life_model.sql", "0013_analysis_backfill.sql"]
   .map((f) => readFileSync(join(here, "../migrations/" + f), "utf8")).join("\n");
 const env: Env = { DB: makeD1(schema) };
 const raw = rawOf(env.DB);
@@ -526,6 +526,74 @@ ok("source로 필터",
 await api("PUT", `/api/events/${gEv}/protect`, { protect: false });
 ok("보호 해제 후 schedule에서 빠짐",
   ((await api("GET", "/api/guard/schedule")).json.events as any[]).every((e) => e.event_id !== gEv));
+
+// ── 9.7 Life Model (0012) — me-reinforcement-plan Phase 1 ────
+console.log("\n[9.7] Life Model — 스키마 검증 · CRUD · 앵커");
+
+// (1) 스키마 레지스트리 — 검증·프롬프트·폼이 같은 것을 읽는다
+const lmSecs = (await api("GET", "/api/lm/sections")).json;
+ok("섹션 3종 등록 (overview·goals·education)", lmSecs.sections.length === 3);
+const eduSchema = (await api("GET", "/api/lm/education/schema")).json;
+ok("스키마 v1 + 필드 파생", eduSchema.version === 1 && eduSchema.fields.some((f: any) => f.key === "status" && f.enum));
+ok("없는 섹션 404", (await api("GET", "/api/lm/없음/schema")).status === 404);
+
+// (2) 스키마 검증 — §0-6 자유 형식 JSON 금지
+ok("필수 필드 누락 400",
+  (await api("POST", "/api/lm/education", { title: "양자역학1", data: { name: "양자역학1" } })).status === 400);
+ok("enum 위반 400",
+  (await api("POST", "/api/lm/education", { title: "x", data: { name: "x", status: "듣는중" } })).status === 400);
+ok("타입 위반 400",
+  (await api("POST", "/api/lm/education", { title: "x", data: { name: "x", status: "completed", credits: "셋" } })).status === 400);
+ok("배열 원소 타입 위반 400",
+  (await api("POST", "/api/lm/education", { title: "x", data: { name: "x", status: "planned", prerequisites: [1, 2] } })).status === 400);
+
+// (3) 빈칸 허용 — §0-2. data 없이도 저장된다
+// 제목은 이관 라벨(방향·관심사·진로·성격·생활 패턴)과 겹치지 않게 — 겹치면 (6)의 이관이 건너뛴다
+const lmBare = await api("POST", "/api/lm/overview", { title: "현재 상태", body: "물리학과 3학년" });
+ok("data 없이 생성 201 (빈칸 허용)", lmBare.status === 201);
+
+// (4) 정상 생성 + 조회
+const lmEdu = await api("POST", "/api/lm/education", {
+  title: "양자역학1",
+  data: { name: "양자역학1", status: "completed", term: "2026-1", grade: "B+", credits: 3, prerequisites: ["일반물리2"] },
+});
+ok("스키마 통과 시 201", lmEdu.status === 201);
+const eduList = (await api("GET", "/api/lm/education")).json as any[];
+const eduRow = eduList.find((r) => r.id === lmEdu.json.id);
+ok("data가 객체로 복원됨", !!eduRow && eduRow.data.grade === "B+" && eduRow.data.prerequisites[0] === "일반물리2");
+ok("schema_version 기록", eduRow.schema_version === 1);
+
+// (5) version 자동 증가 — §5 stale 체인의 출발점. 트리거가 강제한다.
+ok("생성 직후 version 1", eduRow.version === 1);
+const lmUp = await api("PATCH", `/api/lm/item/${lmEdu.json.id}`, { data: { ...eduRow.data, grade: "A0" } });
+ok("수정 시 version 2로 자동 증가", lmUp.json.version === 2, String(lmUp.json.version));
+ok("수정도 스키마 검증을 탄다",
+  (await api("PATCH", `/api/lm/item/${lmEdu.json.id}`, { data: { name: "x", status: "몰라" } })).status === 400);
+
+// (6) Me → Overview 이관 — 원본을 지우지 않는다. 멱등.
+await api("PUT", "/api/me/direction", { value: "물리를 오래 하고 싶다" });
+const imp1 = await api("POST", "/api/lm/import-me");
+ok("Me 이관 실행", imp1.status === 200 && imp1.json.imported.length >= 1, JSON.stringify(imp1.json));
+const imp2 = await api("POST", "/api/lm/import-me");
+ok("두 번째 이관은 아무것도 안 함 (멱등)", imp2.json?.imported?.length === 0, JSON.stringify(imp2.json));
+// 리터럴 경로가 :section 와일드카드에 먹히지 않는지 — 순서 회귀 방지
+ok("import-me가 :section으로 안 잡힘", imp1.json?.imported !== undefined && imp1.status === 200);
+// getMe는 fields를 **행 배열**로 돌려준다 ({field, value, updated_at}[]) — 객체 맵이 아니다
+const meFields = (await api("GET", "/api/me")).json.fields as Array<{ field: string; value: string }>;
+ok("원본 me는 그대로 (복사만 한다)",
+  meFields.find((f) => f.field === "direction")?.value === "물리를 오래 하고 싶다");
+ok("Overview에도 같은 값이 들어옴",
+  ((await api("GET", "/api/lm/overview")).json as any[]).some((r) => r.title === "방향" && r.body === "물리를 오래 하고 싶다"));
+
+// (7) 기간 constraint/디데이 (§1) — 별도 구조 없이 기간에 속성을 얹는다
+const pCon = await api("POST", "/api/periods", {
+  title: "입대까지", start_date: D, end_date: addDays(D, 200), color: "#C4401F",
+});
+ok("기간 생성 (constraint 속성은 0012 컬럼)", pCon.status === 201);
+
+// (8) 삭제
+ok("항목 삭제", (await api("DELETE", `/api/lm/item/${lmBare.json.id}`)).status === 200);
+ok("없는 항목 수정 404", (await api("PATCH", "/api/lm/item/20990101-999", { title: "x" })).status === 404);
 
 // ── 10. 인증 ─────────────────────────────────────────────────
 console.log("\n[10] 인증 — API_TOKEN 있으면 Bearer 필수");

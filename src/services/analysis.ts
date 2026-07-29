@@ -151,6 +151,24 @@ const SYS_BASE =
   "실행 가능한 관찰이 있으면 규칙 형태로 제안한다. 소제목·불릿 없이 한국어 산문으로 쓴다.";
 
 /** 5.3 2-pass: 1차 독립(앵커링 방지) -> 2차는 과거를 읽으며 '추가'만 (1차 수정 금지). */
+/**
+ * 이번 분석이 무엇을 읽었는지 (table, id, version)로 남긴다 — §2.3·§5.
+ *
+ * Phase 3의 stale 판정은 이 목록을 현재 값과 비교하는 것뿐이다.
+ * 별도 무효화 트리거 없이 조회 몇 번으로 끝난다.
+ *
+ * 지금은 Life Model만 버전을 갖는다. daily·summary의 버전 개념은 Phase 2에서 붙는다 —
+ * 그때 여기에 항목을 더하면 되고, 그 전 분석은 lm 항목만으로 비교된다.
+ */
+async function collectSourceVersions(env: Env, t: TimeCtx) {
+  const out: Array<{ table: string; id: string; version: number }> = [];
+  for (const section of ["overview", "goals", "education"]) {
+    const rows = (await db.lmItems(env, section)).results;
+    rows.forEach((r) => out.push({ table: "lm_item", id: r.id, version: r.version }));
+  }
+  return out;
+}
+
 export async function create(env: Env, t: TimeCtx, prompt: unknown, depth?: unknown) {
   if (typeof prompt !== "string" || !prompt.trim()) throw new ApiError(400, "prompt가 필요해요");
   if (prompt.length > 500) throw new ApiError(400, "prompt는 500자 이내로");
@@ -182,6 +200,15 @@ export async function create(env: Env, t: TimeCtx, prompt: unknown, depth?: unkn
 
   const id = await nextId(env, "analyses", t.compact);
   const fullMeta = { ...meta, models: m, depth: dk };
-  await db.stInsertAnalysis(env, id, p, pass1, pass2, JSON.stringify(fullMeta), t.now).run();
+
+  // (0012) 앵커·입력 스냅샷 — me-reinforcement-plan §2.3.
+  // source_versions는 **생성 시점**에만 알 수 있다. 지금 안 남기면
+  // 이 분석은 영영 stale 판정(§5) 밖이고, 소급 backfill이 불가능하다.
+  const sourceVersions = await collectSourceVersions(env, t);
+
+  await db.stInsertAnalysis(
+    env, id, p, pass1, pass2, JSON.stringify(fullMeta), t.now,
+    "date", t.d, "high", JSON.stringify(sourceVersions),
+  ).run();
   return { id, prompt: p, pass1, pass2, context_meta: fullMeta, created_at: t.now };
 }

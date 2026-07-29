@@ -49,10 +49,20 @@ await G.openBatterySettings();    // 예/아니오 다이얼로그
 **`-r`로 업데이트하면 권한이 유지된다.** 매번 다시 해야 한다면 서명이 바뀐 것이다
 (= 디버그 빌드가 섞였다는 뜻).
 
-### 삼성 추가 — 수동, 자동화 불가
+### 삼성 추가 — 수동, 자동화 불가. **재설치할 때마다 초기화된다.**
 
-설정 → 배터리 → 백그라운드 사용 제한 → **절전 시 사용 중지 앱**에서 Personal OS 제외.
-배터리 최적화 예외와 **별개 설정**이고, 이것 하나로 새벽에 조용히 죽는다.
+두 곳 다 확인한다. 배터리 최적화 예외(`state()`의 `batteryUnrestricted`)와 **별개 설정**이라
+API로는 안 보인다 — 눈으로 확인하는 수밖에 없다.
+
+1. 설정 → 배터리 → 백그라운드 사용 제한 → **절전 시 사용 중지 앱** — Personal OS가 **없어야** 한다
+2. 설정 → 배터리 → 백그라운드 사용 제한 → **자동 절전 앱 지정** — 꺼져 있거나 예외에 넣는다
+3. 설정 → 앱 → Personal OS → 배터리 → **제한 없음**
+
+> **증상**: 최근 앱에서 밀어 종료하면 알람이 안 울린다(홈 버튼으로 두면 울림).
+> 삼성이 스와이프 종료를 강제 종료로 취급하면 예약이 통째로 취소되고, 앱을 손으로 다시
+> 열기 전까지 리시버도 안 깨어난다. 위 설정이 이걸 막는다.
+>
+> **FSI 권한도 같이 초기화된다** — `state()`의 `fullScreenIntent`가 `false`면 재부여한다.
 
 ## 4. 상태 한 줄 점검
 
@@ -90,7 +100,7 @@ await G.state();     // notifications · overlay · batteryUnrestricted 셋 다 
 
 ```js
 await G.syncStatus();
-// { configured:true, hasToken:true, lastOkAt, lastCount, boundary, nextSyncAt }
+// { configured, hasToken, lastOkAt, lastError, lastCount, boundary, nextSyncAt, queued }
 ```
 
 | 확인 | |
@@ -99,8 +109,41 @@ await G.syncStatus();
 | **`boundary`가 실제 설정값과 같다** (지금 06:00) | ⬜ |
 | **`nextSyncAt` = 경계 + 10분** (06:10) | ⬜ |
 | `lastOkAt`이 최근 · `lastError` 없음 | ⬜ |
+| `queued: 0` | ⬜ |
 
 > 경계를 바꾼 뒤에는 앱을 한 번 열어 재동기화해야 `nextSyncAt`이 따라온다.
+
+### 2.5 로컬 우선 기록 (S2.4) — **이 라운드의 핵심**
+
+발동 기록이 서버 없이도 남는가. 순서는 `로컬 → 화면 → 알림 → (온라인이면) 밀어 올리기`.
+
+**온라인**
+
+```js
+await G.testNotify({ level: 3 });    // 화면 뜸 → [닫기]
+await G.syncStatus();                // queued: 0 (닫을 때 자동 flush)
+(await g('/guard/events'))[0];       // client_id(UUID) 붙어 있고 reaction: 'accepted'
+```
+
+**오프라인 — ADR-023이 실제로 지켜지는지**
+
+```js
+// ① 비행기 모드 켜기
+await G.testNotify({ level: 3 });    // 화면은 그대로 뜬다
+await G.syncStatus();                // queued: 1  ← 서버에 못 갔지만 기록은 남았다
+// ② 비행기 모드 끄기
+await G.flushEvents();               // { sent: 1, remaining: 0 }
+(await g('/guard/events'))[0];       // 방금 것이 서버에 있다
+```
+
+| 확인 | |
+|---|---|
+| 오프라인에서도 개입 화면이 뜬다 | ⬜ |
+| `queued`가 1로 오른다 (기록 유실 없음) | ⬜ |
+| 복귀 후 `flushEvents`로 서버에 도달 | ⬜ |
+| 서버 행에 `client_id`와 `reaction`이 있다 | ⬜ |
+
+> **여기가 통과하면 "새벽에 서버가 안 붙어도 개입 기록이 남는다"가 증명된다.**
 
 ### 3. 서버 Guard API + 예약 연결
 
@@ -122,12 +165,19 @@ await G.listAlarms();               // fires 개수만큼 잡혀야 한다
 | `sync()`의 `scheduled`가 `fires.length`와 일치 | ⬜ |
 | `listAlarms()`에 같은 수가 잡힘 · `atLocal`이 맞음 | ⬜ |
 
+**멱등 확인** — 같은 동기화를 두 번 해도 예약이 늘면 안 된다.
+
+```js
+await G.sync();                     // 한 번 더
+await G.listAlarms();               // count 그대로여야 한다
+```
+
 정리:
 
 ```js
 await g(`/events/${ev.id}/protect`,'PUT',{ protect:false });
-await G.sync();                     // scheduled: 0 으로 돌아가야 한다 (멱등 확인)
-await G.listAlarms();
+await G.sync();                     // scheduled: 0
+await G.listAlarms();               // 서버발 예약이 사라졌는지 (테스트 알람은 남는다)
 ```
 
 ### 4. 재부팅 복구 (S1.3 ②)

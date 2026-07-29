@@ -531,11 +531,26 @@ export const analysesRecentFull = (env: Env, n: number) =>
   q(env, "SELECT id, prompt, pass1, pass2, created_at FROM analyses ORDER BY created_at DESC LIMIT ?")
     .bind(n).all<{ id: string; prompt: string; pass1: string; pass2: string; created_at: string }>();
 
+/**
+ * (0012) anchor·source_versions를 처음부터 채운다 — me-reinforcement-plan §2.3.
+ * `source_versions`는 **생성 시점의 입력 스냅샷**이라 나중에 만들 수 없다.
+ * 이걸 안 채우면 그 analysis는 영영 stale 판정(§5) 밖에 남는다.
+ */
 export const stInsertAnalysis = (
   env: Env, id: string, prompt: string, pass1: string, pass2: string, meta: string, now: string,
+  anchorType = "date", anchorId: string | null = null,
+  modelTier: string | null = "high", sourceVersions: string | null = null,
 ) =>
-  q(env, "INSERT INTO analyses (id, prompt, pass1, pass2, context_meta, created_at) VALUES (?, ?, ?, ?, ?, ?)")
-    .bind(id, prompt, pass1, pass2, meta, now);
+  q(env, `INSERT INTO analyses
+            (id, prompt, pass1, pass2, context_meta, created_at,
+             anchor_type, anchor_id, model_tier, source_versions)
+          VALUES (?,?,?,?,?,?,?,?,?,?)`)
+    .bind(id, prompt, pass1, pass2, meta, now, anchorType, anchorId, modelTier, sourceVersions);
+
+/** stale 판정용 — 앵커로 분석을 찾는다(§5, Phase 3에서 UI가 쓴다). */
+export const analysesByAnchor = (env: Env, anchorType: string, anchorId: string) =>
+  q(env, "SELECT * FROM analyses WHERE anchor_type = ? AND anchor_id = ? ORDER BY created_at DESC")
+    .bind(anchorType, anchorId).all<Record<string, unknown>>();
 
 // ── guard (6.5) — Guard Memory ────────────────────────────────
 // 발동 시점에 행을 만들고, 반응·분류·결과는 나중에 채운다.
@@ -635,6 +650,54 @@ export const stClearActiveMode = (env: Env) =>
   q(env, "UPDATE guard_modes SET active = 0 WHERE active = 1");
 export const stSetActiveMode = (env: Env, key: string) =>
   q(env, "UPDATE guard_modes SET active = 1 WHERE key = ?").bind(key);
+
+// ── Life Model (0012) — me-reinforcement-plan §2.1·§2.2 ───────
+// 섹션마다 테이블을 만들지 않는다. 범용 테이블 하나 + 섹션 스키마가 data의 형태를 규정한다.
+
+export interface LmItemRow {
+  id: string; section: string; title: string;
+  body: string | null; data: string | null;
+  schema_version: number; source: "manual" | "ai_approved";
+  version: number; created_at: string; updated_at: string;
+}
+
+export const lmItems = (env: Env, section: string) =>
+  q(env, "SELECT * FROM lm_item WHERE section = ? ORDER BY updated_at DESC").bind(section)
+    .all<LmItemRow>();
+
+export const lmItemGet = (env: Env, id: string) =>
+  q(env, "SELECT * FROM lm_item WHERE id = ?").bind(id).first<LmItemRow>();
+
+export const lmSections = (env: Env) =>
+  q(env, "SELECT section, COUNT(*) AS n, MAX(updated_at) AS last FROM lm_item GROUP BY section")
+    .all<{ section: string; n: number; last: string }>();
+
+export const stInsertLmItem = (
+  env: Env, id: string, section: string, title: string,
+  body: string | null, data: string | null, schemaVersion: number, source: string, now: string,
+) => q(env, `INSERT INTO lm_item (id,section,title,body,data,schema_version,source,created_at,updated_at)
+             VALUES (?,?,?,?,?,?,?,?,?)`)
+  .bind(id, section, title, body, data, schemaVersion, source, now, now);
+
+// version은 트리거가 올린다 — 서비스가 빠뜨려도 stale 체인이 안 깨진다(§5).
+export const stUpdateLmItem = (
+  env: Env, id: string, title: string, body: string | null, data: string | null, now: string,
+) => q(env, "UPDATE lm_item SET title=?, body=?, data=?, updated_at=? WHERE id=?")
+  .bind(title, body, data, now, id);
+
+export const stDeleteLmItem = (env: Env, id: string) =>
+  q(env, "DELETE FROM lm_item WHERE id = ?").bind(id);
+
+// ── lm_schema — 섹션 스키마 레지스트리 ────────────────────────
+export interface LmSchemaRow {
+  section: string; version: number; body: string; active: 0 | 1; created_at: string;
+}
+export const lmSchemaActive = (env: Env, section: string) =>
+  q(env, "SELECT * FROM lm_schema WHERE section = ? AND active = 1").bind(section)
+    .first<LmSchemaRow>();
+
+export const lmSchemasAll = (env: Env) =>
+  q(env, "SELECT * FROM lm_schema WHERE active = 1 ORDER BY section").all<LmSchemaRow>();
 
 // ── watch_apps (ADR-022) — PC 확장 자리 ───────────────────────
 export const watchApps = (env: Env, source?: string) =>

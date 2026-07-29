@@ -1,6 +1,6 @@
 -- docs/schema-current.sql — 스키마 스냅샷 (자동 생성)
 -- migrations/ 전체를 인메모리 sqlite에 적용한 뒤 sqlite_master를 덤프한 것.
--- 최신 마이그레이션: 0011_guard_sync.sql  ·  갱신 2026-07-29
+-- 최신 마이그레이션: 0012_life_model.sql  ·  갱신 2026-07-29
 -- 손으로 고치지 않는다 — 마이그레이션을 추가하고 다시 덤프한다 (CLAUDE.md 세션 종료 규칙).
 
 
@@ -15,7 +15,7 @@ CREATE TABLE analyses (
   pass2        TEXT NOT NULL,        -- 과거를 읽으며 추가 (1차 수정 금지)
   context_meta TEXT,                 -- 조립된 윈도우 기록 (JSON) — 재현·감사용 (v0.8 확정, 5.4)
   created_at   TEXT NOT NULL
-);
+, anchor_type     TEXT, anchor_id       TEXT, model_tier      TEXT, source_versions TEXT);
 
 CREATE TABLE daily (
   date          TEXT PRIMARY KEY,    -- YYYY-MM-DD = id (귀속일)
@@ -95,6 +95,29 @@ CREATE TABLE guard_modes (
   active          INTEGER NOT NULL DEFAULT 0
 );
 
+CREATE TABLE lm_item (
+  id             TEXT PRIMARY KEY,               -- 'YYYYMMDD-NNN' (전 엔티티 공통 id 규칙)
+  section        TEXT NOT NULL,                  -- 'overview' | 'goals' | 'education' | ...
+  title          TEXT NOT NULL,
+  body           TEXT,                           -- 서술형 md
+  data           TEXT,                           -- 섹션 스키마를 따르는 JSON (검증 통과분만)
+  schema_version INTEGER NOT NULL DEFAULT 1,
+  source         TEXT NOT NULL DEFAULT 'manual'
+                   CHECK (source IN ('manual','ai_approved')),
+  version        INTEGER NOT NULL DEFAULT 1,     -- 수정 시 +1 — stale 판정의 기준
+  created_at     TEXT NOT NULL,
+  updated_at     TEXT NOT NULL
+);
+
+CREATE TABLE lm_schema (
+  section    TEXT NOT NULL,
+  version    INTEGER NOT NULL,
+  body       TEXT NOT NULL,          -- JSON Schema 부분집합 (type·required·enum·items·properties)
+  active     INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (section, version)
+);
+
 CREATE TABLE logs (
   id         INTEGER PRIMARY KEY,
   date       TEXT NOT NULL REFERENCES daily(date),  -- 귀속일 (05:00 경계 반영, 기록 시점 확정)
@@ -134,7 +157,7 @@ CREATE TABLE periods (
   end_date   TEXT NOT NULL,
   color      TEXT NOT NULL,          -- 형광펜 색 '#7ED4A9'
   goals      TEXT NOT NULL DEFAULT '[]',  -- JSON 문자열 배열 — Me '지금' 조인의 원천
-  created_at TEXT NOT NULL,          -- 겹침 밴드 위→아래 배정 순서 (2.2)
+  created_at TEXT NOT NULL, kind       TEXT NOT NULL DEFAULT 'period', dday_label TEXT,          -- 겹침 밴드 위→아래 배정 순서 (2.2)
   CHECK (start_date <= end_date)
 );
 
@@ -250,6 +273,8 @@ FROM tasks t;
 -- 인덱스
 -- ==========================================================
 
+CREATE INDEX idx_analyses_anchor ON analyses(anchor_type, anchor_id);
+
 CREATE INDEX idx_entries_date ON schedule_entries(date);
 
 CREATE INDEX idx_entries_task ON schedule_entries(task_id, date);
@@ -267,6 +292,10 @@ CREATE INDEX idx_guard_events_event ON guard_events(event_id);
 CREATE INDEX idx_guard_events_task ON guard_events(task_id);
 
 CREATE UNIQUE INDEX idx_guard_modes_active ON guard_modes(active) WHERE active = 1;
+
+CREATE INDEX idx_lm_item_section ON lm_item(section, updated_at DESC);
+
+CREATE UNIQUE INDEX idx_lm_schema_active ON lm_schema(section) WHERE active = 1;
 
 CREATE INDEX idx_logs_date ON logs(date, ts);
 
@@ -347,6 +376,12 @@ END;
 CREATE TRIGGER trg_guard_event_nodelete BEFORE DELETE ON guard_events
 BEGIN
   SELECT RAISE(ABORT, 'Guard 이벤트는 삭제할 수 없음 — 개입 이력은 영구 보존');
+END;
+
+CREATE TRIGGER trg_lm_item_version AFTER UPDATE ON lm_item
+WHEN NEW.version = OLD.version
+BEGIN
+  UPDATE lm_item SET version = OLD.version + 1 WHERE id = NEW.id;
 END;
 
 CREATE TRIGGER trg_logs_frozen_del BEFORE DELETE ON logs

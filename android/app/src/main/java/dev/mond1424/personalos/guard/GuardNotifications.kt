@@ -214,6 +214,9 @@ object GuardNotifications {
             true
         }.getOrDefault(false)
 
+        // 발동 흔적 — 무인 테스트에서 아침에 확인할 유일한 근거.
+        runCatching { GuardSync.noteFire(ctx, level, shown, posted) }
+
         return FireResult(posted = posted, shown = shown, canPost = cp, canOverlay = co)
     }
 

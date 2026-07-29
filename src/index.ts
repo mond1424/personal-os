@@ -15,6 +15,7 @@ import * as analysis from "./services/analysis";
 import * as events from "./services/events";
 import { PROVIDERS, aiConfig, testConnection } from "./lib/ai";
 import * as guard from "./services/guard";
+import * as lm from "./services/lifemodel";
 import { autoClose, scheduled } from "./scheduled";
 
 type Ctx = { Bindings: Env; Variables: { t: TimeCtx } };
@@ -207,6 +208,28 @@ app.get("/api/analyses/context-raw", async (c) => {
 app.get("/api/analyses/context-preview", async (c) =>
   c.json(await analysis.contextPreview(c.env, c.get("t"))));
 app.get("/api/analyses/:id", async (c) => c.json(await analysis.get(c.env, c.req.param("id"))));
+
+// ── Life Model (me-reinforcement-plan Phase 1) ──────────────
+// Me = 천천히 변하는 상태 저장소. 이벤트 스트림과 데이터 성격이 달라 분리한다.
+// ⚠️ 라우트 순서 — 리터럴 경로를 `:section` 와일드카드보다 **앞**에 둔다.
+//    뒤에 두면 POST /api/lm/import-me 가 POST /api/lm/:section 에 먼저 잡혀
+//    section="import-me"로 들어가고 body를 요구한다.
+//    (/api/analyses/context-* 가 /api/analyses/:id 보다 앞이어야 하는 것과 같은 함정)
+app.get("/api/lm/sections", async (c) => c.json(await lm.sections(c.env)));
+
+/** 기존 Me 텍스트를 Overview로 복사한다. 원본은 지우지 않는다 — 멱등. */
+app.post("/api/lm/import-me", async (c) => c.json(await lm.importFromMe(c.env, c.get("t"))));
+
+app.patch("/api/lm/item/:id", async (c) =>
+  c.json(await lm.update(c.env, c.get("t"), c.req.param("id"), await body(c))));
+app.delete("/api/lm/item/:id", async (c) => c.json(await lm.remove(c.env, c.req.param("id"))));
+
+// 스키마 — 쓰기 검증·프롬프트 주입·UI 폼 생성이 같은 것을 읽는다(§2.2)
+app.get("/api/lm/:section/schema", async (c) => c.json(await lm.schema(c.env, c.req.param("section"))));
+
+app.get("/api/lm/:section", async (c) => c.json(await lm.list(c.env, c.req.param("section"))));
+app.post("/api/lm/:section", async (c) =>
+  c.json(await lm.create(c.env, c.get("t"), c.req.param("section"), await body(c)), 201));
 
 // ── 일정 보호 규칙 (6.2 사전 서약) ──────────────────────────
 // 본문 수정과 분리한다 — 보호 규칙은 계획이라 마감된 날에도 붙일 수 있어야 한다.

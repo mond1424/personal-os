@@ -78,9 +78,25 @@ android/app/src/main/java/dev/mond1424/personalos/guard/
 - **디버그/릴리스 서명 혼용** — 삭제 후 재설치를 강제해 권한·예약 원본이 매번 초기화. **릴리스 빌드만 쓴다**(`webContentsDebuggingEnabled: true`)
 - **wrangler 4.1x 마이그레이션 프롬프트** — `e2e.mjs`에 `CI=true`(capacitor 설치 시 락파일 갱신 여파)
 
+### 병행 트랙 — Me Reinforcement Plan (Phase 1)
+
+계획서 `me-reinforcement-plan.md`. **§9 오픈 이슈는 닫혔다** — 안드로이드 앱이 기존 Worker + D1을 그대로 쓴다(Capacitor 원격 로드, 네이티브는 Guard 전용 계층뿐). 백엔드 재작성 없음.
+
+Guard v1이 1순위라는 건 안 바뀐다. Phase 1을 셋으로 쪼개 **UI를 맨 뒤에** 뒀다 — 밀리면 뒤쪽만 잘라낸다.
+
+| 조각 | 내용 | 상태 |
+|---|---|---|
+| **P1-a** | 마이그레이션 0012 — analysis 앵커 4컬럼+backfill · 기간 `kind`/`dday_label` · `lm_item`(version 트리거) · `lm_schema` 레지스트리 | ✅ |
+| **P1-b** | 경량 스키마 검증기 · `lm_item` CRUD API · Me→Overview 이관 · analysis가 앵커·`source_versions` 실제 기록 | ✅ |
+| **P1-c** | 하단 바 (4탭/Me) 분리·애니메이션 · Education 폼 · Goals 디데이 표시 | ⬜ **Guard 3주차 이후.** 8/25에 Guard 4주차가 안 끝났으면 9월로 미룬다 |
+
+**P1-a를 8월로 당긴 이유** — 계획서 §2.3: `source_versions`는 생성 시점의 입력 스냅샷이라 나중에 만들 수 없다. 9~11월 analysis가 앵커 없이 쌓이면 그 구간은 영영 stale 판정(§5) 밖이다. `guard_events.risk_snapshot`과 같은 논리(ADR-020).
+
+**`buildCoreContext()`는 아직 만들지 않았다.** 현재 Guard에는 AI 판단부가 없다(ADR-021로 발동이 결정론). 유일한 소비처가 S3.1b(Level 4 AI 검증, 3주차)이므로 그때 함께 짠다 — 지금 만들면 소비처 없는 껍데기다.
+
 ### 다음 마이그레이션 번호
 
-`0009_cancel_reason`이 최신. **Guard=0010 · 알림 아웃박스=0011 · 인증(9월)=0012.**
+`0012_life_model`이 최신. **알림 아웃박스=0013 · 인증(9월)=0014.**
 추가 시 `test/smoke.ts`의 하드코딩 스키마 목록에도 파일명을 넣는다.
 
 ## raw 링크 (Chat이 직접 읽는 주소)
@@ -118,18 +134,33 @@ android/app/src/main/java/dev/mond1424/personalos/guard/
 - style.css      https://raw.githubusercontent.com/mond1424/personal-os/main/public/style.css
 
 ## 기준선
-typecheck 통과 / **smoke 184** / front 167 / 실패 0
+typecheck 통과 / **smoke 206** / front 167 / 실패 0
 (0010 Guard 서버: 154→180 — 보호 규칙·데드라인 역산·모드·발동 기록·불변성·watch_apps 26건.
- 0011 client_id 멱등: 180→184 — 재전송·발동+반응 동시·반응 후행 4건.)
+ 0011 client_id 멱등: 180→184 — 재전송·발동+반응 동시·반응 후행 4건.
+ 0012 Life Model: 184→206 — 스키마 레지스트리·검증기·CRUD·version 트리거·Me 이관 22건.)
 (WORK-PLAN-0726: smoke 148→154 취소 사유 6건, front 164→167 취소 사유 3건.
  그 앞 S1 분석 depth·S3′ 마감 유도 포함 누적치 — smoke 145→154, front 157→167.)
 
 ## 마이그레이션
-최신: **`0011_guard_sync`** — ✅ **로컬·원격 적용 + deploy 완료** (2026-07-29)
+최신: **`0013_analysis_backfill`** — ✅ **로컬·원격 적용 완료** (2026-07-29). ⚠️ deploy 대기
+- `0013_analysis_backfill` — 기존 analysis에 날짜 앵커 backfill. **트리거를 내렸다 원문 그대로 복원**한다(아래 사고 참조)
 - `0010_guard` — Guard v1: guard_events 재작성(`reaction`에 `ignored` 추가가 CHECK 변경이라 ALTER 불가) · `events` 보호 4필드 · `guard_modes`(ADR-019) · `watch_apps`(ADR-022)
 - `0011_guard_sync` — `guard_events.client_id` + 부분 UNIQUE 인덱스(NULL 제외). 로컬 우선 기록의 재시도 멱등 키(ADR-023)
 - `test/smoke.ts`의 하드코딩 스키마 목록에 둘 다 등록 완료.
-- **다음 번호: 알림 아웃박스=0012 · 인증(9월)=0013.**
+- `0012_life_model` — analysis 앵커(anchor_type/anchor_id/model_tier/source_versions) + 기존 행 backfill · `periods.kind`/`dday_label` · `lm_item`(version 트리거) · `lm_schema` 레지스트리(overview·goals·education v1)
+- **다음 번호: 알림 아웃박스=0014 · 인증(9월)=0015.**
+
+### ⚠️ 물린 것 — 로컬 통과, 원격 실패 (2026-07-29)
+
+0012에 `UPDATE analyses ... backfill`을 넣었더니 **로컬은 통과하고 원격만 터졌다**(`SQLITE_CONSTRAINT_TRIGGER`).
+
+- 원인: `trg_analyses_no_upd`가 analyses의 모든 UPDATE를 막는다(설계 §5.4 영구 보존).
+- **로컬 `analyses`가 0행이라 UPDATE가 no-op이 되어 트리거가 깨어나지 않았다.** 실제 분석이 쌓인 원격에서만 발화.
+- 원격은 전부 롤백됐고(`d1_migrations` 최신이 0011로 남음) 부분 적용은 없었다.
+- 조치: backfill을 `0013`으로 분리하고 `DROP TRIGGER → UPDATE → CREATE TRIGGER`(원문 그대로)로 감쌌다. 불변성은 완화하지 않았다.
+
+**교훈 — 트리거가 걸린 테이블에 backfill을 넣을 때는 로컬 검증이 원격을 보장하지 못한다.**
+트리거 발화가 데이터 유무에 갈리기 때문이다. 인메모리 sqlite에 **행을 넣은 상태**로 재현해서 확인한다.
 
 직전: `0009_cancel_reason` (…0007_defer_reason · 0008_cancel_task · 0009_cancel_reason)
 - **0009_cancel_reason**: `tasks`에 `cancel_reason`(자유 텍스트)·`cancelled_by`(`'user'`/`'guard'`) 추가 + 뷰 재생성(`v_task_stats`에 두 컬럼 노출, 0008의 `state` CASE·`is_waiting`·`v_period_achievement` 조건은 그대로 보존). 트리거 `trg_task_cancel_excl` 미접촉. smoke 스키마 목록에도 등록.

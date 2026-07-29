@@ -26,6 +26,21 @@ object GuardSync {
     private const val K_LAST_ERR = "sync_last_err"
     private const val K_LAST_N = "sync_last_count"
     private const val K_BOUNDARY = "sync_boundary"     // 'HH:MM' — 서버가 준 하루 경계
+    private const val K_LAST_FIRE = "last_fire"        // 마지막 발동 흔적 (무인 테스트의 증거)
+
+    /**
+     * 발동 흔적을 남긴다.
+     *
+     * 무인 테스트(밤 03:00)에서 자느라 놓치면 뭘 근거로 판정할 것인가 —
+     * `listAlarms()`의 count가 0인 건 '소비됐다'는 뜻일 뿐, 화면이 떴는지·소리가 났는지는 모른다.
+     * 여기에 남겨 두면 아침에 확인할 수 있다.
+     */
+    fun noteFire(ctx: Context, level: Int, shown: Boolean, posted: Boolean) {
+        val o = JSONObject()
+            .put("at", nowIso()).put("level", level)
+            .put("shown", shown).put("posted", posted)
+        prefs(ctx).edit().putString(K_LAST_FIRE, o.toString()).apply()
+    }
 
     private const val TIMEOUT_MS = 10_000
 
@@ -68,6 +83,8 @@ object GuardSync {
         .put("lastError", prefs(ctx).getString(K_LAST_ERR, null))
         .put("lastCount", prefs(ctx).getInt(K_LAST_N, -1))
         .put("boundary", prefs(ctx).getString(K_BOUNDARY, null))
+        .put("lastFire", prefs(ctx).getString(K_LAST_FIRE, null)
+            ?.let { runCatching { JSONObject(it) }.getOrNull() } ?: JSONObject.NULL)
         .put("nextSyncAt", boundaryHm(ctx).let { (h, m) ->
             val t = h * 60 + m + 10
             String.format(Locale.US, "%02d:%02d", (t / 60) % 24, t % 60)
