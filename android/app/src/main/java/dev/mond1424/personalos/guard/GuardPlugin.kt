@@ -37,6 +37,9 @@ class GuardPlugin : Plugin() {
         // 값싼 보험 — 강제 종료로 AlarmManager 등록이 날아간 경우까지 덮는다.
         // BootReceiver는 재부팅·업데이트만 덮는다.
         runCatching { GuardAlarms.restoreAll(context) }
+        // 상시 서비스도 앱을 열 때마다 되살린다. 죽어 있으면 그때부터 표본이 비고,
+        // 무엇보다 스와이프 종료에 대한 방어가 사라진다.
+        runCatching { GuardService.start(context) }
     }
 
     /** 권한 3종의 현재 상태. 1주차 게이트 화면이 이걸 그린다. */
@@ -199,6 +202,58 @@ class GuardPlugin : Plugin() {
             android.media.AudioManager.RINGER_MODE_VIBRATE -> "vibrate"
             else -> "normal"
         }
+    }
+
+    // ── 감지 · 상시 서비스 (S1.4 · S2.5) ─────────────────────
+
+    /** 사용 정보 접근은 특수 권한이라 런타임 요청이 없다. 설정 화면으로 보낸다. */
+    @PluginMethod
+    fun openUsageSettings(call: PluginCall) {
+        runCatching { context.startActivity(UsageProbe.settingsIntent()) }
+        call.resolve()
+    }
+
+    @PluginMethod
+    fun startService(call: PluginCall) {
+        GuardService.start(context)
+        call.resolve(JSObject().put("started", true))
+    }
+
+    @PluginMethod
+    fun stopService(call: PluginCall) {
+        GuardService.stop(context)
+        call.resolve(JSObject().put("stopped", true))
+    }
+
+    /** 감지가 실제로 값을 만들고 있는지 — 표본 수와 현재 전면 앱. */
+    @PluginMethod
+    fun detectStatus(call: PluginCall) {
+        call.resolve(
+            JSObject()
+                .put("usagePermission", UsageProbe.hasPermission(context))
+                .put("currentApp", UsageProbe.currentApp(context))
+                .put("samples", GuardActivityLog.size(context))
+                .put("snapshot", JSObject.fromJSONObject(GuardActivityLog.snapshot(context))),
+        )
+    }
+
+    /** 최근 표본 원본 — 무엇이 잡히는지 눈으로 확인할 때. */
+    @PluginMethod
+    fun recentActivity(call: PluginCall) {
+        val min = call.getInt("minutes") ?: 60
+        // JSObject는 JSONObject를 상속하므로 JSONArray를 그대로 넣으면 된다.
+        // JSArray.from은 Java 배열·컬렉션용이라 JSONArray에는 안 맞는다.
+        call.resolve(
+            JSObject()
+                .put("window_min", min)
+                .put("items", GuardActivityLog.recent(context, min)),
+        )
+    }
+
+    @PluginMethod
+    fun clearActivity(call: PluginCall) {
+        GuardActivityLog.clear(context)
+        call.resolve(JSObject().put("cleared", true))
     }
 
     // ── 서버 동기화 (S2.3) ───────────────────────────────────

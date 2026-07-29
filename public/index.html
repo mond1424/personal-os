@@ -25,6 +25,17 @@
     <span class="cap" id="td-boundary"></span>
   </header>
   <div class="dchips" id="td-chips"></div>
+
+  <!-- Guard outcome 확정 (설계 §6.5) — outcome은 Guard가 판단하지 않는다.
+       개입이 있었던 일정의 실제 결과를 사용자가 사후에 붙인다.
+       이게 붙어야 Guard Memory의 루프가 닫히고, 자기 보정의 입력이 생긴다. -->
+  <div class="guardbar" id="td-guard" style="display:none">
+    <span id="td-guard-text"></span>
+    <span style="margin-left:auto;display:flex;gap:10px;flex:none">
+      <button class="go" id="td-guard-ok">잘 됐어요</button>
+      <button class="go" id="td-guard-no" style="color:var(--sub)">못 했어요</button>
+    </span>
+  </div>
   <div class="sec" id="td-events" style="display:none"></div>
 
   <div class="sec">

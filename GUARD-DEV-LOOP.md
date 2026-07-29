@@ -113,6 +113,36 @@ await G.syncStatus();
 
 > 경계를 바꾼 뒤에는 앱을 한 번 열어 재동기화해야 `nextSyncAt`이 따라온다.
 
+### 2.2 상시 서비스 + 감지 (S1.4·S2.5)
+
+```js
+await G.detectStatus();
+// { usagePermission, currentApp, samples, snapshot:{hour, screen_on_min, unlocks, top_apps} }
+```
+
+`usagePermission: false`면 특수 권한이라 런타임 요청이 안 된다 — 설정으로 보낸다:
+
+```js
+await G.openUsageSettings();   // 설정 > 특별한 앱 액세스 > 사용 정보 접근 > Personal OS 허용
+await G.startService();
+```
+
+| 확인 | |
+|---|---|
+| 알림에 **"Guard · 지켜보는 중"** 상시 표시 | ⬜ |
+| `usagePermission: true` | ⬜ |
+| 다른 앱을 잠깐 쓰고 오면 `currentApp`이 그 앱 | ⬜ |
+| 몇 분 뒤 `samples`가 늘어난다 | ⬜ |
+| `snapshot.screen_on_min` · `unlocks`가 채워진다 | ⬜ |
+| **최근 앱에서 밀어 종료해도 상시 알림이 남는다** ← 생존 확인 | ⬜ |
+
+```js
+await G.recentActivity({ minutes: 30 });   // 무엇이 잡히는지 원본으로
+```
+
+> 감지는 **보조 입력**이다(ADR-018·021). 권한을 안 줘도 Guard는 그대로 돈다 —
+> 보호 규칙은 시각으로 예측되고 알람은 시스템이 들고 있다. 없으면 `risk_snapshot`이 얇아질 뿐이다.
+
 ### 2.5 로컬 우선 기록 (S2.4) — **이 라운드의 핵심**
 
 발동 기록이 서버 없이도 남는가. 순서는 `로컬 → 화면 → 알림 → (온라인이면) 밀어 올리기`.

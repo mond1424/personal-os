@@ -21,7 +21,11 @@ class BootReceiver : BroadcastReceiver() {
         when (intent.action) {
             Intent.ACTION_BOOT_COMPLETED,
             Intent.ACTION_MY_PACKAGE_REPLACED,
-            -> runCatching { GuardAlarms.restoreAll(ctx) }
+            -> {
+                runCatching { GuardAlarms.restoreAll(ctx) }
+                // 상시 서비스도 되살린다 — 감지보다 **생존**이 목적이다(GuardService 주석).
+                runCatching { GuardService.start(ctx) }
+            }
         }
     }
 }

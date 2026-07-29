@@ -60,6 +60,8 @@ object GuardEventQueue {
         foregroundApp: String?,
         riskSnapshot: JSONObject? = null,
     ): String {
+        // risk_snapshot은 판단 시점의 항 값이다. 점수가 아니라 **원재료** —
+        // 가중치는 10월에 실제 스냅샷에서 유도한다(ADR-021).
         val clientId = UUID.randomUUID().toString()
         val o = JSONObject()
             .put("client_id", clientId)

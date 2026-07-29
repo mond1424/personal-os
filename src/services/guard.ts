@@ -18,8 +18,11 @@ const DEFAULT_PREP_MIN = 90;     // 기상~출발
 const LEVELS = [1, 2, 3, 4];
 const REACTIONS = ["accepted", "override", "ignored"];
 
-/** Override 사유 최소 길이 (§6.3 마찰). 짧게 치고 넘어가는 것을 막는다. */
-const MIN_REASON = 20;
+// Override 사유에 **길이 하한을 두지 않는다.**
+// 20자 규칙을 뒀다가 실사용에서 마찰이 아니라 강제로 읽혀 걷어냈다 —
+// §6.3이 원하는 것은 "비용을 치르게 한다"이지 "분량을 채우게 한다"가 아니다.
+// 마찰은 대기 시간(friction_mult)이 지고, 사유는 §6.5의 데이터로서 비어 있지만 않으면 된다.
+// (DB CHECK도 `override_reason IS NOT NULL`까지만 요구한다)
 
 // ── 조회 ──────────────────────────────────────────────────────
 
@@ -169,8 +172,8 @@ async function applyReaction(env: Env, t: TimeCtx, id: string, input: any) {
     throw new ApiError(400, "reaction은 accepted·override·ignored");
   }
   const reason = typeof input?.reason === "string" ? input.reason.trim() : "";
-  if (reaction === "override" && reason.length < MIN_REASON) {
-    throw new ApiError(400, `Override에는 사유가 ${MIN_REASON}자 이상 필요해요`);
+  if (reaction === "override" && !reason) {
+    throw new ApiError(400, "Override에는 사유가 필요해요");
   }
   const at = typeof input?.reacted_at === "string" ? input.reacted_at : t.now;
   await db.stReactGuardEvent(env, id, reaction, reaction === "override" ? reason : null, at).run();

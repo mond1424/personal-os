@@ -75,10 +75,7 @@
         android:supportsRtl="true"
         android:theme="@style/AppTheme">
 
-        <!-- S1.4에서 GuardService를 선언할 때, 그 <service> 안에 넣는다:
-             <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                       android:value="self_control_intervention" />
-             <application>이 아니라 <service>의 자식이다 -->
+        <!-- specialUse 사유 선언은 아래 GuardService <service> 안에 있다 (<application>이 아니다) -->
 
         <activity
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode|navigation|density"
@@ -104,6 +101,17 @@
         android:launchMode="singleInstance"
         android:taskAffinity=""
         android:theme="@style/Theme.GuardAlert" />
+
+        <!-- 상시 서비스 — 감지와 **프로세스 생존**.
+             specialUse는 Android 14+에서 사유 선언이 필수다. -->
+        <service
+            android:name=".guard.GuardService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="self_control_intervention" />
+        </service>
 
         <!-- 예약된 시각에 시스템이 깨우는 지점 — Guard의 실제 발동. exported 불필요(내부 PendingIntent만) -->
         <receiver

@@ -396,24 +396,37 @@ console.log("\n[이번 배치 — 스와이프·다이얼·압축·버튼 노출
 // ① 가로 스와이프: 축 잠금 — 세로로 시작한 제스처는 끝까지 탭을 넘기지 않는다
 // 좌표는 반드시 MouseEvent 생성자로 실어야 한다 (Event에 나중에 붙이면 undefined로 남아
 // dx가 NaN이 되고, 그러면 어떤 제스처든 '세로'로 판정돼 검사가 통과해 버린다)
-const swipe = (dxs, dys) => {
+// gapMs — 이동 사이 실제 간격. **속도를 검사하려면 시간을 실제로 흘려야 한다.**
+// 동기로 연달아 쏘면 dt가 이벤트 루프 상태에 따라 0~수십ms로 요동친다:
+//   dt < VEL_MIN_DT(16) → vel 갱신 안 됨 → 속도 0으로 통과
+//   dt ≥ VEL_MIN_DT     → 40px/16ms = 2.5px/ms → FLICK_V(0.5) 초과 → 플릭 오판
+// 앱 코드가 틀린 게 아니다(16ms에 40px는 실제로 빠른 손짓이다). 검사가 시간을 안 흘린 것이다.
+const swipe = async (dxs, dys, gapMs = 0) => {
   const scr = w.document.querySelector(".screens");
   const mk = (type, x, y) => new w.MouseEvent(type, { bubbles: true, clientX: x, clientY: y });
   scr.dispatchEvent(mk("pointerdown", 300, 400));
-  dxs.forEach((dx, i) => scr.dispatchEvent(mk("pointermove", 300 + dx, 400 + dys[i])));
+  for (let i = 0; i < dxs.length; i++) {
+    if (gapMs) await sleep(gapMs);
+    scr.dispatchEvent(mk("pointermove", 300 + dxs[i], 400 + dys[i]));
+  }
   const n = dxs.length - 1;
   scr.dispatchEvent(mk("pointerup", 300 + dxs[n], 400 + dys[n]));
 };
 const tab = () => $("#phone").dataset.tab;
 w.switchTab("today"); await sleep(300);
-swipe([-14, -60, -150], [0, 3, 6]);                 // 가로로 확정 + 충분한 거리
+await swipe([-14, -60, -150], [0, 3, 6]);           // 가로 확정 + 폭의 35% 초과 — 거리만으로 넘어간다
 ok("가로 스와이프는 다음 탭으로", tab() === "cal", tab());
 w.switchTab("today"); await sleep(200);
-swipe([0, -20, -140], [30, 60, 62]);                // 세로로 시작 → 끝까지 무시
+await swipe([0, -20, -140], [30, 60, 62]);          // 세로로 시작 → 축 잠금이 끝까지 무시
 ok("세로로 시작한 제스처는 탭을 넘기지 않음", tab() === "today", tab());
 w.switchTab("today"); await sleep(200);
-swipe([-14, -40, -70], [0, 2, 4]);                  // 가로지만 폭의 25%에 못 미침 (속도도 0)
-ok("짧은 가로 이동은 무시(임계값)", tab() === "today", tab());
+// 짧고 **느린** 드래그 — 거리도 속도도 임계 미달.
+// 120ms를 고른 이유: VEL_WIN(90) < 120 < VEL_STALE(130).
+//   > VEL_WIN  → refX가 매 이동마다 재설정돼 **구간별**로 속도를 잰다(최대 30px/120ms = 0.25px/ms)
+//   < VEL_STALE→ pointerup에서 '멈췄다 뗐다'로 처리되지 않아 실제 속도가 평가된다
+// 루프가 밀려 간격이 커지면 속도는 더 낮아진다 — 지연은 통과 방향으로만 작용한다.
+await swipe([-14, -40, -70], [0, 2, 4], 120);
+ok("짧고 느린 가로 이동은 무시(임계값)", tab() === "today", tab());
 w.switchTab("today"); await sleep(200);
 
 // ①-b 트랙 위치가 인덱스를 그대로 따라가고, nav 표식이 같이 움직인다

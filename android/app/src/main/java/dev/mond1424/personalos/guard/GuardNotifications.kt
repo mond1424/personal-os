@@ -148,8 +148,11 @@ object GuardNotifications {
         // ① 로컬 기록이 **가장 먼저** — 네트워크를 기다리지 않는다(ADR-023).
         // 화면·알림보다 앞이어야 client_id를 화면에 넘겨 반응을 같은 항목에 붙일 수 있다.
         // 발동 경로에 왕복을 넣으면 새벽에 기록이 통째로 사라진다.
+        // 감지가 있으면 함께 남긴다. 없으면 null — **감지 실패가 발동을 막지 않는다**(ADR-018 보조 입력).
+        val fgApp = runCatching { UsageProbe.currentApp(ctx) }.getOrNull()
+        val snap = runCatching { GuardActivityLog.snapshot(ctx) }.getOrNull()
         val clientId = runCatching {
-            GuardEventQueue.recordFire(ctx, level, cause, eventId, null)
+            GuardEventQueue.recordFire(ctx, level, cause, eventId, fgApp, snap)
         }.getOrNull()
 
         val alert = Intent(ctx, GuardAlertActivity::class.java).apply {

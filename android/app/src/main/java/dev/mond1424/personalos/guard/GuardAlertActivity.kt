@@ -4,8 +4,14 @@ import android.app.Activity
 import android.app.KeyguardManager
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.text.Editable
+import android.text.TextWatcher
+import android.view.View
 import android.view.WindowManager
 import android.widget.Button
+import android.widget.EditText
 import android.widget.TextView
 import android.window.OnBackInvokedCallback
 import android.window.OnBackInvokedDispatcher
@@ -14,11 +20,17 @@ import androidx.core.app.NotificationManagerCompat
 import dev.mond1424.personalos.R
 
 /**
- * FSI가 띄우는 화면 — 잠긴 화면 위에 그대로 뜬다.
+ * FSI가 띄우는 화면 — 잠긴 화면 위에 그대로 뜬다. **개입의 본체**다.
  *
- * S1.2에서는 '보이는가'만 확인한다. 버튼은 닫기 하나뿐이다.
- * S3.2에서 여기에 Override 마찰(사유 20자 + 대기 타이머)이 들어간다 —
- * 그때 [닫기]는 [사유 적고 넘어가기]로 바뀌고 대기 시간이 붙는다.
+ * 설계 §6.3 — Override는 금지가 아니라 마찰:
+ *   [알겠습니다]        마찰 없음. accepted
+ *   [그래도 계속하기]   눌러야 마찰이 드러난다 → 사유 20자 + 대기 → override
+ *
+ * 마찰을 처음부터 보이지 않는 이유: 나란히 두면 대등한 선택지로 읽힌다.
+ * 한 번 더 누르게 하는 것 자체가 마찰의 일부다.
+ *
+ * 대기 시간은 Level과 모드가 정한다 — L3 60초 · L4 180초 × friction_mult(ADR-019).
+ * secretary 모드는 배수가 0이라 마찰이 사라진다.
  *
  * ⚠️ 잠금화면 위 표시는 매니페스트 속성과 코드 호출이 **둘 다** 필요하다.
  *    한쪽만 하면 기기·버전에 따라 조용히 안 뜬다.
@@ -32,10 +44,21 @@ class GuardAlertActivity : Activity() {
         const val EX_EVENT = "event_id"
         const val EX_NOTIF_ID = "notif_id"
         const val EX_CLIENT_ID = "client_id"
+
+        // 사유 **길이 제한은 두지 않는다.** 20자 하한은 마찰이 아니라 강제로 읽혔다.
+        // §6.3이 원하는 것은 "비용을 치르게 한다"이지 "분량을 채우게 한다"가 아니다.
+        // 비어 있지만 않으면 된다 — 사유가 남아야 §6.5의 데이터가 되므로 그 선만 지킨다.
+
+        /** 기본 대기 초. 모드의 friction_mult가 곱해진다. */
+        private const val WAIT_L3 = 60
+        private const val WAIT_L4 = 180
     }
 
     private var notifId = -1
     private var clientId: String? = null
+    private var level = 3
+    private var waitLeft = 0
+    private val ticker = Handler(Looper.getMainLooper())
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -43,26 +66,114 @@ class GuardAlertActivity : Activity() {
         blockBackGesture()
         setContentView(R.layout.activity_guard_alert)
 
-        val level = intent.getIntExtra(EX_LEVEL, 3)
-        val title = intent.getStringExtra(EX_TITLE) ?: "Guard"
-        val body = intent.getStringExtra(EX_BODY) ?: ""
+        level = intent.getIntExtra(EX_LEVEL, 3)
         notifId = intent.getIntExtra(EX_NOTIF_ID, -1)
         clientId = intent.getStringExtra(EX_CLIENT_ID)
 
         findViewById<TextView>(R.id.guard_level).text = "LEVEL $level"
-        findViewById<TextView>(R.id.guard_title).text = title
-        findViewById<TextView>(R.id.guard_body).text = body
+        findViewById<TextView>(R.id.guard_title).text = intent.getStringExtra(EX_TITLE) ?: "Guard"
+        findViewById<TextView>(R.id.guard_body).text = intent.getStringExtra(EX_BODY) ?: ""
 
-        findViewById<Button>(R.id.guard_dismiss).setOnClickListener { dismiss() }
+        bindFriction()
 
         // 소리·진동의 주인은 화면이다 — 설정과 벨소리 모드를 따르려면 채널이 아니라 여기여야 한다.
         if (level >= 3) GuardAlarmPlayer.start(this, level)
     }
 
-    // onPause에서 멈추지 않는다.
+    // ── Override 마찰 (§6.3) ─────────────────────────────────
+
+    private fun bindFriction() {
+        val accept = findViewById<Button>(R.id.guard_accept)
+        val openBtn = findViewById<Button>(R.id.guard_override_open)
+        val friction = findViewById<View>(R.id.guard_friction)
+        val reason = findViewById<EditText>(R.id.guard_reason)
+        val count = findViewById<TextView>(R.id.guard_reason_count)
+        val go = findViewById<Button>(R.id.guard_override_go)
+        val note = findViewById<TextView>(R.id.guard_wait_note)
+
+        accept.setOnClickListener { finishWith("accepted", null) }
+
+        // Level 1~2는 마찰이 없다 — 알림·맥락 경고일 뿐 개입이 아니다(§6.1).
+        val mult = GuardSync.frictionMult(this)
+        val waitSec = when {
+            level >= 4 -> (WAIT_L4 * mult).toInt()
+            level == 3 -> (WAIT_L3 * mult).toInt()
+            else -> 0
+        }
+        if (level < 3) {
+            openBtn.visibility = View.GONE
+            accept.text = "확인"
+            return
+        }
+
+        openBtn.setOnClickListener {
+            // 마찰 화면에 들어오면 소리·진동을 끈다.
+            // 울리는 채로는 사유를 쓸 수 없고, 그건 마찰이 아니라 소음이다.
+            // 우회로가 되지도 않는다 — 화면은 그대로 남고 반응이 기록되기 전까진 끝난 게 아니다.
+            GuardAlarmPlayer.stop()
+            openBtn.visibility = View.GONE
+            friction.visibility = View.VISIBLE
+            reason.requestFocus()
+            startWait(waitSec, go, note, reason)
+        }
+
+        reason.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            override fun afterTextChanged(s: Editable?) {
+                val n = s?.toString()?.trim()?.length ?: 0
+                count.text = if (n > 0) "${n}자" else ""
+                refreshGo(go, reason)
+            }
+        })
+
+        go.setOnClickListener {
+            val text = reason.text.toString().trim()
+            if (text.isEmpty() || waitLeft > 0) return@setOnClickListener
+            finishWith("override", text)
+        }
+    }
+
+    /**
+     * 대기는 **사유 입력과 동시에** 흐른다.
+     * 순차로 두면 "사유 다 쓰고 나서 또 기다려"가 되어 마찰이 아니라 짜증이 된다.
+     * §6.3의 목적은 이탈을 부르지 않는 선에서 잠깐 멈춰 세우는 것이다.
+     */
+    private fun startWait(sec: Int, go: Button, note: TextView, reason: EditText) {
+        waitLeft = sec
+        if (sec <= 0) { note.text = ""; refreshGo(go, reason); return }
+        ticker.post(object : Runnable {
+            override fun run() {
+                if (isFinishing || isDestroyed) return
+                note.text = if (waitLeft > 0) "${waitLeft}초 뒤에 넘어갈 수 있어요" else "이제 넘어갈 수 있어요"
+                refreshGo(go, reason)
+                if (waitLeft > 0) { waitLeft--; ticker.postDelayed(this, 1000) }
+            }
+        })
+    }
+
+    private fun refreshGo(go: Button, reason: EditText) {
+        go.isEnabled = reason.text.toString().trim().isNotEmpty() && waitLeft <= 0
+        go.alpha = if (go.isEnabled) 1f else 0.45f
+    }
+
+    /** 반응을 로컬에 먼저 남기고(ADR-023) 밀어 올리기는 백그라운드로. */
+    private fun finishWith(reaction: String, reason: String?) {
+        GuardAlarmPlayer.stop()
+        ticker.removeCallbacksAndMessages(null)
+        clientId?.let { cid ->
+            runCatching { GuardEventQueue.recordReaction(this, cid, reaction, reason) }
+            val app = applicationContext
+            Thread { runCatching { GuardEventQueue.flush(app) } }.start()
+        }
+        if (notifId >= 0) runCatching { NotificationManagerCompat.from(this).cancel(notifId) }
+        finish()
+    }
+
+    // onPause에서 소리를 멈추지 않는다.
     // 전원 버튼으로 화면을 끄거나 홈으로 나가는 것만으로 소리가 멎으면
-    // 그게 0마찰 Override가 된다(설계 §6.3). 알람 시계가 그러지 않는 것과 같은 이유다.
-    // 멈추는 경로는 둘뿐: [닫기]와 3분 상한(GuardAlarmPlayer.MAX_MS).
+    // 그게 0마찰 Override가 된다(§6.3). 알람 시계가 그러지 않는 것과 같은 이유다.
+    // 멈추는 경로는 둘뿐: 명시적 선택(finishWith)과 3분 상한(GuardAlarmPlayer.MAX_MS).
 
     private fun showOverLockScreen() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
@@ -79,23 +190,6 @@ class GuardAlertActivity : Activity() {
             )
         }
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-    }
-
-    /**
-     * S1.2 시점의 [닫기]는 'accepted'로 기록한다.
-     * S3.2에서 여기가 갈린다 — [지금 자기]=accepted / [사유 적고 계속]=override(사유 20자 + 대기).
-     * 아무것도 안 하고 3분 상한이 지나면 서버가 'ignored'로 확정한다.
-     */
-    private fun dismiss() {
-        GuardAlarmPlayer.stop()
-        clientId?.let { cid ->
-            runCatching { GuardEventQueue.recordReaction(this, cid, "accepted", null) }
-            // 밀어 올리기는 백그라운드로. 실패해도 큐에 남아 다음 동기화에 간다.
-            val app = applicationContext
-            Thread { runCatching { GuardEventQueue.flush(app) } }.start()
-        }
-        if (notifId >= 0) runCatching { NotificationManagerCompat.from(this).cancel(notifId) }
-        finish()
     }
 
     /**

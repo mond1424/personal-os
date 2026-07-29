@@ -77,5 +77,10 @@ const Api = {
   analyses: () => _req("GET", "/analyses"),
   analysis: (id) => _req("GET", "/analyses/" + id),
   ctxPreview: () => _req("GET", "/analyses/context-preview"),
-  guardEvents: () => _req("GET", "/guard/events"),
+  guardEvents: (limit = 100) => _req("GET", "/guard/events?limit=" + limit),
+  // outcome은 Guard가 판단하지 않는다 — 사용자가 사후 확정한다 (설계 §6.5)
+  guardPending: () => _req("GET", "/guard/pending-outcome"),
+  guardOutcome: (id, outcome) => _req("POST", `/guard/events/${id}/outcome`, { outcome }),
+  guardModes: () => _req("GET", "/guard/modes"),
+  guardSetMode: (key) => _req("PUT", "/guard/modes/active", { key }),
 };

@@ -472,10 +472,13 @@ ok("level 5는 400", (await api("POST", "/api/guard/events", { cause: "x", level
 ok("cause 없으면 400", (await api("POST", "/api/guard/events", { level: 3 })).status === 400);
 
 // (5) 반응 — 한 번만. Override엔 사유 20자 (§6.3 마찰)
-ok("짧은 사유 Override 400",
-  (await api("POST", `/api/guard/events/${gId}/react`, { reaction: "override", reason: "좀만더" })).status === 400);
-const gReason = "내일 시험인데 이것만 마무리하고 바로 자겠습니다";   // 26자 — 경계(20)보다 확실히 위
-ok("사유 20자 이상 Override 200",
+// 길이 하한은 없다 — 마찰은 대기가 지고, 사유는 비어 있지만 않으면 된다(§6.3 재조정)
+ok("빈 사유 Override 400",
+  (await api("POST", `/api/guard/events/${gId}/react`, { reaction: "override", reason: "   " })).status === 400);
+ok("사유 없이 Override 400",
+  (await api("POST", `/api/guard/events/${gId}/react`, { reaction: "override" })).status === 400);
+const gReason = "좀만더";   // 3자 — 짧아도 통과해야 한다
+ok("짧은 사유도 Override 200",
   (await api("POST", `/api/guard/events/${gId}/react`, { reaction: "override", reason: gReason })).status === 200,
   `사유 ${gReason.length}자`);
 ok("두 번째 반응은 409 (개입 이력 불변)",

@@ -285,6 +285,7 @@ async function refreshToday() {
   S.today = await Api.today();
   renderToday();
   loadNotice();
+  loadGuardOutcome();
   if (!S.staleShown && S.today.overdue.length) { S.staleShown = true; showStale(S.today.overdue[0]); }
 }
 
@@ -399,6 +400,43 @@ function renderLogs() {
     : `<button class="lrow" style="width:100%" onclick="openLog(${l.id})"><span class="ts mono">${hm(l.ts)}</span><span>${esc(l.text)}</span></button>`);
   $("#td-logs").innerHTML = rows.join("") ||
     `<div class="lrow"><span class="ts mono">—</span><span style="color:var(--faint)">아직 기록이 없어요 — 아래 입력줄로</span></div>`;
+}
+
+/* Guard outcome 확정 (설계 §6.5) — 루프의 마지막 조각.
+ *
+ * "outcome 은 Guard 가 직접 판단하지 않는다. 이후 해당 task 또는 period 의
+ *  실제 결과와 연결되어 사후 확정된다."
+ *
+ * 이게 없으면 `발동 → 반응 → 기록`까지만 돌고 닫히지 않는다. 그러면
+ * 자기 보정이 "이 규칙이 과했나"를 판정할 재료가 없다 — 개입은 있었는데 결과를 모르니까.
+ *
+ * 한 번에 하나만 묻는다. 여러 개를 늘어놓으면 대충 눌러 치우게 되고,
+ * 그렇게 들어온 outcome은 없는 것보다 나쁘다(보정을 잘못된 방향으로 끈다).
+ */
+async function loadGuardOutcome() {
+  const bar = $("#td-guard");
+  try {
+    const rows = await Api.guardPending();
+    const r = rows?.[0];
+    if (!r) return void (bar.style.display = "none");
+
+    const what = r.event_title || "그 일";
+    const when = r.event_date ? md(r.event_date) : md(r.on_date);
+    const lv = r.reaction === "override" ? "넘어갔던" : "받아들였던";
+    $("#td-guard-text").innerHTML = `<b>${when} ${esc(what)}</b> — ${lv} 개입이었어요. 결과가 어땠나요?`;
+
+    const send = (outcome) => run(async () => {
+      await Api.guardOutcome(r.id, outcome);
+      bar.style.display = "none";
+      toast(outcome === "success" ? "기록했어요" : "기록했어요 — 다음 판단에 쓰여요");
+      loadGuardOutcome();          // 남은 게 또 있으면 이어서 묻는다
+    });
+    $("#td-guard-ok").onclick = () => send("success");
+    $("#td-guard-no").onclick = () => send("failure");
+    bar.style.display = "flex";
+  } catch {
+    bar.style.display = "none";    // Guard가 아직 없거나 조회 실패 — 화면을 막지 않는다
+  }
 }
 
 async function loadNotice() {
@@ -1943,6 +1981,11 @@ function bindForegroundRefresh() {
   let last = Date.now();
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) return;
+    // 앱으로 돌아올 때마다 상시 서비스를 되살린다.
+    // GuardPlugin.load()는 **콜드 스타트에서만** 돌아서, 최근 앱에서 밀어 종료한 뒤
+    // 홈에서 다시 들어오면 서비스가 죽은 채로 남는다. 여기가 유일한 복귀 지점이다.
+    // 이미 떠 있으면 startForegroundService는 무해하다.
+    globalThis.Capacitor?.Plugins?.Guard?.startService?.().catch(() => {});
     if (!S.today) return void loadData();
     if (Date.now() - last < 60_000) return;
     last = Date.now();

@@ -26,6 +26,18 @@ object GuardSync {
     private const val K_LAST_ERR = "sync_last_err"
     private const val K_LAST_N = "sync_last_count"
     private const val K_BOUNDARY = "sync_boundary"     // 'HH:MM' — 서버가 준 하루 경계
+    private const val K_FRICTION = "sync_friction"     // Override 대기 배수 (ADR-019 모드)
+    private const val K_MODE = "sync_mode"
+
+    /**
+     * Override 대기 시간 배수. 활성 모드가 정한다(coach 1.0 · secretary 0).
+     * 서버에서 못 받았으면 1.0 — **마찰이 있는 쪽이 기본**이다.
+     * 통신이 안 될 때 마찰이 사라지면 그게 우회로가 된다.
+     */
+    fun frictionMult(ctx: Context): Float =
+        prefs(ctx).getFloat(K_FRICTION, 1.0f)
+
+    fun mode(ctx: Context): String? = prefs(ctx).getString(K_MODE, null)
     private const val K_LAST_FIRE = "last_fire"        // 마지막 발동 흔적 (무인 테스트의 증거)
 
     /**
@@ -132,10 +144,12 @@ object GuardSync {
         }
         val plans = root.optJSONArray("events") ?: return fail(ctx, "events가 없습니다")
 
-        // 경계를 먼저 저장한다 — 아래 scheduleDailySync가 이 값을 읽는다.
-        root.optString("boundary", "").takeIf { it.isNotBlank() }?.let {
-            prefs(ctx).edit().putString(K_BOUNDARY, it).apply()
-        }
+        // 경계·모드를 먼저 저장한다 — scheduleDailySync와 개입 화면이 이 값을 읽는다.
+        prefs(ctx).edit().apply {
+            root.optString("boundary", "").takeIf { it.isNotBlank() }?.let { putString(K_BOUNDARY, it) }
+            root.optString("mode", "").takeIf { it.isNotBlank() }?.let { putString(K_MODE, it) }
+            if (root.has("friction_mult")) putFloat(K_FRICTION, root.optDouble("friction_mult", 1.0).toFloat())
+        }.apply()
 
         // 서버발 예약만 갈아엎는다 — 테스트 알람(TEST_ID_BASE 구간)은 건드리지 않는다.
         GuardAlarms.cancelSynced(ctx)
