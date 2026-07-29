@@ -2,6 +2,7 @@
 // 구현 3에서 Guard 평가 루프(6.4 — 규칙 평가 + Web Push)가 여기 얹힌다.
 import * as db from "./db";
 import { closeDay } from "./services/daily";
+import { finalizeIgnored } from "./services/guard";
 import { loadTime } from "./lib/time";
 import type { Env } from "./types";
 
@@ -31,7 +32,14 @@ export async function autoClose(env: Env) {
     await db.stUpsertMech(env, "daily", date, mech, t.now).run();
   }
 
-  return { closed: open.results.length, orphaned: orphans.results.length, as_of: t.d };
+  // H-3) 반응 없이 남은 Guard 발동 → 'ignored' 확정 (ADR-025의 닫는 쪽).
+  //      마감과 독립이다 — 여기서 던지면 자동 마감이 통째로 멈춘다.
+  const ign = await finalizeIgnored(env, t).catch(() => ({ ignored: 0 }));
+
+  return {
+    closed: open.results.length, orphaned: orphans.results.length,
+    guard_ignored: ign.ignored, as_of: t.d,
+  };
 }
 
 export async function scheduled(_event: ScheduledController, env: Env): Promise<void> {

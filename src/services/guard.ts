@@ -8,7 +8,7 @@
 // APP-PLAN의 '발동 규칙' 절. 정교화는 9~11월 실사용 데이터 뒤에.
 import * as db from "../db";
 import { nextId } from "../lib/id";
-import { attributionOfIso } from "../lib/time";
+import { attributionOfIso, isoNow } from "../lib/time";
 import { ApiError, type Env, type TimeCtx } from "../types";
 
 /** 설정 기본값 — event별 값이 없을 때. 초기값의 정확도보다 조정 가능한 구조가 중요하다. */
@@ -202,6 +202,32 @@ export async function setOutcome(env: Env, t: TimeCtx, id: string, outcome: stri
 
 export const pendingOutcome = async (env: Env) =>
   (await db.guardEventsPendingOutcome(env)).results;
+
+/**
+ * 반응 없이 남은 발동을 `ignored`로 확정한다 — **루프의 닫는 쪽**.
+ *
+ * 왜 필요한가: 수락·Override는 기기가 올려 주지만, 아무 반응 없이 지나간 발동은
+ * 누구도 `reaction`을 쓰지 않아 영원히 NULL로 남는다. 그러면 §6.5 자기 보정이
+ * "무시된 개입"이라는 가장 중요한 실패 사례를 아예 못 본다.
+ *
+ * ⚠️ 유예가 길어야 하는 이유(36시간): 기기는 오프라인이면 발동과 반응을 **함께**
+ *    나중에 올린다(ADR-023). 재동기화는 하루 한 번(경계+10분)이라 최악의 지연이
+ *    24시간에 가깝다. 서버가 먼저 `ignored`를 박으면 트리거가 진짜 반응을 막고,
+ *    그 손실은 소급 복구가 불가능하다 — 개입 이력은 고칠 수 없기 때문이다.
+ *    늦게 닫히는 것은 비용이 거의 없다. 보정은 10월에 집계되고, 그때 값이 맞으면 된다.
+ */
+export async function finalizeIgnored(env: Env, t: TimeCtx) {
+  const GRACE_H = 36;
+  // fired_at은 동일 오프셋 ISO다 — 문자열 비교로 순서가 보존된다.
+  const cutoff = isoNow(Date.parse(t.now) - GRACE_H * 3_600_000, t.offsetMin);
+  const stale = await db.guardEventsUnreacted(env, cutoff);
+  for (const row of stale.results) {
+    // 트리거가 이미 반응이 있으면 거부한다. WHERE reaction IS NULL이 먼저 걸러
+    // 경합(같은 순간 기기가 올린 반응)에서도 조용히 지나간다.
+    await db.stReactGuardEvent(env, row.id, "ignored", null, t.now).run();
+  }
+  return { ignored: stale.results.length, cutoff };
+}
 
 // ── watch_apps (ADR-022) ─────────────────────────────────────
 

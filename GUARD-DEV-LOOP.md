@@ -234,6 +234,29 @@ await G.listAlarms();
 
 충전기 꽂지 말 것. 아침에 `await G.listAlarms()` → `count: 0`이면 소비된 것.
 
+### 6. 감지 발동 (ADR-025) — 두 번째 경로
+
+시각 예약과 무관하게, 규칙이 스스로 발동하는지 본다. **상시 서비스와 사용정보 접근이 켜져 있어야 한다.**
+
+```js
+// ① 지금 시각을 창 안으로 끌어온다 (예: 지금이 21:40이면)
+await G.setWatch({ enabled: true, bedFrom: "21:00", bedTo: "23:59", minutes: 1, maxPerNight: 5 });
+
+// ② 무엇이 막고 있는지 본다 — inWindow / continuousMin / thresholdMin
+await G.watchStatus();
+
+// ③ 폴링(60초)을 기다리지 않고 한 번 평가
+await G.evaluateWatch();
+```
+
+- `fired: true` → Level 2 개입 화면. 한 번 더 부르면 30분 안에는 `false`(재발동 간격)
+- `fired: false`면 `status`를 읽는다. `inWindow: false`(창 밖) · `continuousMin < thresholdMin`(연속 부족, 화면을 끈 적이 있으면 0으로 리셋됨) · `firedTonight >= maxPerNight`(상한)
+- 같은 밤에 처음부터 다시 하려면 `await G.resetWatchNight()`
+- 확인이 끝나면 **기본값으로 되돌린다**: `await G.setWatch({ bedFrom: "00:30", bedTo: "06:00", minutes: 20 })`
+
+발동이 서버에 닿았는지: `(await g('/guard/events'))[0]` → `cause: "watch:bedtime"`.
+반응 없이 지나간 발동은 30분 cron이 **36시간 뒤** `ignored`로 확정한다(즉시 아니다 — ADR-025).
+
 ---
 
 ## 자주 쓰는 것
@@ -256,4 +279,10 @@ await G.restoreAlarms();   // 복구 경로 자체를 강제 실행
 await G.getSettings();
 await G.setSettings({ sound: true, vibration: true, overrideSilentAtL4: false });
 await G.stopAlarm();       // 울리는 중 멈추기
+
+// 감지 발동 (ADR-025)
+await G.watchStatus();
+await G.evaluateWatch();
+await G.resetWatchNight();
+await G.setWatch({ enabled: true, bedFrom: "00:30", bedTo: "06:00", minutes: 20, maxPerNight: 5 });
 ```

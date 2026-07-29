@@ -57,6 +57,27 @@ object GuardActivityLog {
 
     fun clear(ctx: Context) = prefs(ctx).edit().remove(KEY).apply()
 
+    /**
+     * **연속** 화면 사용 시간(분). 감지 발동의 유일한 임계(ADR-025).
+     *
+     * 누적이 아니라 연속이어야 한다 — 잠깐 시간을 확인하는 것과
+     * 붙잡고 있는 것을 가르는 것이 이 규칙의 전부다.
+     * 마지막 screen_off 이후로 흐른 시간을 센다. 켜진 적이 없으면 0.
+     */
+    fun continuousScreenOnMin(ctx: Context): Int {
+        val arr = read(ctx)
+        var onAt = 0L
+        for (i in 0 until arr.length()) {
+            val o = arr.getJSONObject(i)
+            when (o.optString("kind")) {
+                "screen_on" -> if (onAt == 0L) onAt = o.optLong("at")
+                "screen_off" -> onAt = 0L        // 껐으면 연속이 끊긴다
+            }
+        }
+        if (onAt == 0L) return 0
+        return ((System.currentTimeMillis() - onAt) / 60_000).toInt()
+    }
+
     /** 최근 n분 표본 그대로 — 디버깅·확인용. */
     fun recent(ctx: Context, minutes: Int = 60): JSONArray {
         val since = System.currentTimeMillis() - minutes * 60_000L

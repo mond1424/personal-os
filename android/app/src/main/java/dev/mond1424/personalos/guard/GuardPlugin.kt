@@ -256,6 +256,47 @@ class GuardPlugin : Plugin() {
         call.resolve(JSObject().put("cleared", true))
     }
 
+    // ── 감지 기반 발동 (ADR-025) ──────────────────────────────
+
+    /** 규칙이 지금 어떻게 보이는지 — 창 안인가, 연속 몇 분인가, 오늘 밤 몇 번 발동했나. */
+    @PluginMethod
+    fun watchStatus(call: PluginCall) {
+        call.resolve(JSObject.fromJSONObject(GuardWatch.status(context)))
+    }
+
+    @PluginMethod
+    fun setWatch(call: PluginCall) {
+        val s = GuardSettings(context)
+        call.getBoolean("enabled")?.let { s.watchEnabled = it }
+        call.getString("bedFrom")?.let { s.bedFrom = it }
+        call.getString("bedTo")?.let { s.bedTo = it }
+        call.getInt("minutes")?.let { s.watchMinutes = it }
+        call.getInt("maxPerNight")?.let { s.watchMaxPerNight = it }
+        watchStatus(call)
+    }
+
+    /**
+     * 규칙을 지금 한 번 평가한다 — 폴링(60초)을 기다리지 않고 확인할 때.
+     *
+     * 조건을 만족해야 발동한다. 창 밖이거나 연속 시간이 모자라면 `fired: false`가
+     * 정상이다 — 그 경우 `watchStatus`로 무엇이 막았는지 본다.
+     */
+    @PluginMethod
+    fun evaluateWatch(call: PluginCall) {
+        val fired = GuardWatch.evaluate(context)
+        call.resolve(
+            JSObject().put("fired", fired)
+                .put("status", JSObject.fromJSONObject(GuardWatch.status(context))),
+        )
+    }
+
+    /** 밤 상한·Level 2 이력 초기화. 같은 밤에 두 번 이상 시험할 때. */
+    @PluginMethod
+    fun resetWatchNight(call: PluginCall) {
+        GuardWatch.resetNight(context)
+        call.resolve(JSObject().put("reset", true))
+    }
+
     // ── 서버 동기화 (S2.3) ───────────────────────────────────
 
     /**

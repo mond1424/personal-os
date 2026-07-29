@@ -27,10 +27,44 @@ class GuardSettings(ctx: Context) {
         get() = p.getBoolean(K_L4_SILENT, false)
         set(v) = p.edit().putBoolean(K_L4_SILENT, v).apply()
 
+    // ── 감지 기반 발동 (ADR-025) ──────────────────────────────
+    // 보호 일정이 없어도 도는 규칙. 이게 없으면 루프가 몇 주에 한 번 돌아
+    // 9~11월에 전례가 쌓이지 않는다.
+
+    /** 감지 발동 전체 스위치. 끄면 시각 경로만 남는다. */
+    var watchEnabled: Boolean
+        get() = p.getBoolean(K_WATCH, true)
+        set(v) = p.edit().putBoolean(K_WATCH, v).apply()
+
+    /** 취침 창 시작 'HH:MM'. 이 시각부터 다음 창 끝까지가 개입 대상. */
+    var bedFrom: String
+        get() = p.getString(K_BED_FROM, "00:30") ?: "00:30"
+        set(v) = p.edit().putString(K_BED_FROM, v).apply()
+
+    /** 취침 창 끝 'HH:MM'. from > to면 자정을 넘는 창으로 해석한다. */
+    var bedTo: String
+        get() = p.getString(K_BED_TO, "06:00") ?: "06:00"
+        set(v) = p.edit().putString(K_BED_TO, v).apply()
+
+    /** 연속 사용 임계(분). 잠깐 확인하는 것과 붙잡고 있는 것을 가른다. */
+    var watchMinutes: Int
+        get() = p.getInt(K_WATCH_MIN, 20)
+        set(v) = p.edit().putInt(K_WATCH_MIN, v.coerceIn(1, 240)).apply()
+
+    /** 하룻밤 최대 발동 횟수. 오발동이 매일 반복되면 도구를 떠난다(§6.3). */
+    var watchMaxPerNight: Int
+        get() = p.getInt(K_WATCH_MAX, 5)
+        set(v) = p.edit().putInt(K_WATCH_MAX, v.coerceIn(1, 20)).apply()
+
     companion object {
         private const val K_SOUND = "sound"
         private const val K_VIBRATION = "vibration"
         private const val K_L4_SILENT = "l4_override_silent"
+        private const val K_WATCH = "watch_enabled"
+        private const val K_BED_FROM = "bed_from"
+        private const val K_BED_TO = "bed_to"
+        private const val K_WATCH_MIN = "watch_minutes"
+        private const val K_WATCH_MAX = "watch_max_per_night"
     }
 }
 

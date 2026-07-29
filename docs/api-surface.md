@@ -79,7 +79,7 @@
 | POST `/api/guard/watch-apps` | `{source, identifier, label?}` | `{source, identifier}` (201) | `guard.addWatchApp` |
 | DELETE `/api/guard/watch-apps/:source/:identifier` | — | `{deleted}` | `guard.removeWatchApp` |
 | GET `/api/health` | — | `{ok, date, now}` | (인라인) |
-| POST `/api/admin/auto-close` | — | `{closed, orphaned, as_of}` | `scheduled.autoClose` |
+| POST `/api/admin/auto-close` | — | `{closed, orphaned, guard_ignored, as_of}` | `scheduled.autoClose` |
 
 > **라우트 순서 주의** — 리터럴 경로를 와일드카드보다 **앞**에 둔다. 실제로 두 번 물렸다:
 > `/api/analyses/context-*`는 `/api/analyses/:id`보다 앞 · `/api/lm/{sections,import-me,item/:id}`는 `/api/lm/:section`보다 앞.

@@ -76,6 +76,9 @@ class GuardService : Service() {
                         GuardActivityLog.note(applicationContext, "app", it)
                     }
                 }
+                // 표본을 뜬 뒤 **두 번째 발동 경로**를 평가한다(ADR-025).
+                // 시각 경로(알람)와 독립이다 — 여기가 죽어도 예약은 시스템에 있다.
+                runCatching { GuardWatch.evaluate(applicationContext) }
                 handler.postDelayed(this, POLL_MS)
             }
         }
@@ -101,6 +104,15 @@ class GuardService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         goForeground()
+        // 화면 on/off는 런타임 등록만 받으므로, 서비스가 시작된 시점에 이미 켜져 있으면
+        // 그 사실을 **아무도 기록해 주지 않는다.** 그러면 연속 사용 시간이 다음 off/on
+        // 주기까지 0에 머물고 감지 발동(ADR-025)이 통째로 침묵한다 —
+        // 재부팅이나 강제 종료 직후, 즉 하필 밤에 드러난다.
+        runCatching {
+            val pm = getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+            screenOn = pm.isInteractive
+            if (screenOn) GuardActivityLog.note(this, "screen_on", null)
+        }
         schedulePoll()
         // 죽어도 시스템이 되살린다. 생존이 이 서비스의 절반이다.
         return START_STICKY

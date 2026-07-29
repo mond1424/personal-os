@@ -519,6 +519,23 @@ await api("POST", "/api/guard/events", { client_id: "dev-uuid-3", reaction: "ign
 const c4row = ((await api("GET", "/api/guard/events")).json as any[]).find((r) => r.id === c4.json.id);
 ok("나중에 온 반응이 기존 행에 채워짐 (ignored)", !!c4row && c4row.reaction === "ignored", c4row?.reaction);
 
+// (7.6) 반응 없는 발동의 'ignored' 확정 (ADR-025 — 루프의 닫는 쪽)
+// 유예 36시간: 기기가 오프라인이면 발동과 반응을 함께 늦게 올린다. 먼저 박으면 진짜 반응이 막힌다.
+const oldFire = await api("POST", "/api/guard/events", {
+  cause: "watch:bedtime", level: 2, client_id: "dev-uuid-old",
+  fired_at: "2026-06-01T02:00:00+09:00",
+});
+const acG = await api("POST", "/api/admin/auto-close");
+const oldRow = ((await api("GET", "/api/guard/events")).json as any[]).find((r) => r.id === oldFire.json.id);
+ok("유예를 넘긴 무반응 발동 → ignored", !!oldRow && oldRow.reaction === "ignored", oldRow?.reaction);
+ok("auto-close가 확정 수를 보고", acG.json.guard_ignored >= 1, acG.json.guard_ignored);
+// 유예 안쪽(미래 fired_at)은 건드리지 않는다 — 늦게 도착할 반응의 자리를 비워 둔다
+const freshRow = ((await api("GET", "/api/guard/events")).json as any[]).find((r) => r.client_id === "dev-uuid-1");
+ok("유예 안쪽 발동은 NULL 유지", !!freshRow && freshRow.reaction === null, freshRow?.reaction);
+// 멱등 — 이미 ignored인 행을 두 번 건드려 409가 나면 안 된다
+ok("재실행 시 같은 행을 다시 확정하지 않음",
+  (await api("POST", "/api/admin/auto-close")).json.guard_ignored === 0);
+
 // (8) 감시 목록 — PC 확장 자리 (ADR-022)
 ok("watch app 추가 201",
   (await api("POST", "/api/guard/watch-apps", { source: "pc", identifier: "Code.exe", label: "VS Code" })).status === 201);
