@@ -13,6 +13,15 @@ Cloudflare Worker (Hono / TS) + D1 + `[assets]` 정적 서빙.
 파일 지도(어느 파일을 고칠지)는 `docs/api-surface.md`, 스키마 스냅샷은 `docs/schema-current.sql`.
 작업 시작 시 STATE.md를 먼저 읽는다. 마이그레이션 적용 여부·배포 상태·미해결 항목은 반드시 STATE.md 기준으로 판단하고, 기억이나 과거 문서 사본으로 단정하지 않는다.
 
+## 에이전트 체인
+
+**사용자 → Cowork → Claude Code → Codex CLI.** 경계·소유권·보고 형식은 `AGENT-CHAIN.md`.
+Codex의 진입 파일은 `AGENTS.md`(이 문서를 원본으로 가리킨다 — 규약을 복사하면 반드시 갈라진다).
+
+이 층(Claude Code)이 지는 것: **`STATE.md`·`APP-BUILD.md`·`docs/*`·git의 유일한 편집자**,
+`npm run verify`로 숫자를 만드는 유일한 층, 위임 금지 영역(트리거·마이그레이션·귀속일·Guard 발동 경로) 직접 구현.
+설계 문서·`APP-PLAN`·`APP-ADR`은 **읽기만** 한다 — 고칠 것이 있으면 Cowork에 올린다.
+
 ## 작업 방식
  - 전체 프로젝트 재탐색 금지. 수정 범위와 직접 관련된 함수만 먼저 읽고, 호출부·의존 함수는 필요성이 확인될 때만 넓힌다.
  - 여러 이슈를 동시에 조사하지 않는다. 현재 이슈 하나에만 집중한다.

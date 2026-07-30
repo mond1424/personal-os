@@ -3,8 +3,39 @@
 ## 저장소
 - repo: https://github.com/mond1424/personal-os
 - branch: main
-- 마지막 커밋: `1130a33` APP-2 Guard 네이티브 모듈. **그 뒤 Guard 서버 계층(0010·0011)과 동기화·큐가 미커밋** — 아래 참조.
-  - ✅ **0011까지 로컬·원격 모두 적용 + deploy 완료** (2026-07-29). 폰 APK도 갱신 완료.
+- 마지막 커밋: `6a82d5e` fix(guard): 기기가 보낸 UTC 시각을 서버에서 정규화. **Guard 서버 계층(0010~0013)·동기화·큐·Life Model P1-a/b 전부 커밋됨.**
+  - ✅ **0013까지 로컬·원격 모두 적용 + deploy 완료** (2026-07-29). 폰 APK도 갱신 완료.
+  - ⚠️ 2026-07-30 `normalizeIso` 수정은 **커밋됐으나 deploy 대기**(서버 코드 변경 — 사용자).
+
+## 에이전트 체인 (2026-07-30 도입)
+
+**사용자 → Cowork → Claude Code → Codex CLI.** 문서 넷이 한 벌이다:
+
+| 문서 | 무엇 | 주인 |
+|---|---|---|
+| `AGENT-CHAIN.md` | 층별 권한·파일 소유권·보고 형식 | Cowork |
+| `AGENTS.md` | Codex CLI 진입 파일(CLAUDE.md를 원본으로 가리킨다) | Cowork |
+| `OPERATIONS.md` | 사용자가 하는 일·붙여넣는 문장 | Cowork |
+| `docs/tickets/*.md` | 지시와 보고가 같은 파일에 | Cowork 발행 · Claude Code 배정 |
+
+이 층(Claude Code)이 지는 것: **`STATE.md`·`APP-BUILD.md`·`docs/api-surface.md`·`docs/schema-current.sql`·git의 유일한 편집자**,
+`npm run verify`로 **숫자를 만드는 유일한 층**, 위임 금지 영역(트리거·마이그레이션·귀속일·Guard 발동 경로) 직접 구현,
+Codex 티켓 분해·락·1차 검토. 설계 문서·`APP-PLAN`·`APP-ADR`은 읽기만 한다.
+
+**락은 `APP-BUILD.md` 맨 위 한 줄.** 락을 쓰는 것은 Claude Code이고, 괄호 안 이름은 보유자다.
+
+### 도입 시점에 발견된 규약 불일치 (Cowork 판단 대기)
+
+1. **함정 번호가 갈라졌다** — `AGENTS.md`의 7번은 '전역 클래스명 충돌'인데 `CLAUDE.md`·`README0722.md`의 7번은
+   'wait_extensions FK'다. 티켓이 "함정 7번"이라 쓰면 두 층이 서로 다른 것을 읽는다.
+   '전역 클래스명 충돌'은 원래 11개 목록에 없고 이 문서의 '미해결' 절에만 있었다.
+2. **push 권한** — `AGENT-CHAIN.md` §2·§9는 "`git push` 최종 승인은 사용자"인데,
+   `CLAUDE.md` 세션 종료 규칙과 `OPERATIONS.md` §7은 Claude Code가 세션 끝에 push한다. 2:1로 후자가 맞아 보인다.
+3. **티켓 파일 쓰기 권한** — `OPERATIONS.md` §2는 Codex에게 티켓의 '보고' 절을 채우라 하고
+   `_TEMPLATE.md`도 "담당이 채운다"인데, `AGENT-CHAIN.md` §3 표는 "Codex는 읽기만"이다.
+4. **기준선 숫자가 위층 파일에 하드코딩** — 213이 `CLAUDE.md`·`AGENTS.md`·`_TEMPLATE.md`(전부 Cowork 소유)에 박혀 있다.
+   숫자를 만드는 층은 그 파일을 못 고친다 → 예시는 `smoke A → B`로 두고 실수치는 이 문서 §기준선 하나만 보는 게 맞다.
+5. `CLAUDE.md`의 "`docs/*`의 유일한 편집자"는 넓다 — `docs/tickets/*`는 Cowork 발행이다.
 
 ## ★ 진행 중 — 8월 Guard v1 (APP-PLAN)
 
@@ -142,7 +173,7 @@ Guard v1이 1순위라는 건 안 바뀐다. Phase 1을 셋으로 쪼개 **UI를
 
 ### 다음 마이그레이션 번호
 
-`0012_life_model`이 최신. **알림 아웃박스=0013 · 인증(9월)=0014.**
+`0013_analysis_backfill`이 최신(디렉터리 확인 2026-07-30). **알림 아웃박스=0014 · 인증(9월)=0015.**
 추가 시 `test/smoke.ts`의 하드코딩 스키마 목록에도 파일명을 넣는다.
 
 ## raw 링크 (Chat이 직접 읽는 주소)
