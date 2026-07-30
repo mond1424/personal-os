@@ -5,7 +5,7 @@
 - branch: main
 - 마지막 커밋: `6a82d5e` fix(guard): 기기가 보낸 UTC 시각을 서버에서 정규화. **Guard 서버 계층(0010~0013)·동기화·큐·Life Model P1-a/b 전부 커밋됨.**
   - ✅ **0013까지 로컬·원격 모두 적용 + deploy 완료** (2026-07-29). 폰 APK도 갱신 완료.
-  - ⚠️ 2026-07-30 `normalizeIso` 수정은 **커밋됐으나 deploy 대기**(서버 코드 변경 — 사용자).
+  - ✅ 2026-07-30 21:55 배포 완료 — `normalizeIso`(UTC 정규화)·T-03·T-05까지 라이브.
 
 ## 에이전트 체인 (2026-07-30 도입)
 
@@ -479,13 +479,13 @@ typecheck 통과 / **smoke 233** / **front 193** / 실패 0
  그 앞 S1 분석 depth·S3′ 마감 유도 포함 누적치 — smoke 145→154, front 157→167.)
 
 ## 마이그레이션
-최신: **`0014_schema_titles`** — ✅ 로컬 적용 완료 (2026-07-30). ⚠️ **원격 적용 + deploy 대기 — 사용자**
+최신: **`0014_schema_titles`** — ✅ **로컬·원격 적용 + deploy 완료** (2026-07-30 21:55)
 - `0014_schema_titles` (T-02) — `lm_schema.body`의 각 필드에 `title`(표시 라벨). **`version`은 올리지 않는다** —
   라벨은 검증 의미를 바꾸지 않고, 올리면 기존 `lm_item` 전부에 §5 거짓 stale 신호가 나간다.
   `json_set`으로 지정 경로에만 얹는다(전체 치환은 원격 body가 갈라져 있으면 조용히 되돌린다). 재실행 멱등.
   `lm_schema`엔 트리거가 없고(0012의 유일한 트리거는 `trg_lm_item_version`) 대상 3행은 0012가 INSERT한 것이라
   모든 환경에 존재한다 — **0013의 "로컬 통과, 원격 실패"가 걸리는 경로가 아니다.** 로컬 적용 후 body 3건 육안 확인.
-- `0013_analysis_backfill` — ✅ **로컬·원격 적용 완료** (2026-07-29). ⚠️ deploy 대기
+- `0013_analysis_backfill` — ✅ **로컬·원격 적용 + deploy 완료** (적용 07-29 · deploy 07-30 21:55)
 - `0013_analysis_backfill` — 기존 analysis에 날짜 앵커 backfill. **트리거를 내렸다 원문 그대로 복원**한다(아래 사고 참조)
 - `0010_guard` — Guard v1: guard_events 재작성(`reaction`에 `ignored` 추가가 CHECK 변경이라 ALTER 불가) · `events` 보호 4필드 · `guard_modes`(ADR-019) · `watch_apps`(ADR-022)
 - `0011_guard_sync` — `guard_events.client_id` + 부분 UNIQUE 인덱스(NULL 제외). 로컬 우선 기록의 재시도 멱등 키(ADR-023)
@@ -599,9 +599,10 @@ typecheck 통과 / **smoke 233** / **front 193** / 실패 0
   티켓 §확인 절차 5단계, 특히 **status 3색 다크모드 가독**. 원격 환경이라 보류.
   → T-02의 라벨 확인과 **함께 본다**. 같은 화면을 두 티켓이 건드렸으므로, 실측에서 문제가 나오면
   **어느 변경이 원인인지 가리는 것이 먼저다**(T-01 = 목록·배지·시트 / T-02 = 라벨 문자열만).
-- ⚠️ **`0014` 원격 적용 + `deploy` 대기 — 사용자.** `--local`은 완료.
-  `npx wrangler d1 migrations apply personal-os --remote` → `npm run deploy` 순서.
-  **0013의 deploy도 아직 대기 중**이므로 이번 deploy가 `normalizeIso`(07-30 UTC 정규화)까지 함께 올린다.
+- ✅ **`0014` 원격 적용 + `deploy` 완료 (2026-07-30 21:55).** 확인 방법: `d1 migrations list --remote`가
+  "No migrations to apply", `deployments list`의 최신이 21:55 — 마지막 코드 커밋(T-05, 19:32) 이후다.
+  이 배포가 **`normalizeIso`(UTC 정규화) · T-03 `/api/guard/verify` · T-05 보호 규칙 UI**를 함께 올렸다.
+  → **밀린 배포는 없다.** 남은 것은 폰 실측뿐.
 - ✅ **마이그레이션 0006·0007·0008 원격 적용 + 코드 `deploy` 완료**(0008은 2026-07-26 확인). 라이브 = 최신(0009 제외).
 - ~~마이그레이션 0009 원격 적용 대기~~ — **낡은 항목이라 지웠다.** 0013까지 원격 적용 완료(2026-07-29,
   위 '마이그레이션' 절 기준). 지금 대기 중인 것은 `0014`뿐이다.
