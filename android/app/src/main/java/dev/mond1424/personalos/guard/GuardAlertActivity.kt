@@ -52,6 +52,24 @@ class GuardAlertActivity : Activity() {
         /** 기본 대기 초. 모드의 friction_mult가 곱해진다. */
         private const val WAIT_L3 = 60
         private const val WAIT_L4 = 180
+
+        /**
+         * 지금 떠 있는 화면 — Level 4 격상을 받을 대상 (T-04 · ADR-024).
+         *
+         * 왜 Intent가 아니라 참조인가: 배경 스레드에서 `startActivity`를 부르면
+         * ① 화면이 안 떠 있던 경우 **없던 화면이 갑자기 뜨고**(오버레이 권한이 없어 못 띄운
+         * 상황인데도) ② Android 10+의 백그라운드 액티비티 시작 제한에 걸린다.
+         * 살아 있는 화면이 없으면 **아무 일도 일어나지 않는 것**이 맞다.
+         *
+         * WeakReference + onDestroy 해제 — 화면이 죽은 뒤 참조가 남지 않게.
+         */
+        private var live: java.lang.ref.WeakReference<GuardAlertActivity>? = null
+
+        /** 승인이 왔을 때 호출. 떠 있는 화면이 없으면 조용히 지나간다. */
+        fun upgradeToLevel4() {
+            val a = live?.get() ?: return
+            a.runOnUiThread { runCatching { a.applyUpgrade(4) } }
+        }
     }
 
     private var notifId = -1
@@ -60,8 +78,15 @@ class GuardAlertActivity : Activity() {
     private var waitLeft = 0
     private val ticker = Handler(Looper.getMainLooper())
 
+    /** 마찰 화면에 들어갔는가 — 들어간 뒤에는 격상하지 않는다(아래 applyUpgrade). */
+    private var frictionEntered = false
+
+    /** 이번 Level의 대기 초. 격상되면 다시 계산된다. */
+    private var waitSec = 0
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        live = java.lang.ref.WeakReference(this)
         showOverLockScreen()
         blockBackGesture()
         setContentView(R.layout.activity_guard_alert)
@@ -94,12 +119,7 @@ class GuardAlertActivity : Activity() {
         accept.setOnClickListener { finishWith("accepted", null) }
 
         // Level 1~2는 마찰이 없다 — 알림·맥락 경고일 뿐 개입이 아니다(§6.1).
-        val mult = GuardSync.frictionMult(this)
-        val waitSec = when {
-            level >= 4 -> (WAIT_L4 * mult).toInt()
-            level == 3 -> (WAIT_L3 * mult).toInt()
-            else -> 0
-        }
+        waitSec = waitSecFor(level)
         if (level < 3) {
             openBtn.visibility = View.GONE
             accept.text = "확인"
@@ -107,6 +127,9 @@ class GuardAlertActivity : Activity() {
         }
 
         openBtn.setOnClickListener {
+            // 여기부터는 격상하지 않는다 — 사용자가 이미 대가를 치르기 시작했다.
+            // 사유를 쓰는 중에 대기가 60초에서 180초로 늘면 그건 마찰이 아니라 배신이다.
+            frictionEntered = true
             // 마찰 화면에 들어오면 소리·진동을 끈다.
             // 울리는 채로는 사유를 쓸 수 없고, 그건 마찰이 아니라 소음이다.
             // 우회로가 되지도 않는다 — 화면은 그대로 남고 반응이 기록되기 전까진 끝난 게 아니다.
@@ -132,6 +155,33 @@ class GuardAlertActivity : Activity() {
             if (text.isEmpty() || waitLeft > 0) return@setOnClickListener
             finishWith("override", text)
         }
+    }
+
+    private fun waitSecFor(lv: Int): Int {
+        val mult = GuardSync.frictionMult(this)
+        return when {
+            lv >= 4 -> (WAIT_L4 * mult).toInt()
+            lv == 3 -> (WAIT_L3 * mult).toInt()
+            else -> 0
+        }
+    }
+
+    /**
+     * Level 4 격상 — 검증이 승인했을 때 서버 응답을 받고 호출된다 (T-04 · ADR-024).
+     *
+     * **마찰에 들어간 뒤에는 올리지 않는다.** 사유를 쓰고 있는데 대기가 늘면 배신이다.
+     * 그 경우 개입은 Level 3으로 끝나고, 기록에도 3으로 남는다 — 실제로 그렇게 개입했으므로 맞다.
+     *
+     * 소리를 다시 시작하는 이유: `overrideSilentAtL4`가 **Level 4에서만** 무음 모드를 넘는다
+     * (GuardAlertPolicy.plan). 격상 전에 무음이라 조용했다면 지금부터는 울려야 한다.
+     * `start()`가 내부에서 `stop()`을 먼저 부르므로 두 번 겹치지 않는다.
+     */
+    private fun applyUpgrade(newLevel: Int) {
+        if (newLevel <= level || frictionEntered || isFinishing || isDestroyed) return
+        level = newLevel
+        waitSec = waitSecFor(level)
+        findViewById<TextView>(R.id.guard_level).text = "LEVEL $level"
+        GuardAlarmPlayer.start(this, level)
     }
 
     /**
@@ -218,6 +268,9 @@ class GuardAlertActivity : Activity() {
     }
 
     override fun onDestroy() {
+        // 격상 대상에서 뺀다 — 죽은 화면에 올려 봐야 아무 일도 안 일어나지만,
+        // 다음 발동이 이 참조를 덮기 전까지 남아 있을 이유가 없다.
+        if (live?.get() === this) live = null
         GuardAlarmPlayer.stop()   // 화면이 죽으면 소리도 죽는다 — 누수 방지
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             (blockBack as? OnBackInvokedCallback)?.let {

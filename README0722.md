@@ -119,7 +119,7 @@ npm run deploy
 5. **색은 CSS 변수만.** 다크 대응이 항상 짝으로 필요하다 (`:root[data-theme="dark"]` + `@media (prefers-color-scheme:dark)` 둘 다).
 6. **마감된 날은 트리거가 동결한다.** `daily.status='closed'`면 그 날의 logs·feelings·schedule_entries·daily는 수정·삭제 불가(일정은 **추가만** 가능·수정/삭제 불가). 프론트는 서버가 주는 `day_status`로 미리 판단하고, 추측하면 409로 드러난다.
 7. **`wait_extensions`는 `tasks(id)`를 FK로 참조한다.** `0005`가 삭제 잠금을 '마감 기록이 있을 때'로 좁혔다. task 삭제는 **연장 이력 → 항목 → task 순서**로 지운다.
-8. **`e2e.mjs`는 임시 D1로 격리 실행**한다. 실 `.wrangler/state`를 안 건드린다. 끝의 `spawnSync ETIMEDOUT`은 정리 단계 경고라 무해하다. (front는 실서버+jsdom이라 간헐 플레이크가 있을 수 있다 — 재실행으로 확인.)
+8. **`e2e.mjs`는 임시 D1로 격리 실행**한다. 실 `.wrangler/state`를 안 건드린다. **`spawnSync ETIMEDOUT`이 뜨면 진짜 hang이다 — 무시하지 않는다.** 전엔 "무해한 정리 단계 경고"라고 적혀 있었는데, 실제로는 `front.mjs`가 성공 경로에서 종료하지 않아(rAF 타이머가 남는다) 안전망 SIGKILL이 **유일한 종료 수단**이던 결함이었다. 193건이 전부 통과해도 `npm run front`가 `exit 1`이었고, 종료 코드를 믿는 셸·에이전트에는 매번 실패로 보였다. T-06이 `process.exit(0)`으로 없앴다. 이제 러너의 모든 대기(마이그레이션·헬스·시드·front)에 상한이 있어 **실패는 어디서 막혔는지 이름을 말한다.** (front는 실서버+jsdom이라 간헐 플레이크가 있을 수 있다 — 재실행으로 확인.)
 9. **압축 해제·작업은 `worker\` 바로 아래.** 한 겹 더 들어가면 마이그레이션이 `No migrations to apply`로 조용히 넘어간다.
 10. **마이그레이션은 배포보다 먼저** (`--local` 후 `--remote`).
 11. **`weeksOf`는 항상 6주를 돌려준다.** 캐러셀 높이 고정의 전제라 4·5주로 되돌리면 전환이 깨진다.

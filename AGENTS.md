@@ -60,7 +60,8 @@ Cloudflare Worker (Hono / TS) + D1 + `[assets]` 정적 서빙 + Capacitor Androi
 | `npm run front` | 격리 러너 `e2e.mjs`(임시 D1 + jsdom). 실 DB 불변 |
 | `npm run verify` | 위 셋을 한 번에 |
 
-- `e2e.mjs` 끝의 `spawnSync ETIMEDOUT`은 **무해하다**
+- `e2e.mjs`에서 `spawnSync ETIMEDOUT`이 뜨면 **진짜 hang이다.** 무시하지 않는다 —
+  러너의 모든 대기에 상한이 있으므로 실패는 어디서 막혔는지 이름을 말한다. 그 줄을 보고한다
 - front는 간헐 플레이크가 있다 — 재실행으로 확인한다
 - **검사가 옛 동작을 검사하고 있으면 검사를 고치고 그 사실을 보고한다**
 

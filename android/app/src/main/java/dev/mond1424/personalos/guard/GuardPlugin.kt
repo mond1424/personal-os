@@ -15,6 +15,7 @@ import com.getcapacitor.Plugin
 import com.getcapacitor.PluginCall
 import com.getcapacitor.PluginMethod
 import com.getcapacitor.annotation.CapacitorPlugin
+import org.json.JSONObject
 
 /**
  * 웹 ↔ 네이티브 다리.
@@ -340,6 +341,44 @@ class GuardPlugin : Plugin() {
         Thread {
             val (sent, left) = GuardEventQueue.flush(app)
             call.resolve(JSObject().put("sent", sent).put("remaining", left))
+        }.start()
+    }
+
+    /**
+     * Level 4 검증을 **한 번 불러 결과만 본다** (T-04 확인용 · ADR-024).
+     *
+     * 발동시키지 않는다 — 통제가 실제로 어떻게 답하는지만 확인하는 진단 통로다.
+     * `client_id`는 매번 새로 만들어 캐시에 걸리지 않게 한다(같은 것을 쓰면 두 번째부터
+     * `source: "cache"`만 보게 된다).
+     *
+     * 돌아오는 `source`로 통제를 읽는다:
+     *   `off` 킬 스위치 · `cap` 일일 상한 · `cache` 재사용 · `ai` 실제 호출 ·
+     *   `timeout`·`error` 판정 불가(전부 Level 3)
+     */
+    @PluginMethod
+    fun verifyNow(call: PluginCall) {
+        val app = context.applicationContext
+        val cause = call.getString("cause") ?: "diagnostic"
+        val eventId = call.getString("eventId")
+        Thread {
+            val v = GuardVerify.verify(
+                app, java.util.UUID.randomUUID().toString(), cause, eventId, null, null,
+            )
+            if (v == null) {
+                // 서버에 못 닿았다 — 실제 발동이었다면 Level 3으로 남았을 상황이다.
+                call.resolve(JSObject().put("reached", false).put("level", 3))
+                return@Thread
+            }
+            call.resolve(
+                JSObject()
+                    .put("reached", true)
+                    .put("level", v.level)
+                    .put("approved", v.approved)
+                    .put("source", v.source)
+                    .put("ai_used", v.aiUsed)
+                    .put("ai_verdict", v.aiVerdict ?: JSONObject.NULL)
+                    .put("reason", v.reason),
+            )
         }.start()
     }
 

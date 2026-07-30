@@ -29,7 +29,7 @@ Codex의 진입 파일은 `AGENTS.md`(이 문서를 원본으로 가리킨다 �
 
 ## 기준선 보고 규칙
 
-**현재 기준선: typecheck 통과 · smoke 216 · front 185 · 실패 0.**
+**현재 기준선: typecheck 통과 · smoke 233 · front 193 · 실패 0.**
 작업 후에는 반드시 이 숫자로 보고한다 — **"통과했다"가 아니라 "smoke 124 → 127"** 형식.
 검사가 옛 동작을 검사하고 있으면 **검사를 고치고 그 사실을 말한다**. 숫자가 안 맞으면 원인을 찾기 전엔 끝내지 않는다.
 
@@ -70,7 +70,7 @@ npm run deploy
 5. **색은 CSS 변수만** — 다크 대응은 항상 짝(`[data-theme="dark"]` + `@media prefers-color-scheme:dark`).
 6. **마감된 날은 트리거가 동결** — logs·feelings·schedule_entries·daily 수정/삭제 불가(일정은 추가만). 프론트는 `day_status`로 판단, 추측하면 409.
 7. **`wait_extensions` FK + `0005`** — 삭제는 '마감 기록 있을 때만' 차단. task 삭제 순서 = 연장이력→항목→task.
-8. **`e2e.mjs`는 격리 임시 D1** — 실 `.wrangler/state` 불변. 끝의 `spawnSync ETIMEDOUT`은 무해. front는 간헐 플레이크 가능(재실행 확인).
+8. **`e2e.mjs`는 격리 임시 D1** — 실 `.wrangler/state` 불변. **`spawnSync ETIMEDOUT`이 뜨면 진짜 hang이다** — `front.mjs`가 성공 경로에서 종료하지 않아 안전망 SIGKILL이 유일한 종료 수단이던 결함을 T-06이 없앴다(그전엔 193건 전부 통과해도 `exit 1`이었다). 러너의 모든 대기에 상한이 있으므로 **실패는 어디서 막혔는지 이름을 말한다.**
 9. **압축 해제·작업은 `worker\` 바로 아래** — 한 겹 더 들어가면 `No migrations to apply`.
 10. **마이그레이션은 배포보다 먼저** (`--local`→`--remote`).
 11. **`weeksOf`는 항상 6주** — 캐러셀 높이 고정의 전제.

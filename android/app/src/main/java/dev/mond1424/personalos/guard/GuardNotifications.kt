@@ -143,7 +143,14 @@ object GuardNotifications {
     ): FireResult {
         ensureChannels(ctx)
 
-        val high = level >= 3
+        // Level 4 후보는 **먼저 Level 3으로 낸다**(ADR-024 + ADR-021).
+        // 검증을 발동 앞에 두면 응답을 기다리는 동안 개입이 늦어지는데, 새벽에 6초 늦는
+        // 화면은 6초만큼 덜 막는다. 그래서 지연 0으로 띄우고 **승인이 오면 그 화면을 올린다.**
+        // 거부·실패·오프라인은 Level 3 그대로 — fail-closed(ADR-024가 fail-open을 기각했다).
+        val candidate4 = level >= 4
+        val fireLevel = if (candidate4) 3 else level
+
+        val high = fireLevel >= 3
 
         // ① 로컬 기록이 **가장 먼저** — 네트워크를 기다리지 않는다(ADR-023).
         // 화면·알림보다 앞이어야 client_id를 화면에 넘겨 반응을 같은 항목에 붙일 수 있다.
@@ -152,20 +159,20 @@ object GuardNotifications {
         val fgApp = runCatching { UsageProbe.currentApp(ctx) }.getOrNull()
         val snap = runCatching { GuardActivityLog.snapshot(ctx) }.getOrNull()
         val clientId = runCatching {
-            GuardEventQueue.recordFire(ctx, level, cause, eventId, fgApp, snap)
+            GuardEventQueue.recordFire(ctx, fireLevel, cause, eventId, fgApp, snap)
         }.getOrNull()
 
         val alert = Intent(ctx, GuardAlertActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-            putExtra(GuardAlertActivity.EX_LEVEL, level)
+            putExtra(GuardAlertActivity.EX_LEVEL, fireLevel)
             putExtra(GuardAlertActivity.EX_TITLE, title)
             putExtra(GuardAlertActivity.EX_BODY, body)
             putExtra(GuardAlertActivity.EX_EVENT, eventId)
-            putExtra(GuardAlertActivity.EX_NOTIF_ID, ID_BASE + level)
+            putExtra(GuardAlertActivity.EX_NOTIF_ID, ID_BASE + fireLevel)
             putExtra(GuardAlertActivity.EX_CLIENT_ID, clientId)
         }
         val pi = PendingIntent.getActivity(
-            ctx, ID_BASE + level, alert,
+            ctx, ID_BASE + fireLevel, alert,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
 
@@ -213,12 +220,36 @@ object GuardNotifications {
         // ④ 알림 발송 — 권한이 없으면 건너뛴다. **화면은 이미 떴다**(막지 않는다).
         val cp = canPost(ctx)
         val posted = cp && runCatching {
-            NotificationManagerCompat.from(ctx).notify(ID_BASE + level, n)
+            NotificationManagerCompat.from(ctx).notify(ID_BASE + fireLevel, n)
             true
         }.getOrDefault(false)
 
         // 발동 흔적 — 무인 테스트에서 아침에 확인할 유일한 근거.
-        runCatching { GuardSync.noteFire(ctx, level, shown, posted) }
+        runCatching { GuardSync.noteFire(ctx, fireLevel, shown, posted) }
+
+        // ⑤ Level 4 검증 — **화면이 뜬 뒤에** 백그라운드로. 여기까지 오는 데 네트워크가 없다.
+        // 승인이면 이미 뜬 화면을 올리고, 어떤 결과든 ai_used·ai_verdict를 기록에 싣는다
+        // (ADR-024 ⑥ — 안 실으면 그 호출이 일일 상한에 안 세어져 통제 ③이 뚫린다).
+        if (candidate4 && clientId != null) {
+            val app = ctx.applicationContext
+            Thread {
+                val v = runCatching {
+                    GuardVerify.verify(app, clientId, cause, eventId, fgApp, snap)
+                }.getOrNull()
+                // 판정을 아예 못 받았으면(오프라인·서버 무응답) 'unavailable' — 판정이 아니라
+                // "부를 수 없었다"는 기록이다. 그래도 남겨야 그 밤을 나중에 읽을 수 있다.
+                runCatching {
+                    GuardEventQueue.amendFire(
+                        app, clientId,
+                        level = if (v?.upgrades == true) 4 else null,
+                        aiUsed = v?.aiUsed ?: 0,
+                        aiVerdict = v?.aiVerdict ?: "unavailable",
+                    )
+                }
+                // 화면이 안 떴으면 no-op다 — 배경에서 액티비티를 새로 띄우지 않는다.
+                if (v?.upgrades == true) runCatching { GuardAlertActivity.upgradeToLevel4() }
+            }.start()
+        }
 
         return FireResult(posted = posted, shown = shown, canPost = cp, canOverlay = co)
     }

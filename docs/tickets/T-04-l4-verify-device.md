@@ -1,0 +1,202 @@
+# T-04 — 기기가 Level 4 검증을 부른다
+
+**발행** Cowork · 2026-07-31 · **담당** Claude Code (위임 금지 — Guard 발동 경로) · **상태** 🔄 구현 완료 · **APK 재빌드 + 실측 대기**
+
+---
+
+## 목표
+
+Level 4 발동 직전에 기기가 `POST /api/guard/verify`를 부르고, **승인일 때만 Level 4로 간다.**
+거부·실패·오프라인은 전부 **Level 3**이다.
+
+**왜** — T-03이 서버에 엔드포인트를 놨지만 **기기가 아직 안 부른다.** ADR-024가 Accepted인데
+격상이 여전히 무조건이다. 지금 Level 4는 가장 비싼 개입(화면 점유 + 무음 무시 + 30분 재발동)인데
+아무 관문도 없다.
+
+## 어려운 지점 — 지연
+
+ADR-021은 "발동이 네트워크에 걸리면 안 된다"이다. 검증을 발동 앞에 그냥 두면
+**응답을 기다리는 동안 개입이 늦어진다.** 새벽에 6초 늦는 화면은 6초만큼 덜 막는다.
+
+### 결정 — 먼저 띄우고, 승인이 오면 격상한다
+
+```
+알람 발동
+  → 즉시 Level 3으로 화면·소리를 낸다          (지연 0, ADR-021 유지)
+  → 동시에 verify 요청 (상한 6초)
+       승인          → 그 화면을 Level 4로 올린다
+       거부·실패·오프라인 → Level 3 그대로
+```
+
+**격상은 마찰 화면(사유 입력)에 들어가기 전까지만 한다.** 이미 사유를 쓰고 있는데
+대기 시간이 60초에서 180초로 늘면 그건 마찰이 아니라 배신이다.
+
+이 설계가 기기 현실과 안 맞으면(예: 화면이 뜬 뒤 레벨 상향이 `GuardAlertActivity` 구조상
+재작성을 부른다) **멈추고 올린다** — 대안은 "발동 전 짧은 대기"이고, 그 판단은 위층이 한다.
+
+## 반드시 들어가는 것 — `record()`에 AI 결과를 싣는다
+
+```
+GuardEventQueue.recordFire(... ai_used, ai_verdict ...)
+```
+
+**이것이 일일 상한의 전제다**(ADR-024 ⑥). 검증 결과는 서버가 저장하지 않는다 —
+검증만 하고 발동하지 않은 밤의 유령 행이 개입 이력을 오염시키기 때문이다.
+기기가 안 실으면 **그 호출이 상한에 안 세어지고 통제 ③이 뚫린다.**
+
+`record()`는 이미 두 필드를 입력으로 받는다. 서버 변경 없이 기기만 채우면 된다.
+
+## 범위
+
+```
+android/.../guard/GuardVerify.kt        (신규) 검증 호출 · 상한 · 실패 시 Level 3
+android/.../guard/GuardNotifications.kt fire()에서 Level 4 후보를 가른다
+android/.../guard/GuardAlertActivity.kt 격상 수용 (마찰 진입 전까지)
+android/.../guard/GuardEventQueue.kt    ai_used · ai_verdict 적재
+android/.../guard/GuardPlugin.kt        확인용 메서드
+```
+
+**서버는 건드리지 않는다.** `/api/guard/verify`는 완성돼 있고 smoke 검사가 지킨다.
+
+## 금지
+
+| 하지 말 것 | 왜 |
+|---|---|
+| 검증 실패에 Level 4 발동(fail-open) | ADR-024가 명시적으로 기각했다 |
+| 검증 응답을 기다리느라 화면을 늦추는 것 | ADR-021. 개입이 네트워크에 걸린다 |
+| Level 1~3에서 verify를 부르는 것 | 격상 전용이다. 서버가 400으로 거부한다 |
+| 마찰 화면 진입 후 대기 시간 상향 | 사용자가 이미 대가를 치르기 시작했다 |
+| `ai_used`·`ai_verdict`를 안 싣는 것 | 통제 ③이 뚫린다 |
+| 검증 결과를 기기에 오래 캐시 | 캐시는 서버가 진다(ADR-024 ②). 두 곳에 두면 갈라진다 |
+
+## 읽을 것
+
+- `APP-ADR.md` ADR-024 — 특히 **평가 순서** 절과 ⑥이 발동 시점인 이유
+- `APP-ADR.md` ADR-021 — 발동이 네트워크에 걸리면 안 되는 이유
+- `docs/tickets/T-03-l4-verify-server.md` 구현 메모 — 서버가 무엇을 언제 돌려주는가
+- `src/services/guard.ts` `verifyLevel4` — `source` 값의 의미
+- `GUARD-DEV-LOOP.md` — 빌드·설치·권한 절차
+
+## 완료 조건
+
+```
+typecheck 통과 · smoke 233(변화 없음) · front 193(변화 없음) · 실패 0
+```
+
+**서버 검사는 안 늘어난다** — 이 티켓은 기기 코드다.
+Kotlin에는 검사 러너가 없으므로 **완료 판정이 사용자 실측에 걸린다.** 아래를 티켓에 남긴다.
+
+## 확인 절차 (사용자) — APK 재빌드 필요
+
+앱 콘솔에서:
+
+```js
+const G = Capacitor.Plugins.Guard;
+
+// ① 킬 스위치를 켠 상태(기본)에서 Level 4 발동
+await G.scheduleIn({ seconds: 60, level: 4 });
+```
+
+```
+□ 화면이 즉시 뜬다 (검증을 기다리며 늦지 않는다)
+□ 승인이면 대기 180초 · 거부·실패면 60초
+□ 비행기 모드에서 → Level 3으로 뜨고, 화면은 그대로 뜬다 (fail-closed)
+□ 발동 뒤 (await Api.guardEvents())[0] 에 ai_used·ai_verdict 가 실려 있다
+□ 킬 스위치 off → 항상 Level 4, ai_used: 0
+```
+
+마지막 두 개가 이 티켓의 진짜 완료 조건이다 — **넷째가 없으면 통제 ③이 뚫린 채 배포된다.**
+
+---
+
+## 보고 (담당이 채운다)
+
+```
+티켓: T-04
+바꾼 파일: android/.../guard/GuardVerify.kt(신규) · GuardNotifications.kt · GuardAlertActivity.kt
+          GuardEventQueue.kt · GuardPlugin.kt
+          README0722.md · STATE.md · APP-BUILD.md (곁일 — 아래)
+기준선: typecheck 통과 · smoke 233(무변경) · front 193(무변경) · 실패 0 · verify exit 0
+        **Kotlin: `:app:compileReleaseKotlin` BUILD SUCCESSFUL**
+설계와 어긋난 점: 없음
+막힌 것: 없음. **완료 판정이 실측에 걸려 있다** — Kotlin에는 검사 러너가 없다.
+```
+
+## 구현 메모 (Claude Code · 07-31)
+
+락은 01:33에 걸고 커밋 직전에 풀었다.
+
+**Kotlin에 검사 러너가 없으므로 최소한 컴파일은 통과시켰다** — `:app:compileReleaseKotlin`
+BUILD SUCCESSFUL(1m 49s). 경고 하나는 기존 `onBackPressed`(deprecated 멤버 오버라이드)로 미접촉 부분이다.
+**컴파일은 "동작한다"가 아니다** — 아래 확인 절차가 이 티켓의 완료 조건이다.
+
+### 흐름
+
+```
+fire(level=4) 호출
+  → candidate4 = true · fireLevel = 3
+  → ① 로컬 기록(level 3) ② 화면 ③ 알림   ← 여기까지 네트워크 0, 지연 0
+  → ④ 백그라운드 스레드: verify(6초)
+       승인   → amendFire(level=4, ai_*) + 떠 있는 화면을 Level 4로
+       그 외  → amendFire(ai_*만) · Level 3 그대로
+```
+
+### 격상을 Intent가 아니라 **살아 있는 화면 참조**로 한 이유
+
+`startActivity`를 배경 스레드에서 부르면 두 가지가 깨진다:
+① 오버레이 권한이 없어 **화면을 못 띄웠던 상황에서도 없던 화면이 갑자기 뜬다**
+② Android 10+의 백그라운드 액티비티 시작 제한에 걸린다
+
+살아 있는 화면이 없으면 **아무 일도 일어나지 않는 것**이 맞다. `WeakReference` +
+`onDestroy` 해제로 잡고, `upgradeToLevel4()`는 대상이 없으면 조용히 지나간다.
+
+### 기록되는 Level — 3으로 넣고 승인되면 4로 고친다
+
+로컬 기록은 발동 즉시 남아야 한다(ADR-023). 그 시점엔 판정이 없으므로 **실제로 낸 Level 3**으로 넣고,
+승인이 오면 `amendFire`가 큐에 있는 그 항목의 `level`을 4로 고친다 — **기록이 실제 개입 수위를 따라간다.**
+6초 안이라 항목은 거의 항상 아직 로컬에 있다. 이미 밀어 올려 빠졌으면 조용히 지나간다
+(서버 upsert는 반응만 채우므로 뒤늦게 못 고친다) — 그 경우 기록은 3으로 남고, 그것도 사실이다.
+
+### `ai_verdict` 매핑
+
+| `source` | `ai_verdict` | 왜 |
+|---|---|---|
+| `ai` · `cache` | `approve` / `deny` | 실제 판정 |
+| `cap` · `timeout` · `error` | `unavailable` | 판정이 아니라 "부를 수 없었다" — 서버가 이걸 캐시하지 않는 이유와 같다 |
+| `off` | (없음) | 킬 스위치는 **결정론 복귀**다. AI 판정이 아니므로 비운다 |
+| 서버에 못 닿음 | `unavailable` | 그래도 남겨야 그 밤을 나중에 읽을 수 있다 |
+
+`ai_used`는 **서버가 세는 값을 그대로 싣는다** — 상한(③)의 근거가 한 곳이어야 한다.
+
+### 소리를 다시 시작한다
+
+`overrideSilentAtL4`는 **Level 4에서만** 무음 모드를 넘는다(`GuardAlertPolicy.plan`).
+격상 전에 무음이라 조용했다면 지금부터는 울려야 하므로 `applyUpgrade`가 플레이어를 다시 시작한다.
+`start()`가 내부에서 `stop()`을 먼저 부르므로 두 겹으로 울지 않는다.
+
+### 타임아웃 6초 — 서버(8초)보다 짧게
+
+서버가 8초를 다 쓰는 밤이면 이미 격상을 기다릴 이유가 없다. 기기가 먼저 포기하고 Level 3으로 남는다.
+
+### 마찰 진입 후에는 격상하지 않는다
+
+`frictionEntered` 플래그. 사유를 쓰는 중에 대기가 60초 → 180초로 늘면 마찰이 아니라 배신이다(§금지).
+그 경우 개입은 Level 3으로 끝나고 **기록도 3으로 남는다** — 실제로 그렇게 개입했으므로 맞다.
+
+### 검증을 부르지 않는 경로
+
+`fire()`의 호출부는 다섯인데 Level 4가 오는 곳은 `AlarmReceiver`(서버 `fires[]`의 +30분들)와
+진단용 `testNotify`·`scheduleIn`뿐이다. `GuardWatch`(감지)는 Level 2~3만 낸다 —
+**Level 1~3은 `GuardVerify`를 타지 않는다**(ADR-021 · §금지 3).
+
+---
+
+## ⚠️ 서버 쪽에서 발견한 구멍 하나 (T-04 범위 밖 — 판단 필요)
+
+`verifyLevel4`의 `stay3()`가 `timeout`·`error`에도 **`ai_used: 0`을 돌려준다.**
+그런데 **타임아웃은 모델 호출이 이미 나간 뒤**일 수 있다 — 돈은 나갔는데 일일 상한(통제 ③)에는
+안 세어진다. 8초 타임아웃이 반복되는 밤이면 상한이 사실상 없는 것이 된다.
+
+기기는 서버가 주는 값을 그대로 싣는 쪽이 맞으므로(근거가 한 곳이어야 한다) 여기서 고치지 않았다.
+**서버를 건드리는 것은 이 티켓의 금지 사항이기도 하다.** 고친다면 `timeout`은 `ai_used: 1`이어야 한다 —
+호출이 나갔다는 사실이 상한의 대상이기 때문이다. Cowork 판단.

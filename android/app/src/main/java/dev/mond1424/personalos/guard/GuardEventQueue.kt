@@ -78,6 +78,28 @@ object GuardEventQueue {
     }
 
     /**
+     * 발동 항목에 **검증 결과를 덧쓴다** (ADR-024 ⑥ — 기록은 발동 시점에 남는다).
+     *
+     * 서버는 검증 결과를 저장하지 않는다. 검증만 하고 발동하지 않은 밤의 유령 행이
+     * 개입 이력을 오염시키기 때문이다 — 그래서 **기기가 실어 보내는 것이 상한의 전제**다.
+     * 안 실으면 그 호출이 `guardAiCallsOn`에 안 세어지고 통제 ③이 뚫린다.
+     *
+     * `level`은 격상이 승인됐을 때만 넘긴다. 발동 자체는 Level 3으로 났고(지연 0),
+     * 승인이 오면 그 화면이 Level 4가 되므로 **기록도 실제 개입 수위를 따라가야 한다.**
+     *
+     * 이미 밀어 올려 큐에서 빠졌으면 조용히 지나간다 — 서버의 upsert는 반응만 채우므로
+     * level·ai_*를 뒤늦게 고칠 수 없다. 발동 직후 6초 안이라 실제로는 거의 로컬에 있다.
+     */
+    fun amendFire(ctx: Context, clientId: String, level: Int?, aiUsed: Int, aiVerdict: String?) {
+        val list = read(ctx)
+        val hit = list.firstOrNull { it.optString("client_id") == clientId } ?: return
+        if (level != null) hit.put("level", level)
+        hit.put("ai_used", aiUsed)
+        hit.put("ai_verdict", aiVerdict ?: JSONObject.NULL)
+        write(ctx, list)
+    }
+
+    /**
      * 반응을 같은 항목에 붙인다.
      * 이미 밀어 올려 큐에서 빠졌으면 **반응만 담은 항목을 새로 넣는다** —
      * 서버가 client_id로 찾아 반응만 채운다(record()의 upsert 경로).
