@@ -716,4 +716,11 @@ ok("콘솔 오류 없음", errors.length === 0, errors.slice(0, 3).join(" / "));
 
 console.log(`\n${"=".repeat(46)}\n통과 ${passN} · 실패 ${fails.length}`);
 if (fails.length) { console.log("실패:\n  - " + fails.join("\n  - ")); process.exit(1); }
-console.log("프론트 렌더 경로 정상 — 실 API 응답으로 조립됨.");
+// 성공 경로에도 **명시적으로 끝낸다.** 실패 경로는 위에서 exit(1)을 부르는데 성공은 그냥 끝나
+// 있었고, `pretendToBeVisual` jsdom 두 개가 rAF 타이머를 계속 돌려 이벤트 루프가 비지 않는다 →
+// 프로세스가 요약을 찍고도 **살아 있었다.**
+// 그동안 `e2e.mjs`의 안전망 SIGKILL(180초)이 유일한 종료 수단이었고, 그래서 검사가 다 통과해도
+// `npm run front`가 **exit 1**이었다 — 함정 8의 "끝의 ETIMEDOUT은 무해하다"가 그 흔적이다.
+// 실측: 검사 자체는 ~75초다. 옛 180초 창의 나머지 ~105초는 전부 이 hang이었다.
+// 파이프로 나가는 stdout은 비동기라 write 콜백에서 나간다 — 요약이 잘리면 숫자를 잃는다.
+process.stdout.write("프론트 렌더 경로 정상 — 실 API 응답으로 조립됨.\n", () => process.exit(0));
