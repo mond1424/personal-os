@@ -24,7 +24,7 @@
 ## 락 — 지금 누가 무엇을 들고 있나
 
 ```
-WIP: (없음)
+WIP: T-01 (codex, 07-30 10:51) — public/api.js, public/index.html, public/app.js, public/style.css, test/front.mjs
 ```
 
 > 형식: `WIP: T-07 (codex, 07-30 14:20) — public/app.js, public/index.html`
