@@ -63,7 +63,7 @@
 | POST `/api/lm/import-me` | — | `{imported, skipped}` · 원본 `me`는 지우지 않는다 · 멱등 | `lifemodel.importFromMe` |
 | PATCH `/api/lm/item/:id` | `{title?, body?, data?}` | 갱신된 항목(version 포함) | `lifemodel.update` |
 | DELETE `/api/lm/item/:id` | — | `{id, deleted}` | `lifemodel.remove` |
-| GET `/api/lm/:section/schema` | — | `{section, version, schema, fields}` — 검증·프롬프트·폼이 같은 것을 읽는다 | `lifemodel.schema` |
+| GET `/api/lm/:section/schema` | — | `{section, version, schema, fields}` — 검증·프롬프트·폼이 같은 것을 읽는다. `fields[]` = `{key, type, title, required, enum?, itemType?}` · **`title`은 표시 라벨(0014), 없으면 `key`로 폴백** | `lifemodel.schema` |
 | GET `/api/lm/:section` | — | 항목 rows(data는 객체로 복원) | `lifemodel.list` |
 | POST `/api/lm/:section` | `{title, body?, data?}` | `{id, section, title, schema_version}` (201) · **data는 스키마 검증 통과분만** | `lifemodel.create` |
 | PUT `/api/events/:id/protect` | `{protect_from?, protect_level?, protect_sleep_min?, protect_prep_min?}` 또는 `{protect:false}` | `{id, protected, ...}` · **본문 수정과 분리**(마감된 날에도 부착 가능) | `events.setProtect` |

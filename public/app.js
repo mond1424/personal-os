@@ -1420,8 +1420,11 @@ function renderEducation() {
   });
 }
 
-function educationFieldLabel(key) {
-  return String(key).replace(/_/g, " ");
+// 라벨은 스키마가 준다(0014) — 프런트에 매핑을 두면 v2의 새 필드만 영문으로 남는다.
+// fieldsOf가 이미 title→key 폴백을 끝내 놨지만, 옛 배포가 title 없이 응답할 수 있으니 여기서도 받는다.
+function educationFieldLabel(field) {
+  if (field && typeof field === "object") return field.title || String(field.key).replace(/_/g, " ");
+  return String(field).replace(/_/g, " ");
 }
 
 function educationFieldControl(field, data) {
@@ -1443,7 +1446,7 @@ function educationFieldControl(field, data) {
     control = '<input class="lm-education-input" type="' + inputType + '" data-lm-education-key="' + esc(key) + '" value="' + esc(raw) + '"' + hint + ">";
   }
   return '<label class="lm-education-field"><span class="lm-education-field-label">' +
-    esc(educationFieldLabel(key)) + required + "</span>" + control + "</label>";
+    esc(educationFieldLabel(field)) + required + "</span>" + control + "</label>";
 }
 
 function openEducationForm(id = null) {
@@ -1467,19 +1470,19 @@ function collectEducationForm() {
     const input = inputs.find((el) => el.dataset.lmEducationKey === String(field.key));
     const raw = (input?.value || "").trim();
     const isArray = field.type === "array";
-    if (field.required && !raw) return { error: educationFieldLabel(field.key) + " 항목은 필수예요" };
+    if (field.required && !raw) return { error: educationFieldLabel(field) + " 항목은 필수예요" };
     if (!raw) continue;
     if (isArray) {
       const values = raw.split(/[,\n]/).map((v) => v.trim()).filter(Boolean);
-      if (field.required && !values.length) return { error: educationFieldLabel(field.key) + " 항목은 필수예요" };
+      if (field.required && !values.length) return { error: educationFieldLabel(field) + " 항목은 필수예요" };
       if (field.itemType === "number") {
         const numbers = values.map(Number);
-        if (numbers.some((v) => !Number.isFinite(v))) return { error: educationFieldLabel(field.key) + "은 숫자로 적어 주세요" };
+        if (numbers.some((v) => !Number.isFinite(v))) return { error: educationFieldLabel(field) + "은 숫자로 적어 주세요" };
         data[field.key] = numbers;
       } else data[field.key] = values;
     } else if (field.type === "number") {
       const value = Number(raw);
-      if (!Number.isFinite(value)) return { error: educationFieldLabel(field.key) + "은 숫자로 적어 주세요" };
+      if (!Number.isFinite(value)) return { error: educationFieldLabel(field) + "은 숫자로 적어 주세요" };
       data[field.key] = value;
     } else data[field.key] = raw;
   }

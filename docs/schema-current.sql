@@ -1,6 +1,8 @@
 -- docs/schema-current.sql — 스키마 스냅샷 (자동 생성)
 -- migrations/ 전체를 인메모리 sqlite에 적용한 뒤 sqlite_master를 덤프한 것.
--- 최신 마이그레이션: 0012_life_model.sql  ·  갱신 2026-07-29
+-- 최신 마이그레이션: 0014_schema_titles.sql  ·  갱신 2026-07-30
+-- 0013·0014는 DDL을 바꾸지 않아 아래 덤프는 0012와 동일하다:
+--   0013 = analyses backfill(트리거를 원문 그대로 복원) · 0014 = lm_schema.body에 title 얹기(UPDATE만).
 -- 손으로 고치지 않는다 — 마이그레이션을 추가하고 다시 덤프한다 (CLAUDE.md 세션 종료 규칙).
 
 

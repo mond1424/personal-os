@@ -15,6 +15,12 @@ export interface SchemaNode {
   enum?: unknown[];
   items?: SchemaNode;
   properties?: Record<string, SchemaNode>;
+  /**
+   * 표시 라벨(0014). **검증에는 쓰이지 않는다** — `validate`는 이 키를 보지 않는다.
+   * 폼이 영문 키를 그대로 보여주지 않게 하려고 스키마에 둔다: 라벨을 프런트에 두면
+   * 스키마가 v2로 오를 때 새 필드만 영문으로 남고 그 어긋남이 조용히 생긴다(§2.2).
+   */
+  title?: string;
 }
 
 export interface ValidationIssue { path: string; message: string }
@@ -80,12 +86,15 @@ export function parseSchema(body: string): SchemaNode | null {
  * 폼을 손으로 만들면 스키마와 어긋나는 순간이 온다.
  */
 export function fieldsOf(schema: SchemaNode): Array<{
-  key: string; type: string; required: boolean; enum?: unknown[]; itemType?: string;
+  key: string; type: string; title: string; required: boolean; enum?: unknown[]; itemType?: string;
 }> {
   const req = new Set(schema.required ?? []);
   return Object.entries(schema.properties ?? {}).map(([key, s]) => ({
     key,
     type: s.type ?? "string",
+    // 라벨은 항상 실어 보낸다 — 폴백을 여기서 끝내면 소비처 셋이 각자 폴백을 짜지 않는다.
+    // 스키마가 늘 완전하다고 가정하지 않는다: v2에서 새 필드에 title을 빼먹으면 key로 뜬다.
+    title: typeof s.title === "string" && s.title.trim() ? s.title : key,
     required: req.has(key),
     ...(s.enum ? { enum: s.enum } : {}),
     ...(s.items?.type ? { itemType: s.items.type } : {}),

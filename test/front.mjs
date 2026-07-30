@@ -171,6 +171,17 @@ ok("배열 필드는 itemType을 보고 조립된다",
   ($("#lm-education-fields [data-lm-education-key='prerequisites']")?.getAttribute("placeholder") || "").includes("string"));
 await ev("refreshEducation()"); await sleep(200);   // 흔든 스키마를 서버 값으로 원복 — 뒤 검사가 조작된 것을 보면 안 된다
 
+// 라벨도 스키마가 준다(0014). 현재 라벨과 같은 값을 확인하는 것만으로는 하드코딩과 구별되지 않으므로,
+// title을 지우면 key로 돌아가는 것까지 본다.
+const eduLabels = () => [...$("#lm-education-fields").querySelectorAll(".lm-education-field-label")]
+  .map((el) => el.textContent.replace(/·\s*필수$/, "").trim());
+w.openEducationForm(); await sleep(120);
+ok("폼 라벨이 스키마의 title", eduLabels().includes("과목명") && eduLabels().includes("선수과목"), eduLabels().join(","));
+ev(`S.educationSchema.fields = S.educationSchema.fields.map((f) => (f.key === "name" ? { ...f, title: undefined } : f))`);
+w.openEducationForm(); await sleep(120);
+ok("title이 없으면 라벨이 key로 돌아간다", eduLabels().includes("name") && !eduLabels().includes("과목명"), eduLabels().join(","));
+await ev("refreshEducation()"); await sleep(200);
+
 // 필수 필드는 서버 400 이전에 프런트가 막는다
 w.openEducationForm(); await sleep(120);
 $("#lm-education-fields [data-lm-education-key='status']").value = "planned";

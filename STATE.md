@@ -55,8 +55,10 @@ Cowork 발행 → Claude Code 배정·분해 → Codex 구현 → Claude Code 1�
 1. **검사가 목적을 못 지켰다** — 숫자(167→173)는 늘었는데 "폼이 스키마로 조립된다"는 검사가
    **하드코딩해도 통과하는 모양**이었고, 완료 조건 3번(필수 필드 프런트 차단)·1번 절반(빈 상태 문구)·
    삭제 경로가 미검사였다. 추가·수정도 `Api.lmCreate` 직접 호출이라 폼 경로가 검사에서 빠져 있었다.
-   → 검사 6건을 16건으로 교체(front 183). **합격 기준을 분해 절에만 적어 뒀더니 반영되지 않았다** —
-   `_TEMPLATE.md`의 '완료 조건' 절에 "하드코딩해도 통과하는 검사는 실패로 본다"가 들어가야 한다(Cowork).
+   → 검사 6건을 16건으로 교체(front 183). **합격 기준을 분해 절에 미리 적어 뒀는데도 반영되지 않았다.**
+   → **Cowork 판단(`AGENT-CHAIN.md` §8 보강)**: 구현자는 자기가 통과시킬 검사를 쓰므로 — 악의가 아니라
+   같은 이해로 짜기 때문에 — 합격 기준은 **티켓이 아니라 검토에서 강제한다.** 미리 적는 것으로는 안 된다.
+   검사 하나를 볼 때 묻는 것: **구현을 잘못했다면 이 검사가 빨간불이 되는가.**
 2. **잠재 결함 2건** — ① `renderMe()`의 `Promise.all`에 `lmSchema`가 들어가 **Education 스키마가
    비활성화되면 Me 탭이 통째로 안 그려진다**(호출부 5곳 모두 await 없음 → unhandled rejection).
    레지스트리는 버전을 올리려고 둔 것이라 `active` 전환은 예정된 동작이다 → `.catch`로 격리.
@@ -66,9 +68,25 @@ Cowork 발행 → Claude Code 배정·분해 → Codex 구현 → Claude Code 1�
 **Codex의 front 실행이 EPERM으로 죽어 수치를 못 냈다**(`xdg.config\.wrangler\logs` 쓰기 권한).
 이 층에서는 재현되지 않았다 — 셸 환경 문제이고 코드와 무관하다. 숫자 없이 닫지 않고 막힌 것으로 올린 건 규약대로다.
 
-**남은 판단(사용자·Cowork)**: 폼 필드 라벨이 영문 raw다(`credits`·`prerequisites`). 라벨 매핑을 프런트에 두면
-'스키마 필드 하드코딩 금지'와 부딪힌다 → `lm_schema` body에 `label`을 넣는 쪽이 취지에 맞지만 마이그레이션이 붙는다.
-**⚠️ deploy 대기**(프런트 변경 — APK 재빌드는 불필요).
+**라벨 문제는 T-02로 닫혔다**(아래) — `lm_schema`에 `title`을 넣는 쪽으로 결정됐다.
+
+### T-02 — 스키마가 필드 라벨을 준다 (0014, 2026-07-30)
+
+**위임 금지 영역**(마이그레이션)이라 Claude Code가 직접 했다. T-01이 남긴 "폼 라벨이 영문 raw" 문제의 답.
+프런트에 매핑을 두지 않은 근거는 §2.2 — 소비처 셋이 **같은 것**을 읽는다. 라벨만 프런트에 두면
+스키마가 v2로 오를 때 새 필드만 영문으로 남고 **그 어긋남이 조용히 생긴다.**
+
+- `0014` — `json_set`으로 세 섹션 body에 `title`만 얹는다. **`version` 불변**(라벨은 검증 의미가 아니다 →
+  올리면 §5 거짓 stale). 전체 치환 대신 `json_set`을 쓴 이유는 원격 body가 갈라져 있어도 되돌리지 않기 위해서다
+- `lib/schema.ts` — `SchemaNode.title` + `fieldsOf`가 `title` 실어 보냄. **폴백(`title ?? key`)을 서버에서 끝낸다** —
+  소비처 셋이 각자 폴백을 짜면 그게 어긋나는 자리다. `validate`는 `title`을 보지 않는다(부분집합 안 넓힘)
+- `app.js` — `educationFieldLabel(field)`가 `field.title`을 쓴다. 옛 배포가 `title` 없이 응답할 수 있어 프런트도 폴백 유지
+- 라벨: 과목명·상태·학기·성적·학점·선수과목·메모 / 기간·연결 기간·지표·메모 / 요약
+- **`status`의 enum 값 라벨(`completed`→'수료' 등)은 범위 밖.** 값 라벨은 `enum`과 표시명을 짝지어야 하고
+  스키마 부분집합에 새 키워드가 붙는다 — 필요해지면 별도 티켓
+
+검사는 **하드코딩과 구별되는 쪽**으로 넣었다: smoke는 `title` 없는 섹션을 넣어 `key` 폴백을 보고,
+front는 `title`을 지워 라벨이 `key`로 **돌아가는 것**까지 본다.
 
 ## ★ 진행 중 — 8월 Guard v1 (APP-PLAN)
 
@@ -206,7 +224,7 @@ Guard v1이 1순위라는 건 안 바뀐다. Phase 1을 셋으로 쪼개 **UI를
 
 ### 다음 마이그레이션 번호
 
-`0013_analysis_backfill`이 최신(디렉터리 확인 2026-07-30). **알림 아웃박스=0014 · 인증(9월)=0015.**
+`0014_schema_titles`가 최신(T-02, 2026-07-30). **알림 아웃박스=0015 · 인증(9월)=0016.**
 추가 시 `test/smoke.ts`의 하드코딩 스키마 목록에도 파일명을 넣는다.
 
 ## raw 링크 (Chat이 직접 읽는 주소)
@@ -244,8 +262,9 @@ Guard v1이 1순위라는 건 안 바뀐다. Phase 1을 셋으로 쪼개 **UI를
 - style.css      https://raw.githubusercontent.com/mond1424/personal-os/main/public/style.css
 
 ## 기준선
-typecheck 통과 / **smoke 213** / **front 183** / 실패 0
-(T-01 Education 폼: front 167→183 — Codex가 낸 6건을 16건으로 보강. 아래 'T-01' 참조. smoke 무변경(서버 무접촉).)
+typecheck 통과 / **smoke 216** / **front 185** / 실패 0
+(T-02 스키마 라벨: smoke 213→216 — title 실림·검증 불변·key 폴백 3건 / front 183→185 — 라벨이 title·title 지우면 key 2건.
+ T-01 Education 폼: front 167→183 — Codex가 낸 6건을 16건으로 보강. 아래 'T-01' 참조.)
 (S2.6 `ignored` 확정: 207→211 — 유예 넘김·cron 보고·유예 안쪽 NULL 유지·재실행 멱등 4건.
  UTC 시각 정규화: 211→213 — 귀속일·저장 표기 2건.)
 
@@ -268,7 +287,13 @@ typecheck 통과 / **smoke 213** / **front 183** / 실패 0
  그 앞 S1 분석 depth·S3′ 마감 유도 포함 누적치 — smoke 145→154, front 157→167.)
 
 ## 마이그레이션
-최신: **`0013_analysis_backfill`** — ✅ **로컬·원격 적용 완료** (2026-07-29). ⚠️ deploy 대기
+최신: **`0014_schema_titles`** — ✅ 로컬 적용 완료 (2026-07-30). ⚠️ **원격 적용 + deploy 대기 — 사용자**
+- `0014_schema_titles` (T-02) — `lm_schema.body`의 각 필드에 `title`(표시 라벨). **`version`은 올리지 않는다** —
+  라벨은 검증 의미를 바꾸지 않고, 올리면 기존 `lm_item` 전부에 §5 거짓 stale 신호가 나간다.
+  `json_set`으로 지정 경로에만 얹는다(전체 치환은 원격 body가 갈라져 있으면 조용히 되돌린다). 재실행 멱등.
+  `lm_schema`엔 트리거가 없고(0012의 유일한 트리거는 `trg_lm_item_version`) 대상 3행은 0012가 INSERT한 것이라
+  모든 환경에 존재한다 — **0013의 "로컬 통과, 원격 실패"가 걸리는 경로가 아니다.** 로컬 적용 후 body 3건 육안 확인.
+- `0013_analysis_backfill` — ✅ **로컬·원격 적용 완료** (2026-07-29). ⚠️ deploy 대기
 - `0013_analysis_backfill` — 기존 analysis에 날짜 앵커 backfill. **트리거를 내렸다 원문 그대로 복원**한다(아래 사고 참조)
 - `0010_guard` — Guard v1: guard_events 재작성(`reaction`에 `ignored` 추가가 CHECK 변경이라 ALTER 불가) · `events` 보호 4필드 · `guard_modes`(ADR-019) · `watch_apps`(ADR-022)
 - `0011_guard_sync` — `guard_events.client_id` + 부분 UNIQUE 인덱스(NULL 제외). 로컬 우선 기록의 재시도 멱등 키(ADR-023)
@@ -365,6 +390,13 @@ typecheck 통과 / **smoke 213** / **front 183** / 실패 0
 - **기준선 smoke 124 · front 147→145**(A-3에서 인라인 완료율 검사를 미루기 시트 재탭 검사로 이동·통합). 매 커밋 전 검증, 실패 0
 
 ## 미해결 / 다음 할 것
+- ⚠️ **T-01 Education 섹션 — deploy 완료, 폰 실측 미실시 (2026-07-30).**
+  티켓 §확인 절차 5단계, 특히 **status 3색 다크모드 가독**. 원격 환경이라 보류.
+  → T-02의 라벨 확인과 **함께 본다**. 같은 화면을 두 티켓이 건드렸으므로, 실측에서 문제가 나오면
+  **어느 변경이 원인인지 가리는 것이 먼저다**(T-01 = 목록·배지·시트 / T-02 = 라벨 문자열만).
+- ⚠️ **`0014` 원격 적용 + `deploy` 대기 — 사용자.** `--local`은 완료.
+  `npx wrangler d1 migrations apply personal-os --remote` → `npm run deploy` 순서.
+  **0013의 deploy도 아직 대기 중**이므로 이번 deploy가 `normalizeIso`(07-30 UTC 정규화)까지 함께 올린다.
 - ✅ **마이그레이션 0006·0007·0008 원격 적용 + 코드 `deploy` 완료**(0008은 2026-07-26 확인). 라이브 = 최신(0009 제외).
 - ⚠️ **마이그레이션 0009 원격 적용 + `deploy` 대기 — 사용자**. `npx wrangler d1 migrations apply personal-os --remote` → `npm run deploy` 순서. 로컬은 적용 완료.
 - **폰 실측 대기 (WORK-PLAN-0726 결과물)**: S1 분석 세 가지 분량(보통/자세히/매우 자세히)의 실제 출력 길이 차이 · S2 노란 toast가 정상 폭으로 펼쳐지는지 · S3′ 마감 확인 박스 유도 문구 · S4 취소 사유 입력·표시. 코드는 검증 완료(typecheck·smoke·front)이나 실제 렌더는 폰 확인 필요.

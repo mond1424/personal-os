@@ -13,7 +13,7 @@ import type { Env } from "../src/types";
 import { makeD1, rawOf } from "./d1shim";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const schema = ["0001_init.sql", "0002_models.sql", "0003_ai_provider.sql", "0004_events.sql", "0005_delete_scope.sql", "0006_fix_model_high.sql", "0007_defer_reason.sql", "0008_cancel_task.sql", "0009_cancel_reason.sql", "0010_guard.sql", "0011_guard_sync.sql", "0012_life_model.sql", "0013_analysis_backfill.sql"]
+const schema = ["0001_init.sql", "0002_models.sql", "0003_ai_provider.sql", "0004_events.sql", "0005_delete_scope.sql", "0006_fix_model_high.sql", "0007_defer_reason.sql", "0008_cancel_task.sql", "0009_cancel_reason.sql", "0010_guard.sql", "0011_guard_sync.sql", "0012_life_model.sql", "0013_analysis_backfill.sql", "0014_schema_titles.sql"]
   .map((f) => readFileSync(join(here, "../migrations/" + f), "utf8")).join("\n");
 const env: Env = { DB: makeD1(schema) };
 const raw = rawOf(env.DB);
@@ -568,6 +568,23 @@ ok("섹션 3종 등록 (overview·goals·education)", lmSecs.sections.length ===
 const eduSchema = (await api("GET", "/api/lm/education/schema")).json;
 ok("스키마 v1 + 필드 파생", eduSchema.version === 1 && eduSchema.fields.some((f: any) => f.key === "status" && f.enum));
 ok("없는 섹션 404", (await api("GET", "/api/lm/없음/schema")).status === 404);
+
+// (1b) 표시 라벨은 스키마가 준다(0014) — 폼이 영문 키를 그대로 보여주지 않게. 검증 의미는 그대로다.
+const eduByKey: Record<string, any> = Object.fromEntries(eduSchema.fields.map((f: any) => [f.key, f]));
+ok("필드에 표시 라벨(title)이 실린다",
+  eduByKey.name?.title === "과목명" && eduByKey.credits?.title === "학점" && eduByKey.prerequisites?.title === "선수과목",
+  JSON.stringify(eduSchema.fields.map((f: any) => f.title)));
+ok("라벨이 검증을 바꾸지 않는다 (required·enum·itemType 그대로)",
+  eduByKey.status?.required === true && Array.isArray(eduByKey.status?.enum) && eduByKey.prerequisites?.itemType === "string");
+// 스키마가 늘 완전하다고 가정하지 않는다 — v2에서 새 필드에 title을 빼먹으면 key로 떠야 한다
+raw.prepare("INSERT INTO lm_schema (section, version, body, active, created_at) VALUES ('smoke_notitle', 1, ?, 1, ?)")
+  .run('{"section":"smoke_notitle","version":1,"type":"object","required":[],"properties":{"bare_key":{"type":"string"},"labeled":{"type":"string","title":"라벨 있음"}}}', t0.now);
+const bareFields = (await api("GET", "/api/lm/smoke_notitle/schema")).json.fields;
+ok("title이 없는 필드는 key로 폴백",
+  bareFields.find((f: any) => f.key === "bare_key")?.title === "bare_key" &&
+  bareFields.find((f: any) => f.key === "labeled")?.title === "라벨 있음",
+  JSON.stringify(bareFields));
+raw.prepare("DELETE FROM lm_schema WHERE section='smoke_notitle'").run();
 
 // (2) 스키마 검증 — §0-6 자유 형식 JSON 금지
 ok("필수 필드 누락 400",
