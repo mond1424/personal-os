@@ -70,6 +70,7 @@
 | GET `/api/guard/events?limit` | — | 발동 이력 rows | `guard.events` |
 | GET `/api/guard/schedule?days` | — | `{d, mode, friction_mult, events:[{event_id, start, deadline, fires[]}]}` · **기기가 하루 1회 pull** | `guard.schedule` |
 | POST `/api/guard/events` | `{cause, level, client_id?, fired_at?, event_id?, risk_score?, risk_snapshot?, foreground_app?, source?, reaction?, reason?}` | `{id, on_date, level, mode, duplicate?}` (201) · **upsert** — `client_id`로 재전송 멱등, 반응 후행 채움 | `guard.record` |
+| POST `/api/guard/verify` | `{client_id, cause, level_candidate:4, event_id?, risk_snapshot?, foreground_app?}` | `{level:3\|4, approved, reason, ai_used, cached, source}` · **어떤 경우에도 200** — 판정 불가는 `level:3`. `source` = `ai\|cache\|cap\|timeout\|error\|off`. `level_candidate≠4`는 400(격상 전용) | `guard.verifyLevel4` |
 | POST `/api/guard/events/:id/react` | `{reaction, reason?, reacted_at?}` | `{id, reaction, reacted_at}` · 두 번째는 409 | `guard.react` |
 | POST `/api/guard/events/:id/outcome` | `{outcome}` | `{id, outcome, outcome_at}` · 재확정 409 | `guard.setOutcome` |
 | GET `/api/guard/pending-outcome` | — | outcome 미확정 rows(+event_title) | `guard.pendingOutcome` |
@@ -165,12 +166,26 @@
   Level 1(진입)·2(−2h·−1h)·3(데드라인)·4(+30m부터 30분 간격 6회)를 전부 시각으로 펼쳐 준다. 활성 모드의 `max_level`로 상한
 - `record(env, t, input)` → `{id, on_date, level, mode, duplicate?}` · **`fired_at`은 기기 시각**이고 귀속일도 그걸로 계산(오프라인 큐가 나중에 올라오므로)
   - **upsert(0011)**: `client_id`가 이미 있으면 그 행을 돌려주고, 반응만 왔으면 그것만 채운다. 셋을 한 엔드포인트로 받는다 — 발동만 / 발동+반응 동시(오프라인) / 반응 후행
-  - `applyReaction`을 `react()`와 공유 — 사유 20자 검증이 한 곳에만 있다
-- `react(env, t, id, input)` → 반응 한 번만(409). Override는 사유 20자 이상(§6.3)
+  - `applyReaction`을 `react()`와 공유 — Override 사유 검증이 한 곳에만 있다
+- `react(env, t, id, input)` → 반응 한 번만(409). Override는 **사유가 비어 있지만 않으면** 통과 —
+  **길이 하한(20자)은 S3.2에서 폐기했다**(마찰이 아니라 강제로 읽혔다. §6.3은 "비용을 치르게 한다"이지 "분량을 채우게 한다"가 아니다)
 - `setOutcome(env, t, id, outcome)` → 사후 확정 한 번만(409). **Guard가 판단하지 않는다**(§6.5)
 - `pendingOutcome(env)` → outcome 미확정 목록(Today 확정 카드용)
 - `modes(env)` / `setMode(env, key)` → 파라미터 프로파일(ADR-019). active는 부분 유니크 인덱스라 **해제 → 설정 batch**
 - `listWatchApps` / `addWatchApp` / `removeWatchApp` → PC 확장 자리(ADR-022)
+- `verifyLevel4(env, t, input)` → **Level 3→4 격상만** 검증(ADR-024). Level 1~3은 손대지 않는다(ADR-021).
+  통제 순서에 뜻이 있다: **⑤킬 스위치 → ②캐시 → ③일일 상한 → 키 확인 → ④타임아웃 8초 → ①호출**
+  - **캐시가 상한보다 먼저다** — 적중은 돈이 0이므로, 상한이 찼다고 받은 판정을 버리면 그 밤의 Level 4가 이유 없이 죽는다
+  - 킬 스위치(`settings.guard_ai_verify='off'`)는 **항상 격상**(결정론 복귀) — Level 3으로 떨구면 끄기가 벌이 된다
+  - 실패·타임아웃·파싱 실패는 전부 `level:3`. **fail-open을 하지 않는다**(ADR-024가 명시적으로 기각)
+  - `callModel`의 시그니처를 바꾸지 않고 **호출부에서 `Promise.race`로** 타임아웃을 씌운다(분석 경로가 물린다)
+  - ⑥기록은 여기서 하지 않는다 — 기기가 발동을 올릴 때 `record()`가 `ai_used`·`ai_verdict`를 받는다.
+    검증만 하고 발동하지 않은 밤의 **유령 행이 개입 이력을 오염**시키기 때문
+
+### lib/context.ts — 고정 코어 컨텍스트(§6.2)
+- `buildCoreContext(env, t)` → 프롬프트용 텍스트. **빈 섹션을 생략하지 않는다**(`"Education: 정보 없음"`) —
+  생략하면 모델이 빈 곳을 상상으로 메운다. 섹션 목록은 **`lm_schema`에서** 가져온다(손으로 적으면 새 섹션이 조용히 빠진다)
+- 소비처는 지금 `guard.verifyLevel4` 하나. §6.3 관리인 chat(Phase 4)까지 **범용 확장을 미리 하지 않는다**
 
 ### scheduled.ts — Cron
 - `autoClose(env)` → `{closed, orphaned, as_of}` · 열린 과거 마감 + 고아 예정일 처리
@@ -204,7 +219,7 @@
 **Life Model(0012)** — `lmItems(env, section)` · `lmItemGet` · `lmSections`(섹션별 개수) · `stInsertLmItem` · `stUpdateLmItem`(version은 트리거) · `stDeleteLmItem` · `lmSchemaActive(env, section)` · `lmSchemasAll`
 **analysis 앵커(0012)** — `stInsertAnalysis(..., anchorType, anchorId, modelTier, sourceVersions)` · `analysesByAnchor(env, type, id)`
 **보호 규칙(0010)** — `stSetProtect(env, id, from, level, sleepMin, prepMin)`(본문 수정과 분리) · `protectedEvents(env, fromDate, days)`(앞으로의 보호 일정 — 예약 재료)
-**guard(0010)** — `guardEventsList(env, limit)` · `guardEventGet(env, id)` · `stInsertGuardEvent(env, e)` · `stReactGuardEvent(env, id, reaction, reason, at)`(`AND reaction IS NULL`) · `stClassifyOverride` · `stSetGuardOutcome`(`AND outcome IS NULL`) · `guardEventsUnreacted(env, before)` · `guardEventsPendingOutcome(env)` · `guardAiCallsOn(env, onDate)`(ADR-024 일일 상한)
+**guard(0010)** — `guardEventsList(env, limit)` · `guardEventGet(env, id)` · `stInsertGuardEvent(env, e)` · `stReactGuardEvent(env, id, reaction, reason, at)`(`AND reaction IS NULL`) · `stClassifyOverride` · `stSetGuardOutcome`(`AND outcome IS NULL`) · `guardEventsUnreacted(env, before)` · `guardEventsPendingOutcome(env)` · `guardAiCallsOn(env, onDate)`(ADR-024 일일 상한) · `guardAiVerdictFor(env, onDate, eventId)`(ADR-024 캐시 — `'unavailable'`은 제외, `fired_at DESC, id DESC`)
 **guard_modes** — `guardModes(env)` · `guardActiveMode(env)` · `stClearActiveMode` · `stSetActiveMode` (부분 유니크 인덱스 때문에 **해제 → 설정** 순서)
 **watch_apps** — `watchApps(env, source?)` · `stAddWatchApp` · `stRemoveWatchApp`
 **guard(구)** — `guardEventsList(env)`

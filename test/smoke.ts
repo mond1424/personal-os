@@ -9,6 +9,7 @@ import { dirname, join } from "node:path";
 import worker from "../src/index";
 import { autoClose } from "../src/scheduled";
 import { attributionDate, isoNow, addDays, mondayOf, diffDays, loadTime } from "../src/lib/time";
+import { buildCoreContext } from "../src/lib/context";
 import type { Env } from "../src/types";
 import { makeD1, rawOf } from "./d1shim";
 
@@ -558,6 +559,86 @@ ok("source로 필터",
 await api("PUT", `/api/events/${gEv}/protect`, { protect: false });
 ok("보호 해제 후 schedule에서 빠짐",
   ((await api("GET", "/api/guard/schedule")).json.events as any[]).every((e) => e.event_id !== gEv));
+
+// (10) Level 4 AI 검증 (ADR-024) — **실제 모델 호출은 검사하지 않는다.**
+// 돈이 나가고 네트워크에 걸린다. 호출 여부는 상한·캐시·킬 스위치로 판별한다.
+// 순서에 뜻이 있다: 상한을 채운 뒤 캐시를 넣어 **캐시가 상한을 이기는지**, 마지막에 킬 스위치가
+// 둘 다를 이기는지 본다. 통제가 겹으로 쌓여 있다는 것 자체가 검사 대상이다.
+console.log("\n[9.5b] Level 4 AI 검증 — 지출 통제 6겹 (ADR-024)");
+
+const verify = (b: any) => api("POST", "/api/guard/verify", b);
+const VBASE = { client_id: "verify-uuid-1", cause: "protect:deadline", level_candidate: 4 };
+
+// 격상 전용 — 다른 Level을 물어 오는 것은 기기 배선 버그다. 조용히 3을 주지 않는다.
+ok("level_candidate가 4가 아니면 400", (await verify({ ...VBASE, level_candidate: 3 })).status === 400);
+ok("cause 없으면 400", (await verify({ client_id: "x", level_candidate: 4 })).status === 400);
+
+// 키가 없으면 부를 수 없다 — 그래도 **200 + Level 3**이다. 기기가 오류 분기를 타면 새벽에 터진다.
+const vNoKey = await verify(VBASE);
+ok("키 없음 → 200 · level 3 · source error", vNoKey.status === 200
+  && vNoKey.json.level === 3 && vNoKey.json.source === "error" && vNoKey.json.ai_used === 0,
+  JSON.stringify(vNoKey.json));
+ok("판정 불가는 approved=false (fail-open 아님)", vNoKey.json.approved === false);
+
+// ③ 일일 상한 — coach 모드의 ai_daily_cap = 5 (0010 시드). ai_used=1 행을 그만큼 만든다.
+// ai_verdict는 비워 둔다 — 캐시가 먼저 걸리면 상한을 검사하는 게 아니게 된다.
+const capN = (await api("GET", "/api/guard/modes")).json.active.ai_daily_cap;
+for (let i = 0; i < capN; i++) {
+  await api("POST", "/api/guard/events", {
+    cause: "protect:deadline", level: 4, client_id: `cap-uuid-${i}`, ai_used: 1,
+  });
+}
+const vCap = await verify(VBASE);
+ok("상한 초과 → level 3 · source cap · 호출 없음",
+  vCap.json.level === 3 && vCap.json.source === "cap" && vCap.json.ai_used === 0, JSON.stringify(vCap.json));
+
+// ② event당 1회 캐시 — 같은 밤(event_id 없는 감지 경로)의 판정을 재사용한다.
+await api("POST", "/api/guard/events", {
+  cause: "watch:bedtime", level: 4, client_id: "cache-uuid-1", ai_used: 1, ai_verdict: "approve",
+});
+const vCache = await verify(VBASE);
+ok("캐시 적중 → source cache · ai_used 0", vCache.json.source === "cache" && vCache.json.ai_used === 0,
+  JSON.stringify(vCache.json));
+ok("캐시된 approve는 격상까지 재사용", vCache.json.level === 4 && vCache.json.cached === true);
+// **캐시가 상한을 이긴다** — 적중은 돈이 0이므로, 상한이 찼다고 이미 받은 판정을 버리면
+// 그 밤의 Level 4가 이유 없이 죽는다. 상한이 막아야 하는 것은 '새 호출'이다.
+ok("상한이 찼어도 캐시는 살아 있다", vCache.json.level === 4 && vCap.json.source === "cap");
+// 캐시가 무조건 승인은 아니다 — deny도 그대로 재사용한다
+await api("POST", "/api/guard/events", {
+  cause: "watch:bedtime", level: 3, client_id: "cache-uuid-2", ai_used: 1, ai_verdict: "deny",
+});
+const vDeny = await verify(VBASE);
+ok("캐시된 deny → level 3", vDeny.json.source === "cache" && vDeny.json.level === 3 && vDeny.json.approved === false);
+
+// ⑤ 킬 스위치 — 끄면 **결정론 복귀 = 항상 격상**. Level 3으로 떨구면 끄기가 벌이 된다.
+await api("PUT", "/api/settings/guard_ai_verify", { value: "off" });
+const vOff = await verify(VBASE);
+ok("킬 스위치 off → level 4 · source off · ai_used 0",
+  vOff.json.level === 4 && vOff.json.source === "off" && vOff.json.ai_used === 0, JSON.stringify(vOff.json));
+ok("킬 스위치는 상한·캐시보다 먼저다", vOff.json.cached === false);
+await api("PUT", "/api/settings/guard_ai_verify", { value: "on" });
+
+// buildCoreContext (§6.2) — **빈 섹션을 생략하지 않는다.**
+// 생략하면 모델이 빈 곳을 상상으로 메우고, 명시하면 "정보가 없어 판단 보류"가 나온다.
+const core0 = await buildCoreContext(env, t0);
+ok("빈 섹션을 명시 직렬화 (Education 0건 → '정보 없음')", core0.includes("Education: 정보 없음"), core0.slice(0, 120));
+ok("Overview·Goals도 빈 채로 명시된다",
+  core0.includes("Overview: 정보 없음") && core0.includes("Goals: 정보 없음"));
+ok("§6.2 순서 — Overview가 Goals보다 앞", core0.indexOf("Overview") < core0.indexOf("Goals"));
+ok("디데이 없으면 제약도 명시", core0.includes("제약(디데이): 정보 없음"));
+
+// 채워진 섹션은 항목이 실린다 — 같은 코드의 반대 분기. 넣은 행은 지운다.
+raw.prepare(`INSERT INTO lm_item (id, section, title, body, schema_version, source, version, created_at, updated_at)
+             VALUES ('20260730-901', 'overview', '현재 상태', '물리학과 3학년', 1, 'manual', 1, ?, ?)`).run(t0.now, t0.now);
+raw.prepare("INSERT INTO periods (id, title, color, start_date, end_date, kind, dday_label, created_at) VALUES ('20260730-902', '입대 준비', '#7ED4A9', ?, ?, 'constraint', '입대', ?)")
+  .run(D, addDays(D, 30), t0.now);
+const core1 = await buildCoreContext(env, t0);
+ok("채워진 섹션은 항목이 실린다", core1.includes("현재 상태") && core1.includes("물리학과 3학년")
+  && !core1.includes("Overview: 정보 없음"), core1.slice(0, 160));
+ok("디데이는 남은 일수를 조회 시 계산", core1.includes("입대") && core1.includes("30일"),
+  core1.slice(core1.indexOf("제약")));
+raw.prepare("DELETE FROM lm_item WHERE id = '20260730-901'").run();
+raw.prepare("DELETE FROM periods WHERE id = '20260730-902'").run();
 
 // ── 9.7 Life Model (0012) — me-reinforcement-plan Phase 1 ────
 console.log("\n[9.7] Life Model — 스키마 검증 · CRUD · 앵커");

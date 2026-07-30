@@ -633,6 +633,39 @@ export const guardAiCallsOn = (env: Env, onDate: string) =>
   q(env, "SELECT COUNT(*) AS n FROM guard_events WHERE on_date = ? AND ai_used = 1")
     .bind(onDate).first<{ n: number }>();
 
+/**
+ * ADR-024 지출 통제 ② — event당 1회 캐시. **이게 없으면 하룻밤에 10회 이상 나간다.**
+ *
+ * 저장소를 새로 두지 않는다(원칙 1): 판정은 이미 `guard_events.ai_verdict`에 남으므로
+ * 같은 키·같은 귀속일에서 가장 최근 판정을 그대로 읽는다.
+ * 키 = `event_id`가 있으면 그것, 없으면(감지 경로) 같은 밤의 event 없는 발동.
+ *
+ * `'unavailable'`은 **캐시하지 않는다** — 그건 판정이 아니라 "부를 수 없었다"는 기록이고,
+ * 재사용하면 네트워크가 돌아온 뒤에도 그 밤 내내 Level 3에 묶인다.
+ */
+export const guardAiVerdictFor = (env: Env, onDate: string, eventId: string | null) =>
+// `id DESC`가 동점을 깬다. `fired_at`만으로 정렬하면 같은 분에 두 판정이 들어온 밤에
+// 어느 쪽이 나올지 정해지지 않는다 — 기기 재전송이 실제로 그 상황을 만든다.
+// id는 'YYYYMMDD-NNN'으로 당일 단조 증가라 항상 최신 행을 가리킨다.
+  (eventId
+    ? q(env, `SELECT id, ai_verdict FROM guard_events
+               WHERE on_date = ? AND event_id = ? AND ai_verdict IN ('approve','deny')
+               ORDER BY fired_at DESC, id DESC LIMIT 1`).bind(onDate, eventId)
+    : q(env, `SELECT id, ai_verdict FROM guard_events
+               WHERE on_date = ? AND event_id IS NULL AND ai_verdict IN ('approve','deny')
+               ORDER BY fired_at DESC, id DESC LIMIT 1`).bind(onDate)
+  ).first<{ id: string; ai_verdict: "approve" | "deny" }>();
+
+/** 활성 제약 — 디데이가 붙은 기간만(§6.2 코어 컨텍스트). 남은 일수는 조회 시 계산한다(원칙 1). */
+export const periodsWithDday = (env: Env, today: string) =>
+  q(env, `SELECT id, title, kind, dday_label, start_date, end_date FROM periods
+           WHERE dday_label IS NOT NULL AND end_date >= ? ORDER BY end_date`)
+    .bind(today).all<{ id: string; title: string; kind: string; dday_label: string; start_date: string; end_date: string }>();
+
+/** 등록된 활성 섹션 목록 — 코어 컨텍스트가 "무엇이 비었는지"를 알려면 스키마가 기준이다. */
+export const lmSchemaSections = (env: Env) =>
+  q(env, "SELECT section FROM lm_schema WHERE active = 1").all<{ section: string }>();
+
 // ── guard_modes (ADR-019) — 규칙이 아니라 파라미터 프로파일 ────
 export interface GuardModeRow {
   key: string; label: string; max_level: number; risk_threshold: number;

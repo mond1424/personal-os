@@ -51,6 +51,10 @@ const RULES: Record<string, (v: string) => boolean> = {
   ai_key_anthropic: (v) => v === "" || (v.length >= 8 && v.length <= 200 && !/\s/.test(v)),
   ai_key_openai: (v) => v === "" || (v.length >= 8 && v.length <= 200 && !/\s/.test(v)),
   ai_key_google: (v) => v === "" || (v.length >= 8 && v.length <= 200 && !/\s/.test(v)),
+  // ADR-024 지출 통제 ⑤ 킬 스위치. 없으면(기본) 켜진 것으로 본다 — 'off'만 특별하다.
+  // RULES는 화이트리스트라 여기에 없으면 **설정 자체가 404**다. T-03이 이 통제를 요구하는데
+  // 쓸 경로가 없어서 넣었다(티켓 범위 밖 — 보고에 적었다).
+  guard_ai_verify: (v) => v === "on" || v === "off",
 };
 
 /** 개인 키는 값을 돌려주지 않는다 — 설정 여부만. */

@@ -7,6 +7,8 @@
 // §9 #1(규칙 문법·마찰 수위·Level 4 형태·outcome 판정)은 최소 형태로만 확정했다 —
 // APP-PLAN의 '발동 규칙' 절. 정교화는 9~11월 실사용 데이터 뒤에.
 import * as db from "../db";
+import { aiConfig, callModel, parseModelJson, splitModel } from "../lib/ai";
+import { buildCoreContext } from "../lib/context";
 import { nextId } from "../lib/id";
 import { attributionOfIso, isoNow, normalizeIso } from "../lib/time";
 import { ApiError, type Env, type TimeCtx } from "../types";
@@ -235,6 +237,150 @@ export async function finalizeIgnored(env: Env, t: TimeCtx) {
     await db.stReactGuardEvent(env, row.id, "ignored", null, t.now).run();
   }
   return { ignored: stale.results.length, cutoff };
+}
+
+// ── Level 4 AI 검증 (ADR-024) ────────────────────────────────
+//
+// **Level 1~3은 손대지 않는다**(ADR-021). 이 함수는 Level 3 → 4 **격상**에만 조건을 붙인다.
+// 실패 방향이 안전하다: AI를 못 부르면 Level 3에 머문다 — Level 3이 이미 화면 점유와
+// 알람 소리를 하므로 개입이 사라지지 않고, 잃는 것은 격상뿐이다.
+//
+// **어떤 경우에도 200으로 답한다.** 판정 불가는 `level: 3`이지 500이 아니다 —
+// 기기가 오류 분기를 타게 만들면 그 분기는 하필 새벽에 터진다.
+//
+// 지출 통제 6겹(ADR-024). 순서에 뜻이 있다:
+//   ⑤ 킬 스위치 → ② 캐시 → ③ 일일 상한 → 키 확인 → ④ 타임아웃 8초 → ① 여기만 model_high를 부른다
+// **캐시를 상한보다 먼저 본다** — 캐시 적중은 돈이 0이므로, 상한이 찼다고 이미 받은 판정을
+// 버리면 그 밤의 Level 4가 이유 없이 죽는다. 상한이 막아야 하는 것은 '새 호출'이다.
+const AI_TIMEOUT_MS = 8_000;
+const DEFAULT_AI_DAILY_CAP = 5;
+
+export type VerifySource = "ai" | "cache" | "cap" | "timeout" | "error" | "off";
+
+export interface VerifyResult {
+  level: 3 | 4;
+  approved: boolean;
+  reason: string;
+  ai_used: 0 | 1;
+  cached: boolean;
+  source: VerifySource;
+}
+
+const stay3 = (source: VerifySource, reason: string): VerifyResult =>
+  ({ level: 3, approved: false, reason, ai_used: 0, cached: false, source });
+
+export async function verifyLevel4(env: Env, t: TimeCtx, input: any): Promise<VerifyResult> {
+  // 이 엔드포인트는 격상 전용이다. 다른 Level을 물어 오는 것은 기기 배선 버그이므로
+  // 조용히 3을 주지 않고 400으로 드러낸다 — 발동 경로의 오배선은 빨리 시끄러워야 한다.
+  if (Number(input?.level_candidate) !== 4) {
+    throw new ApiError(400, "level_candidate는 4여야 해요 — 이 경로는 Level 3→4 격상 전용이에요");
+  }
+  if (typeof input?.cause !== "string" || !input.cause.trim()) {
+    throw new ApiError(400, "cause가 필요해요");
+  }
+
+  const onDate = t.d;
+  const eventId = typeof input?.event_id === "string" && input.event_id.trim()
+    ? input.event_id.trim() : null;
+
+  // ⑤ 킬 스위치 — 끄면 **결정론으로 돌아간다(= 항상 격상)**. ADR-024가 정한 방향이다.
+  // 여기서 Level 3으로 떨구면 "AI를 끄면 Guard가 약해진다"가 되어 끄기가 벌이 된다.
+  const settings = Object.fromEntries((await db.settingsAll(env)).results.map((r) => [r.key, r.value]));
+  if (String(settings.guard_ai_verify ?? "").trim() === "off") {
+    return { level: 4, approved: true, reason: "AI 검증이 꺼져 있어요 — 결정론으로 격상해요",
+      ai_used: 0, cached: false, source: "off" };
+  }
+
+  // ② event당 1회 캐시 — 가장 중요한 통제. Level 4는 30분마다 재발동한다.
+  const hit = await db.guardAiVerdictFor(env, onDate, eventId);
+  if (hit) {
+    const approved = hit.ai_verdict === "approve";
+    return { level: approved ? 4 : 3, approved,
+      reason: `같은 ${eventId ? "일정" : "밤"}에 대한 판정을 재사용했어요 (${hit.id})`,
+      ai_used: 0, cached: true, source: "cache" };
+  }
+
+  // ③ 일일 상한 — 모드 프로파일이 정한다(ADR-019).
+  const mode = await db.guardActiveMode(env);
+  const cap = mode?.ai_daily_cap ?? DEFAULT_AI_DAILY_CAP;
+  const used = (await db.guardAiCallsOn(env, onDate))?.n ?? 0;
+  if (used >= cap) return stay3("cap", `오늘 AI 검증 상한(${cap}회)을 다 썼어요 — Level 3으로 남아요`);
+
+  // 키가 없으면 부를 수 없다. `callModel`은 이때 503을 던지는데, 그 예외를 그대로 올리면
+  // 기기가 오류 분기를 탄다 — 여기서 흡수해 200 + Level 3으로 번역한다.
+  const cfg = await aiConfig(env);
+  const { provider } = splitModel(cfg.high, cfg.provider);
+  if (!cfg.high || !cfg.keyOf(provider)) {
+    return stay3("error", "model_high 키가 없어요 — 검증 없이 격상하지 않아요");
+  }
+
+  // ④ 타임아웃 8초. `callModel`의 시그니처를 바꾸지 않는다(분석 경로가 물린다) —
+  // 호출부에서 race를 씌운다. 진 쪽의 fetch는 버려진다.
+  const core = await buildCoreContext(env, t);
+  const started = Date.now();
+  let text: string;
+  try {
+    text = await Promise.race([
+      callModel(env, {
+        model: cfg.high,
+        system: VERIFY_SYSTEM,
+        user: verifyUser(core, t, input),
+        maxTokens: 300,
+      }),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("__timeout__")), AI_TIMEOUT_MS)),
+    ]);
+  } catch (e: any) {
+    const timedOut = e?.message === "__timeout__";
+    return stay3(timedOut ? "timeout" : "error",
+      timedOut ? `${AI_TIMEOUT_MS / 1000}초 안에 판정이 안 왔어요 — Level 3으로 남아요`
+               : `검증을 못 했어요 — Level 3으로 남아요 (${e?.message ?? "알 수 없는 오류"})`);
+  }
+
+  // 형식을 어긴 응답은 **사용자에 대한 판단으로 번역하지 않는다.** 거부가 아니라 판정 불가다.
+  const parsed = parseModelJson<{ approve?: unknown; reason?: unknown }>(text);
+  if (!parsed || typeof parsed.approve !== "boolean") {
+    return stay3("error", "판정을 형식대로 받지 못했어요 — Level 3으로 남아요");
+  }
+
+  const reason = typeof parsed.reason === "string" && parsed.reason.trim()
+    ? parsed.reason.trim() : (parsed.approve ? "격상 필요" : "격상 불필요");
+  // ⑥ 기록은 기기가 발동을 올릴 때 `record()`가 한다 — ai_used·ai_verdict를 함께 받는다.
+  //   여기서 행을 만들지 않는다: 검증만 하고 발동하지 않은 밤의 유령 행이 개입 이력을 오염시킨다.
+  return {
+    level: parsed.approve ? 4 : 3,
+    approved: parsed.approve,
+    reason: `${reason} (${Date.now() - started}ms)`,
+    ai_used: 1,
+    cached: false,
+    source: "ai",
+  };
+}
+
+// 묻는 것은 **"지금이 Level 4에 해당하는가"** 하나다. "얼마나 강하게 개입할지"를 묻지 않는다 —
+// 개입 수위는 규칙과 모드 프로파일이 정하고, 모델에 넘기면 그게 §6.3이 경고한 도구 이탈이다.
+const VERIFY_SYSTEM = [
+  "너는 개인 판단-보조 시스템의 개입 수위 검증기다.",
+  "Level 3(화면 점유 + 알람)이 이미 발동한 상태에서, Level 4(신규 작업 차단까지)로 격상할 근거가 있는지만 판정한다.",
+  "격상은 비싸다 — 근거가 분명하지 않으면 승인하지 않는다. 정보가 부족하면 승인하지 않는다.",
+  'JSON 한 덩어리로만 답한다: {"approve": true|false, "reason": "한 문장"}',
+].join("\n");
+
+function verifyUser(core: string, t: TimeCtx, input: any): string {
+  const snap = input?.risk_snapshot ? JSON.stringify(input.risk_snapshot) : "정보 없음";
+  return [
+    "[사용자 코어 컨텍스트]",
+    core,
+    "",
+    "[이번 발동의 사실]",
+    `- 현재: ${t.now} (귀속일 ${t.d})`,
+    `- 발동 사유: ${input?.cause ?? "정보 없음"}`,
+    `- 연결된 일정: ${input?.event_id ?? "없음 (감지 경로)"}`,
+    `- 전면 앱: ${input?.foreground_app ?? "정보 없음"}`,
+    `- risk_snapshot: ${snap}`,
+    "",
+    "위 사실이 Level 4 격상에 해당하는가?",
+  ].join("\n");
 }
 
 // ── watch_apps (ADR-022) ─────────────────────────────────────

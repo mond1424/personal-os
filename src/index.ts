@@ -249,6 +249,15 @@ app.get("/api/guard/schedule", async (c) =>
 app.post("/api/guard/events", async (c) =>
   c.json(await guard.record(c.env, c.get("t"), await body(c)), 201));
 
+/**
+ * Level 3 → 4 격상 검증 (ADR-024). **리터럴 경로라 `/events/:id/*`보다 앞에 둘 필요는 없지만**
+ * `/api/guard/events`와 접두사가 다르므로 충돌하지 않는다.
+ *
+ * 판정 불가는 `level: 3` + 200이다 — 4xx/5xx로 답하면 기기의 오류 분기가 새벽에 터진다.
+ */
+app.post("/api/guard/verify", async (c) =>
+  c.json(await guard.verifyLevel4(c.env, c.get("t"), await body(c))));
+
 /** 반응 — 한 번만. 두 번째는 409(불변성 §1.3). */
 app.post("/api/guard/events/:id/react", async (c) =>
   c.json(await guard.react(c.env, c.get("t"), c.req.param("id"), await body(c))));
