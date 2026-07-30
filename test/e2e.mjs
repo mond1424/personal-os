@@ -70,10 +70,10 @@ const wEnv = {
   CI: "true",
   WRANGLER_LOG_PATH: join(persistDir, "wrangler-logs"),
   XDG_CONFIG_HOME: join(persistDir, "xdg", "config"),
-  XDG_CACHE_HOME: join(persistDir, "xdg", "cache"),
-  XDG_DATA_HOME: join(persistDir, "xdg", "data"),
-  XDG_STATE_HOME: join(persistDir, "xdg", "state"),
   WRANGLER_SEND_METRICS: "false",
+  // `XDG_CACHE_HOME`·`XDG_DATA_HOME`·`XDG_STATE_HOME`은 **일부러 건드리지 않는다.**
+  // 관측된 실패는 설정 디렉터리 쓰기(로그)뿐이었고, 캐시까지 매 실행 비우면 wrangler가
+  // 무언가를 새로 가져오려 할 수 있다 — 근거 없이 넓힌 통제가 새 실패를 만든다.
 };
 
 // 마이그레이션 단계의 상한. 이 리포에서 실측 **11.5초**다(0014까지 14개).
@@ -95,6 +95,9 @@ const MIGRATE_TIMEOUT_MS = 120_000;
  */
 const FRONT_TIMEOUT_MS = 420_000;
 
+/** 픽스처 시드 상한. 실측 ~2초 — 여기 걸리면 워커가 응답을 안 주는 것이다. */
+const SEED_TIMEOUT_MS = 60_000;
+
 let server = null;
 let code = 0;
 
@@ -104,6 +107,7 @@ try {
   console.log(`[e2e] wrangler 로그·설정도 같은 임시 폴더로 (${wEnv.WRANGLER_LOG_PATH})`);
 
   // 1) 임시 DB 에 스키마 적용
+  const startedMigrate = Date.now();
   try {
     execFileSync(
       process.execPath,
@@ -120,6 +124,10 @@ try {
         : `마이그레이션 실패: ${e?.message ?? e}`,
     );
   }
+  // **마이그레이션 표 다음에 이 줄이 나오는지가 진단을 가른다.**
+  // 표는 wrangler가 찍고 이 줄은 러너가 찍는다 — 표가 있고 이 줄이 없으면
+  // 마이그레이션 자식이 표를 찍고도 끝나지 않은 것이고, 둘 다 있으면 막힌 곳은 그 뒤다.
+  console.log(`[e2e] 마이그레이션 완료 ${((Date.now() - startedMigrate) / 1000).toFixed(1)}초`);
 
   // 2) 임시 DB 로 dev 서버 기동 (자식 프로세스)
   const port = await freePort();
@@ -132,19 +140,42 @@ try {
   server.on("error", (e) => console.error("[e2e] dev 서버 spawn 실패:", e));
 
   // 3) 헬스 대기 (최대 ~30초)
+  //
+  // ⚠️ **매 시도에 상한이 있어야 이 루프가 실제로 30초로 끝난다.**
+  // 전엔 `fetch`에 상한이 없어서, 서버가 포트는 열었는데 응답을 안 주면(연결은 되고
+  // 대기만 하는 상태) 그 한 번의 `fetch`가 영원히 걸렸다 — 반복 횟수로 감싼 상한이
+  // 상한이 아니게 된다. 러너가 아무 말 없이 바깥 제한 시간까지 도는 자리 중 하나였다.
   let up = false;
   for (let i = 0; i < 120; i++) {
     try {
-      const r = await fetch(base + "/api/health");
+      const r = await fetch(base + "/api/health", { signal: AbortSignal.timeout(2000) });
       if (r.ok) { up = true; break; }
-    } catch { /* 아직 준비 안 됨 */ }
+    } catch { /* 아직 준비 안 됨 — 타임아웃도 여기로 온다 */ }
     await sleep(250);
   }
-  if (!up) throw new Error("dev 서버가 제한 시간 내에 응답하지 않음");
+  if (!up) {
+    throw new Error(
+      "dev 서버가 30초 안에 /api/health에 응답하지 않았다. "
+      + `포트 ${port}는 잡혔는지, wrangler dev가 컴파일에서 막혔는지 확인한다 `
+      + `(로그: ${wEnv.WRANGLER_LOG_PATH}).`,
+    );
+  }
   console.log(`[e2e] 워커 기동 @ ${base}`);
 
   // 4) 픽스처 시드 (이 임시 DB 에만)
-  await seedFixtures(base);
+  //
+  // 상한이 없던 두 번째 자리. `seed.mjs`의 `fetch`도 상한이 없어서 한 번 걸리면
+  // 영원히 기다린다. seed.mjs를 고치지 않고 **호출부에서** 상한을 씌운다 —
+  // 목적은 시드를 빠르게 만드는 것이 아니라 **막혔을 때 어디서 막혔는지 말하게** 하는 것이다.
+  await Promise.race([
+    seedFixtures(base),
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error(
+        `픽스처 시드가 ${SEED_TIMEOUT_MS / 1000}초 안에 끝나지 않았다. `
+        + "워커는 떴는데 요청이 돌아오지 않는다 — 서버 로그를 확인한다.",
+      )), SEED_TIMEOUT_MS).unref(),
+    ),
+  ]);
   console.log("[e2e] 픽스처 시드 완료");
 
   // 5) 프론트 검사 — front.mjs 를 별도 프로세스로, 이 워커에 붙여 실행
