@@ -519,6 +519,18 @@ await api("POST", "/api/guard/events", { client_id: "dev-uuid-3", reaction: "ign
 const c4row = ((await api("GET", "/api/guard/events")).json as any[]).find((r) => r.id === c4.json.id);
 ok("나중에 온 반응이 기존 행에 채워짐 (ignored)", !!c4row && c4row.reaction === "ignored", c4row?.reaction);
 
+// (7.5b) 기기가 보낸 UTC 시각의 정규화 — 실기기 덤프에서 드러난 결함
+// KST 14:00 = UTC 05:00. 정규화가 없으면 '05시'가 경계(06:00) 아래로 읽혀 전날로 귀속된다.
+const utcFire = await api("POST", "/api/guard/events", {
+  cause: "watch:bedtime", level: 2, client_id: "dev-uuid-utc",
+  fired_at: "2026-08-15T05:00:00Z", reaction: "accepted", reacted_at: "2026-08-15T05:00:30Z",
+});
+ok("UTC 발동이 올바른 날에 귀속 (KST 14:00 → 당일)", utcFire.json.on_date === "2026-08-15", utcFire.json.on_date);
+const utcRow = ((await api("GET", "/api/guard/events")).json as any[]).find((r) => r.client_id === "dev-uuid-utc");
+ok("fired_at·reacted_at이 로컬 오프셋 표기로 저장",
+  !!utcRow && utcRow.fired_at === "2026-08-15T14:00:00+09:00" && utcRow.reacted_at === "2026-08-15T14:00:30+09:00",
+  `${utcRow?.fired_at} / ${utcRow?.reacted_at}`);
+
 // (7.6) 반응 없는 발동의 'ignored' 확정 (ADR-025 — 루프의 닫는 쪽)
 // 유예 36시간: 기기가 오프라인이면 발동과 반응을 함께 늦게 올린다. 먼저 박으면 진짜 반응이 막힌다.
 const oldFire = await api("POST", "/api/guard/events", {

@@ -8,7 +8,7 @@
 // APP-PLAN의 '발동 규칙' 절. 정교화는 9~11월 실사용 데이터 뒤에.
 import * as db from "../db";
 import { nextId } from "../lib/id";
-import { attributionOfIso, isoNow } from "../lib/time";
+import { attributionOfIso, isoNow, normalizeIso } from "../lib/time";
 import { ApiError, type Env, type TimeCtx } from "../types";
 
 /** 설정 기본값 — event별 값이 없을 때. 초기값의 정확도보다 조정 가능한 구조가 중요하다. */
@@ -137,7 +137,13 @@ export async function record(env: Env, t: TimeCtx, input: any) {
     throw new ApiError(400, "cause가 필요해요");
   }
 
-  const firedAt = typeof input.fired_at === "string" ? input.fired_at : t.now;
+  // 기기는 UTC('...Z')로 보낸다. 귀속일 계산과 `fired_at` 문자열 비교는 표기된 시각
+  // 자리를 로컬로 읽으므로, **저장 전에 로컬 오프셋 표기로 맞춘다.**
+  // 정규화가 없으면 KST 09~15시 발동이 전날로 귀속되고, `finalizeIgnored`의 유예도
+  // 9시간 짧아진다. 클라이언트를 고치는 대신 여기서 흡수한다 — 9월 PC 에이전트가
+  // 같은 실수를 해도 한 번 더 물리지 않는다.
+  const firedAt = typeof input.fired_at === "string"
+    ? normalizeIso(input.fired_at, t.offsetMin) : t.now;
   const onDate = attributionOfIso(firedAt, t.boundary);
   const id = await nextId(env, "guard_events", onDate.replace(/-/g, ""));
   const mode = input.mode ?? (await db.guardActiveMode(env))?.key ?? null;
@@ -175,7 +181,9 @@ async function applyReaction(env: Env, t: TimeCtx, id: string, input: any) {
   if (reaction === "override" && !reason) {
     throw new ApiError(400, "Override에는 사유가 필요해요");
   }
-  const at = typeof input?.reacted_at === "string" ? input.reacted_at : t.now;
+  // 반응 시각도 기기가 UTC로 보낸다. `fired_at`과 같은 표기여야 둘의 간격이 맞게 읽힌다.
+  const at = typeof input?.reacted_at === "string"
+    ? normalizeIso(input.reacted_at, t.offsetMin) : t.now;
   await db.stReactGuardEvent(env, id, reaction, reaction === "override" ? reason : null, at).run();
   return { id, reaction, reacted_at: at };
 }

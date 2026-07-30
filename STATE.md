@@ -180,8 +180,21 @@ Guard v1이 1순위라는 건 안 바뀐다. Phase 1을 셋으로 쪼개 **UI를
 - style.css      https://raw.githubusercontent.com/mond1424/personal-os/main/public/style.css
 
 ## 기준선
-typecheck 통과 / **smoke 211** / front 167 / 실패 0
-(S2.6 `ignored` 확정: 207→211 — 유예 넘김·cron 보고·유예 안쪽 NULL 유지·재실행 멱등 4건.)
+typecheck 통과 / **smoke 213** / front 167 / 실패 0
+(S2.6 `ignored` 확정: 207→211 — 유예 넘김·cron 보고·유예 안쪽 NULL 유지·재실행 멱등 4건.
+ UTC 시각 정규화: 211→213 — 귀속일·저장 표기 2건.)
+
+### 물린 것 — 기기가 UTC로 보낸다 (2026-07-30, 실기기 덤프에서 발견)
+
+`GuardEventQueue.nowIso()`가 `2026-07-29T20:09:15Z`(UTC)로 보내는데, `attributionOfIso`와
+`fired_at` 문자열 비교는 **표기된 시각 자리를 로컬로 읽는다.**
+- 밤 발동(00:30~06:00 KST = UTC 15:30~21:00)은 경계 위라 안 드러났다. **낮 발동에서 물린다** —
+  UTC 00~06시(= KST 09~15시)가 경계(06:00) 아래로 떨어져 **전날로 귀속**된다.
+- `finalizeIgnored`의 36시간 유예도 같은 이유로 실효 27시간이 됐다.
+- 조치: `lib/time.ts`에 `normalizeIso` — 오프셋이 붙은 표기만 로컬 표기로 변환(오프셋 없으면 이미 로컬로 본다).
+  `record()`의 `fired_at`·`applyReaction()`의 `reacted_at`이 통과한다.
+- **기기가 아니라 서버에서 흡수했다.** APK 재빌드가 필요 없고, 9월 PC 에이전트가 같은 실수를 해도 한 번 더 안 물린다.
+- 기존 14행은 `Z` 표기로 남아 있다(귀속일은 우연히 전부 맞았다). 소급 수정하지 않는다 — 개입 이력은 고치지 않는다.
 (S3.2에서 사유 길이 하한을 걷어내며 빈 사유 검사 1건 추가.)
 (0010 Guard 서버: 154→180 — 보호 규칙·데드라인 역산·모드·발동 기록·불변성·watch_apps 26건.
  0011 client_id 멱등: 180→184 — 재전송·발동+반응 동시·반응 후행 4건.

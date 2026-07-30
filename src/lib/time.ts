@@ -37,6 +37,25 @@ export function isoNow(utcMs: number, offsetMin: number): string {
 }
 
 /**
+ * 클라이언트가 보낸 ISO 시각을 **로컬 오프셋 표기로 정규화**한다.
+ *
+ * 왜 필요한가 — 기기는 `2026-07-30T05:00:00Z`(UTC)로 보내는데, 귀속일 계산과
+ * `fired_at` 문자열 비교는 **표기된 시각 자리를 로컬 시각으로 읽는다.**
+ * 정규화하지 않으면 UTC 00~06시(= KST 09~15시) 발동이 경계 아래로 떨어져
+ * **전날로 귀속된다.** 밤 발동만 있을 땐 안 드러나다가 낮 발동이 생기면 물린다.
+ *
+ * 오프셋이 없는 표기(`...T05:00:00`)는 이미 로컬로 본다 — 기기가 시각만 보내는
+ * 경우까지 UTC로 오해하면 없던 9시간을 만든다.
+ */
+export function normalizeIso(iso: string, offsetMin: number): string {
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(iso)) return iso;
+  const hasZone = /(Z|[+-]\d{2}:\d{2})$/.test(iso);
+  if (!hasZone) return iso;
+  const ms = Date.parse(iso);
+  return Number.isNaN(ms) ? iso : isoNow(ms, offsetMin);
+}
+
+/**
  * 이미 로컬 오프셋이 붙은 ISO 시각의 귀속일 (1.2).
  * SQLite의 date()는 오프셋을 UTC로 환산해버려 경계와 어긋난다 — 대기 일수처럼
  * 귀속일 기준이어야 하는 계산은 전부 이 함수를 통과시킨다.
