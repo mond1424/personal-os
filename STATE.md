@@ -208,8 +208,40 @@ front는 `title`을 지워 라벨이 `key`로 **돌아가는 것**까지 본다.
 
 실패 경로는 사본(`e2e.probe.mjs`)으로 헬스 URL을 틀리게 만들어 **실제로 돌려서 확인**했다.
 
-**여전히 닫히지 않는다** — 완료 조건은 "Codex 셸에서 193"이다.
-다음 Codex 실행은 `wrangler dev`가 무엇을 찍고 멈추는지 보여 준다. 그것이 원인을 지목한다.
+**4차 — 근본 원인 확정. 그리고 리포 안에서는 못 고친다(§7 위로 올림).**
+
+3차 진단이 답을 잡아 왔다. Codex 셸의 `wrangler dev` 출력:
+
+```
+✘ [ERROR] EPERM: operation not permitted, mkdtemp
+          'C:\dev\personal-os-worker\worker\.wrangler\tmp\dev-XXXXXX'
+✘ [ERROR] The expression evaluated to a falsy value: (this.#tmpDir)
+```
+
+**`wrangler dev`가 리포 안 `.wrangler/tmp/`에 임시 디렉터리를 못 만든다.** 그리고 그 오류로 죽지 않고
+**불구가 된 채 살아 있어서**(`#tmpDir`이 falsy) 헬스가 30초를 채운다 — "프로세스는 살아 있다"가 맞았다.
+
+확인한 것:
+- `.wrangler`·`.wrangler/tmp`의 **속성·ACL은 정상**이다(Authenticated Users에 Modify, ReadOnly 아님).
+  이 셸에서는 같은 자리에 잘 만들어진다 — `tmp`는 내 실행이 만들어 놨다
+- Codex는 리포 루트에는 쓸 수 있다(`front.log`가 실제로 써졌다). **`.wrangler/` 아래만 막힌다**
+- ⇒ 파일시스템이 아니라 **Codex 샌드박스의 경로 정책**으로 본다
+
+**리포 안에서 못 고치는 이유.** wrangler는 `.wrangler`를 `dirname(설정 파일)`에서 계산한다
+(`getWranglerHiddenDirPath` ← `projectRoot = dirname(userConfigPath)`). 즉 그 디렉터리를 옮기려면
+**`wrangler.toml` 자체를 임시 폴더에 복제**해야 하고, `main`·`migrations_dir`·`[assets] directory`
+세 상대 경로를 절대 경로로 고쳐 써야 한다. 가능하지만 **검사가 진짜 설정을 안 보게 된다** —
+나중에 바인딩·플래그가 추가되면 러너만 조용히 옛 설정으로 돈다. 테스트 하네스에서 그 대가는 크다.
+
+**그래서 올린다: 고칠 곳은 Codex 샌드박스의 쓰기 허용 목록이다**(`<repo>/.wrangler/`).
+한 줄이면 `wrangler dev`뿐 아니라 앞으로의 모든 로컬 wrangler 명령이 함께 풀리고, 유지 비용이 0이다.
+T-06의 방향("환경에 기대지 않게")은 로그·상태까지는 통했지만 **`.wrangler/tmp`에서 끝난다.**
+
+**곁에서 드러난 것**: `e2e.mjs`가 매 실행 `<repo>/.wrangler/tmp/bundle-*`를 남긴다(59개 쌓여 있었다).
+러너 헤더의 "흔적 0"은 `--persist-to` 임시 DB에 대해서만 참이고, wrangler의 번들 임시 폴더는 리포에 남는다.
+정리해 뒀다. 지우는 것은 wrangler 자신의 sweep이 하는 일이라 러너에 삭제를 넣지 않았다.
+
+**여전히 닫히지 않는다** — 완료 조건은 "Codex 셸에서 193"이고, 그건 이제 샌드박스 쪽에 달렸다.
 
 ### T-05 — 보호 규칙 UI (2026-07-30)
 
