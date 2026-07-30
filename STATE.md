@@ -37,6 +37,39 @@ Codex 티켓 분해·락·1차 검토. 설계 문서·`APP-PLAN`·`APP-ADR`은 �
    숫자를 만드는 층은 그 파일을 못 고친다 → 예시는 `smoke A → B`로 두고 실수치는 이 문서 §기준선 하나만 보는 게 맞다.
 5. `CLAUDE.md`의 "`docs/*`의 유일한 편집자"는 넓다 — `docs/tickets/*`는 Cowork 발행이다.
 
+⚠️ **4번이 바로 물렸다** — front가 167→183이 됐는데 `CLAUDE.md`의 기준선 줄은 167에 멈춰 있다.
+Cowork 소유라 이 층이 못 고친다. 세션마다 컨텍스트에 실리는 파일이라 낡으면 즉시 오판을 만든다.
+**그 한 줄만 Claude Code 소유로 넘기든 STATE만 보게 하든, 하루 안에 정해야 한다.**
+
+### T-01 — 체인 첫 티켓 (Education 폼, 2026-07-30)
+
+Cowork 발행 → Claude Code 배정·분해 → Codex 구현 → Claude Code 1차 검토. **한 바퀴가 돌았다.**
+결과물: `public/{api.js,index.html,app.js,style.css}` · `test/front.mjs`. **서버 무변경**(P1-b가 이미 다 해 뒀다).
+`GET /api/lm/education/schema`의 `fields`로 폼을 조립한다 — 필드 목록 하드코딩 없음.
+
+**잘 된 것**: 신규 클래스 전부 `.lm-education-*` 접두사(전역 충돌 4번째를 안 만들었다) ·
+색은 CSS 변수 + 다크 짝 양쪽 · `itemType`까지 처리(분해 절이 전달됐다) · 범위 밖 파일 0개.
+
+**체인이 실제로 잡은 것 두 종류.**
+
+1. **검사가 목적을 못 지켰다** — 숫자(167→173)는 늘었는데 "폼이 스키마로 조립된다"는 검사가
+   **하드코딩해도 통과하는 모양**이었고, 완료 조건 3번(필수 필드 프런트 차단)·1번 절반(빈 상태 문구)·
+   삭제 경로가 미검사였다. 추가·수정도 `Api.lmCreate` 직접 호출이라 폼 경로가 검사에서 빠져 있었다.
+   → 검사 6건을 16건으로 교체(front 183). **합격 기준을 분해 절에만 적어 뒀더니 반영되지 않았다** —
+   `_TEMPLATE.md`의 '완료 조건' 절에 "하드코딩해도 통과하는 검사는 실패로 본다"가 들어가야 한다(Cowork).
+2. **잠재 결함 2건** — ① `renderMe()`의 `Promise.all`에 `lmSchema`가 들어가 **Education 스키마가
+   비활성화되면 Me 탭이 통째로 안 그려진다**(호출부 5곳 모두 await 없음 → unhandled rejection).
+   레지스트리는 버전을 올리려고 둔 것이라 `active` 전환은 예정된 동작이다 → `.catch`로 격리.
+   ② 항목 제목 추론이 `type==="string" && required`의 첫 번째를 잡는데 `status`도 `type:"string"`이라
+   **0012의 properties 순서 덕에** 맞았다. v2에서 뒤집히면 제목이 `"enrolled"`가 된다 → enum 제외.
+
+**Codex의 front 실행이 EPERM으로 죽어 수치를 못 냈다**(`xdg.config\.wrangler\logs` 쓰기 권한).
+이 층에서는 재현되지 않았다 — 셸 환경 문제이고 코드와 무관하다. 숫자 없이 닫지 않고 막힌 것으로 올린 건 규약대로다.
+
+**남은 판단(사용자·Cowork)**: 폼 필드 라벨이 영문 raw다(`credits`·`prerequisites`). 라벨 매핑을 프런트에 두면
+'스키마 필드 하드코딩 금지'와 부딪힌다 → `lm_schema` body에 `label`을 넣는 쪽이 취지에 맞지만 마이그레이션이 붙는다.
+**⚠️ deploy 대기**(프런트 변경 — APK 재빌드는 불필요).
+
 ## ★ 진행 중 — 8월 Guard v1 (APP-PLAN)
 
 **목표: 8/31까지 Guard 탑재 Android 앱, 9/1 실사용 시작.**
@@ -165,7 +198,7 @@ Guard v1이 1순위라는 건 안 바뀐다. Phase 1을 셋으로 쪼개 **UI를
 |---|---|---|
 | **P1-a** | 마이그레이션 0012 — analysis 앵커 4컬럼+backfill · 기간 `kind`/`dday_label` · `lm_item`(version 트리거) · `lm_schema` 레지스트리 | ✅ |
 | **P1-b** | 경량 스키마 검증기 · `lm_item` CRUD API · Me→Overview 이관 · analysis가 앵커·`source_versions` 실제 기록 | ✅ |
-| **P1-c** | 하단 바 (4탭/Me) 분리·애니메이션 · Education 폼 · Goals 디데이 표시 | ⬜ **Guard 3주차 이후.** 8/25에 Guard 4주차가 안 끝났으면 9월로 미룬다 |
+| **P1-c** | 하단 바 (4탭/Me) 분리·애니메이션 · Education 폼 · Goals 디데이 표시 | 🔄 **Education 폼 ✅**(T-01, 07-30) / 하단 바·Goals 디데이 ⬜ — Guard 3주차 이후 |
 
 **P1-a를 8월로 당긴 이유** — 계획서 §2.3: `source_versions`는 생성 시점의 입력 스냅샷이라 나중에 만들 수 없다. 9~11월 analysis가 앵커 없이 쌓이면 그 구간은 영영 stale 판정(§5) 밖이다. `guard_events.risk_snapshot`과 같은 논리(ADR-020).
 
@@ -211,7 +244,8 @@ Guard v1이 1순위라는 건 안 바뀐다. Phase 1을 셋으로 쪼개 **UI를
 - style.css      https://raw.githubusercontent.com/mond1424/personal-os/main/public/style.css
 
 ## 기준선
-typecheck 통과 / **smoke 213** / front 167 / 실패 0
+typecheck 통과 / **smoke 213** / **front 183** / 실패 0
+(T-01 Education 폼: front 167→183 — Codex가 낸 6건을 16건으로 보강. 아래 'T-01' 참조. smoke 무변경(서버 무접촉).)
 (S2.6 `ignored` 확정: 207→211 — 유예 넘김·cron 보고·유예 안쪽 NULL 유지·재실행 멱등 4건.
  UTC 시각 정규화: 211→213 — 귀속일·저장 표기 2건.)
 

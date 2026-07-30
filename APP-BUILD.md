@@ -24,8 +24,10 @@
 ## 락 — 지금 누가 무엇을 들고 있나
 
 ```
-WIP: T-01 (codex, 07-30 10:51) — public/api.js, public/index.html, public/app.js, public/style.css, test/front.mjs
+WIP: (없음)
 ```
+
+> 직전: T-01 Education 폼 (codex, 07-30) — ✅ 1차 검토 통과 후 해제. 사용자 승인·deploy 대기.
 
 > 형식: `WIP: T-07 (codex, 07-30 14:20) — public/app.js, public/index.html`
 > 비어 있으면 아무도 안 들고 있다는 뜻. **같은 리포에 실행 에이전트를 둘 동시에 붙이지 않는다.**
@@ -38,8 +40,9 @@ WIP: T-01 (codex, 07-30 10:51) — public/api.js, public/index.html, public/app.
 > **완성의 정의 ✅ 충족** — 보호 모드 · 데드라인 역산 발동 · FSI 잠금화면 점유 · 사유+대기 마찰 · guard_events 기록 · outcome 확정
 > **S1.1·S1.2·S1.4 ✅ / S2.1~S2.6 ✅ / S3.1·S3.2 ✅ / S4.1·S4.2·S4.4 ✅ / P1-a·P1-b ✅**
 > **S1.3 🔄** ①낮3분 ✅ ②재부팅 ✅ / **③밤 03:00 미실시**
-> **남은 것(완성의 정의 밖)**: S3.1b(L4 AI 검증) · S3.3(L4 작업 차단) · S3.4(모드 UI) · S4.3(알림함) · S1.5(권한 배너) · P1-c(Me 탭 UI)
-> 기준선: typecheck 통과 · smoke 213 · front 167 · 실패 0
+> **남은 것(완성의 정의 밖)**: S3.1b(L4 AI 검증) · S3.3(L4 작업 차단) · S3.4(모드 UI) · S4.3(알림함) · S1.5(권한 배너) · P1-c 나머지(하단 바 4탭/Me 분리 · Goals 디데이)
+> **T-01 ✅** P1-c의 Education 폼 — 체인 첫 티켓(Codex 구현 · Claude Code 검토). 프런트만, deploy 대기
+> 기준선: typecheck 통과 · smoke 213 · front 183 · 실패 0
 > 최종 갱신: 2026-07-30 (마감 8/31 — **한 달 앞서 있다**)
 
 ---

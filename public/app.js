@@ -178,6 +178,8 @@ const S = {
   settings: {},         // key→value
   cal: { y: 0, m: 0 },  // 표시 중인 달
   calData: null,
+  education: [],
+  educationSchema: null,
   pick: null,           // {mode:'defer'|'schedule', id, title, from?, origin}
   sheetTask: null,
   staleShown: false,
@@ -1329,8 +1331,16 @@ const ME_GUIDE = {
   life_pattern: { desc: "수면·집중·기복 등 반복되는 하루 리듬.", eg: "예: 밤에 집중이 잘 되고 오전엔 느리다." },
 };
 async function renderMe() {
-  const [me, hist, guard] = await Promise.all([Api.me(), Api.meHistory(), Api.guardEvents()]);
+  // Education은 덧붙은 섹션이다 — 실패해도 Me 본문을 인질로 잡지 않는다.
+  // lmSchema는 활성 행이 없으면 404를 던진다(lifemodel.ts). v2 전환·비활성화 중에
+  // Promise.all이 그대로 거절되면 Me 탭이 통째로 안 그려진다.
+  const [me, hist, guard, educationSchema, education] = await Promise.all([
+    Api.me(), Api.meHistory(), Api.guardEvents(),
+    Api.lmSchema("education").catch(() => null), Api.lmItems("education").catch(() => []),
+  ]);
   S.me = me;
+  S.educationSchema = educationSchema;
+  S.education = education;
   let h = "";
   // 기본 5필드는 값이 없어도 항상 노출 — 눌러 바로 입력하도록(직접입력 진입을 명시). 그 뒤에 5필드 밖의 값(있으면)을 잇는다.
   const byField = Object.fromEntries(me.fields.map((f) => [f.field, f.value]));
@@ -1351,6 +1361,8 @@ async function renderMe() {
     `<div class="lrow"><span class="ts mono">${md(r.changed_at.slice(0, 10))}</span>
       <span>${esc(ME_LABELS[r.field] || r.field)} — ${r.old_value ? `“${esc(r.old_value)}” → ` : ""}“${esc(r.new_value)}”${r.source === "ai" ? ' <span class="cap">AI 제안 승인</span>' : ""}</span></div>`).join("") ||
     `<div class="lrow"><span class="ts mono">—</span><span style="color:var(--faint)">아직 변경 이력이 없어요</span></div>`;
+
+  renderEducation();
 
   const ff = feelingsFields().join(" · ");
   const tok = localStorage.getItem("api_token");
@@ -1381,6 +1393,135 @@ async function renderMe() {
 }
 
 function toggleSet(on) { $("#me-main").style.display = on ? "none" : ""; $("#me-set").style.display = on ? "" : "none"; }
+
+/* ── Education (Life Model) ─────────────────────────────── */
+let educationCtx = null;
+
+function renderEducation() {
+  const box = $("#lm-education-list");
+  if (!box) return;
+  const items = S.education || [];
+  if (!items.length) {
+    box.innerHTML = '<div class="lrow"><span class="ts mono">—</span><span style="color:var(--faint)">아직 Education 항목이 없어요 — 필요한 것부터 적어 봐요.</span></div>';
+    return;
+  }
+  box.innerHTML = items.map((item) => {
+    const data = item.data && typeof item.data === "object" ? item.data : {};
+    const status = typeof data.status === "string" ? data.status : "";
+    const meta = [data.term, data.grade].filter((v) => v !== null && v !== undefined && String(v).trim()).join(" · ");
+    return '<button class="lm-education-row" data-lm-education-id="' + esc(item.id) + '">' +
+      '<span class="lm-education-copy"><span class="lm-education-title">' + esc(item.title) + '</span>' +
+      (meta ? '<span class="lm-education-meta">' + esc(meta) + '</span>' : "") + '</span>' +
+      (status ? '<span class="lm-education-status" data-status="' + esc(status) + '">' + esc(status) + '</span>' : "") +
+      '</button>';
+  }).join("");
+  $$("#lm-education-list [data-lm-education-id]").forEach((b) => {
+    b.onclick = () => openEducationForm(b.dataset.lmEducationId);
+  });
+}
+
+function educationFieldLabel(key) {
+  return String(key).replace(/_/g, " ");
+}
+
+function educationFieldControl(field, data) {
+  const key = String(field.key || "");
+  const value = data[key];
+  const required = field.required ? '<span class="lm-education-required"> · 필수</span>' : "";
+  let control = "";
+  if (Array.isArray(field.enum)) {
+    control = '<select class="lm-education-input" data-lm-education-key="' + esc(key) + '"><option value="">선택…</option>' +
+      field.enum.map((v) => '<option value="' + esc(v) + '"' + (value === v ? " selected" : "") + '>' + esc(v) + '</option>').join("") +
+      "</select>";
+  } else {
+    const isArray = field.type === "array";
+    const inputType = field.type === "number" ? "number" : "text";
+    const raw = isArray && Array.isArray(value) ? value.join(", ") : (value ?? "");
+    const hint = isArray
+      ? ' placeholder="쉼표나 줄바꿈으로 구분' + (field.itemType ? " (" + esc(field.itemType) + ")" : "") + '"'
+      : "";
+    control = '<input class="lm-education-input" type="' + inputType + '" data-lm-education-key="' + esc(key) + '" value="' + esc(raw) + '"' + hint + ">";
+  }
+  return '<label class="lm-education-field"><span class="lm-education-field-label">' +
+    esc(educationFieldLabel(key)) + required + "</span>" + control + "</label>";
+}
+
+function openEducationForm(id = null) {
+  const schema = S.educationSchema;
+  if (!schema || !Array.isArray(schema.fields)) return toast("Education 스키마를 아직 불러오지 못했어요", "warn");
+  const item = id ? S.education.find((x) => x.id === id) : null;
+  if (id && !item) return toast("해당 Education 항목을 찾지 못했어요", "warn");
+  educationCtx = item || null;
+  const data = educationCtx?.data && typeof educationCtx.data === "object" ? educationCtx.data : {};
+  $("#lm-education-head").textContent = educationCtx ? "Education 수정" : "Education 추가";
+  $("#lm-education-fields").innerHTML = schema.fields.map((field) => educationFieldControl(field, data)).join("");
+  $("#lm-education-delete").style.display = educationCtx ? "" : "none";
+  openSheet("sh-education");
+}
+
+function collectEducationForm() {
+  const fields = S.educationSchema?.fields || [];
+  const inputs = [...$("#lm-education-fields").querySelectorAll("[data-lm-education-key]")];
+  const data = {};
+  for (const field of fields) {
+    const input = inputs.find((el) => el.dataset.lmEducationKey === String(field.key));
+    const raw = (input?.value || "").trim();
+    const isArray = field.type === "array";
+    if (field.required && !raw) return { error: educationFieldLabel(field.key) + " 항목은 필수예요" };
+    if (!raw) continue;
+    if (isArray) {
+      const values = raw.split(/[,\n]/).map((v) => v.trim()).filter(Boolean);
+      if (field.required && !values.length) return { error: educationFieldLabel(field.key) + " 항목은 필수예요" };
+      if (field.itemType === "number") {
+        const numbers = values.map(Number);
+        if (numbers.some((v) => !Number.isFinite(v))) return { error: educationFieldLabel(field.key) + "은 숫자로 적어 주세요" };
+        data[field.key] = numbers;
+      } else data[field.key] = values;
+    } else if (field.type === "number") {
+      const value = Number(raw);
+      if (!Number.isFinite(value)) return { error: educationFieldLabel(field.key) + "은 숫자로 적어 주세요" };
+      data[field.key] = value;
+    } else data[field.key] = raw;
+  }
+  // 제목 후보에서 enum은 뺀다 — status도 {"type":"string","enum":[…]}라, 스키마의 properties
+  // 순서가 바뀌면(v2) 제목이 "enrolled" 같은 상태값이 된다. 지금 통과하는 건 name이 먼저인 덕이다.
+  const titleField = fields.find((f) => f.type === "string" && f.required && !f.enum)
+    || fields.find((f) => f.type === "string" && !f.enum);
+  const title = String((titleField && data[titleField.key]) || educationCtx?.title || "").trim();
+  if (!title) return { error: "제목으로 쓸 텍스트 항목을 적어 주세요" };
+  return { title, data };
+}
+
+async function refreshEducation() {
+  const [schema, items] = await Promise.all([Api.lmSchema("education"), Api.lmItems("education")]);
+  S.educationSchema = schema;
+  S.education = items;
+  renderEducation();
+}
+
+function bindEducationSheet() {
+  $("#lm-education-save").onclick = () => run(async () => {
+    const form = collectEducationForm();
+    if (form.error) return toast(form.error, "warn");
+    // closeAll()보다 먼저 읽는다 — closeAll이 evxCtx·dfxCtx를 버리듯 educationCtx도
+    // 버리게 되는 날(주석이 그러라고 말하고 있다) 이 문구가 조용히 거짓말을 한다.
+    const editing = !!educationCtx;
+    if (editing) await Api.lmUpdate(educationCtx.id, { title: form.title, data: form.data });
+    else await Api.lmCreate("education", { title: form.title, data: form.data });
+    closeAll();
+    toast(editing ? "Education 항목을 수정했어요" : "Education 항목을 추가했어요", "ok");
+    await refreshEducation();
+  });
+  $("#lm-education-delete").onclick = () => run(async () => {
+    if (!educationCtx) return;
+    const okd = await confirmAsk("Education 항목을 삭제할까요?", "삭제한 항목은 되돌릴 수 없어요.", "삭제");
+    if (okd !== "ok") return;
+    await Api.lmDelete(educationCtx.id);
+    closeAll();
+    toast("Education 항목을 삭제했어요", "warn");
+    await refreshEducation();
+  });
+}
 
 
 /* ── 기간 추가·편집 (2장) ──────────────────────────────────── */
@@ -2128,6 +2269,7 @@ async function boot() {
   bindFieldsSheet();
   bindAiSheet();
   bindMeSheet();
+  bindEducationSheet();
   bindSettingSheet();
   bindLogSheet();
   bindEventSheet();

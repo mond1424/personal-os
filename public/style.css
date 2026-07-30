@@ -2,6 +2,9 @@
   --paper:#FBFAF7; --card:#FFFFFF; --ink:#26221C; --sub:#787164; --faint:#A9A296;
   --line:#E7E2D8; --line2:#F0ECE3;
   --mint:#7ED4A9; --amber:#F3C05F; --brick:#C4401F; --brick-soft:#F9E9E2;
+  --lm-education-completed-bg:#E3F3EA; --lm-education-completed-ink:#236540;
+  --lm-education-enrolled-bg:#FFF1D1; --lm-education-enrolled-ink:#855D14;
+  --lm-education-planned-bg:#EEEAE3; --lm-education-planned-ink:#625C51;
   --r:16px;
   /* 팝업 그림자·배경 농도 — 겹침 깊이는 .phone[data-depth]가 정한다 */
   --sh-sheet:0 -14px 40px rgba(40,34,24,.22);
@@ -248,6 +251,21 @@ details.fold[open] summary::before{transform:rotate(90deg)}
 .merow{padding:9px 0;border-bottom:1px solid var(--line2);font-size:13.5px;line-height:1.6}
 .merow:last-child{border-bottom:none}
 .merow .ml{font-size:11px;letter-spacing:.12em;color:var(--faint);font-weight:700;display:block;margin-bottom:2px}
+.lm-education-row{display:flex;align-items:flex-start;gap:10px;padding:10px 0;border-bottom:1px solid var(--line2);width:100%}
+.lm-education-row:last-child{border-bottom:none}
+.lm-education-copy{flex:1;min-width:0}
+.lm-education-title{font-size:13.5px;font-weight:600;line-height:1.4}
+.lm-education-meta{font-size:11.5px;color:var(--faint);margin-top:3px}
+.lm-education-status{flex:none;border-radius:999px;padding:3px 7px;font-size:10.5px;font-weight:700;line-height:1.25}
+.lm-education-status[data-status="completed"]{background:var(--lm-education-completed-bg);color:var(--lm-education-completed-ink)}
+.lm-education-status[data-status="enrolled"]{background:var(--lm-education-enrolled-bg);color:var(--lm-education-enrolled-ink)}
+.lm-education-status[data-status="planned"]{background:var(--lm-education-planned-bg);color:var(--lm-education-planned-ink)}
+.lm-education-field{display:block;margin-top:10px}
+.lm-education-field:first-child{margin-top:0}
+.lm-education-field-label{display:block;margin-bottom:5px;font-size:11px;letter-spacing:.08em;color:var(--sub);font-weight:700}
+.lm-education-required{color:var(--brick)}
+.lm-education-input{width:100%;font:inherit;border:1px solid var(--line);border-radius:12px;padding:10px 12px;background:var(--card);color:var(--ink);outline:none}
+.lm-education-input:focus{border-color:var(--sub)}
 .diff-old{color:var(--faint);text-decoration:line-through}
 .diff-new{background:#FBF3D9;border-radius:4px;padding:1px 4px}
 .srow{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:15px 2px;
@@ -324,6 +342,9 @@ input[type=date]:focus, select:focus{border-color:var(--sub)}
     --shell:#0F0D0A; --paper:#1A1713; --card:#221E18; --ink:#EDE7DA; --sub:#A79E8D;
     --faint:#7C7466; --line:#332F27; --line2:#2A261F;
     --mint:#5FAE8A; --amber:#C79B49; --brick:#E0704A; --brick-soft:#38231B;
+    --lm-education-completed-bg:#17301F; --lm-education-completed-ink:#8FD0AA;
+    --lm-education-enrolled-bg:#312A16; --lm-education-enrolled-ink:#E1C573;
+    --lm-education-planned-bg:#302C25; --lm-education-planned-ink:#C5BDB0;
     /* 어두운 표면에서는 그림자가 흐려진다 — 더 짙고 넓게 */
     --sh-sheet:0 -14px 44px rgba(0,0,0,.58);
     --sh-box:0 20px 56px rgba(0,0,0,.64);
@@ -334,6 +355,9 @@ input[type=date]:focus, select:focus{border-color:var(--sub)}
   --shell:#0F0D0A; --paper:#1A1713; --card:#221E18; --ink:#EDE7DA; --sub:#A79E8D;
   --faint:#7C7466; --line:#332F27; --line2:#2A261F;
   --mint:#5FAE8A; --amber:#C79B49; --brick:#E0704A; --brick-soft:#38231B;
+  --lm-education-completed-bg:#17301F; --lm-education-completed-ink:#8FD0AA;
+  --lm-education-enrolled-bg:#312A16; --lm-education-enrolled-ink:#E1C573;
+  --lm-education-planned-bg:#302C25; --lm-education-planned-ink:#C5BDB0;
   --sh-sheet:0 -14px 44px rgba(0,0,0,.58);
   --sh-box:0 20px 56px rgba(0,0,0,.64);
   --dim-rgb:0,0,0; --dim-a:.52;

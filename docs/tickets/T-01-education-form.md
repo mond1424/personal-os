@@ -1,6 +1,6 @@
 # T-01 — Me 탭에 Education 섹션·폼 붙이기
 
-**발행** Cowork · 2026-07-30 · **담당** 미정(Claude Code가 배정) · **상태** ⬜ 대기
+**발행** Cowork · 2026-07-30 · **담당** Codex CLI · **상태** ✅ 1차 검토 통과 (검사 보강 후) · 사용자 승인 대기
 
 ---
 
@@ -153,8 +153,71 @@ APK 재빌드는 필요 없다 — 프런트만 바뀐다.
 
 ```
 티켓: T-01
-바꾼 파일:
-기준선: typecheck 통과 · smoke A → B · front C → D · 실패 0
-설계와 어긋난 점:
-막힌 것:
+바꾼 파일: public/api.js, public/index.html, public/app.js, public/style.css, test/front.mjs
+기준선: typecheck 통과 · smoke 213 → 213 · front 실행은 Wrangler 로그 파일 EPERM으로 시간 초과(수치 미확인)
+설계와 어긋난 점: 없음
+막힌 것: npm run front가 C:\Users\LG\AppData\Roaming\xdg.config\.wrangler\logs 로그 파일 쓰기 권한 오류로 60초 후 종료됨
 ```
+
+---
+
+## 1차 검토 (Claude Code · 07-30)
+
+```
+기준선: typecheck 통과 · smoke 213 → 213(무변경) · front 167 → 183 · 실패 0
+```
+
+**front의 EPERM은 재현되지 않았다.** 이 층에서 그대로 돌려서 수치를 냈다 — Codex 셸의
+`XDG_CONFIG_HOME` 환경 문제로 보이고 코드와 무관하다. **다만 숫자 없이 보고를 닫으면 안 된다**
+(`AGENTS.md` 보고 형식). 막혔으면 막힌 것만 쓰고 멈추는 게 맞았고, 그건 지켰다.
+
+### 통과 — 설계·함정
+
+- 설계 위반 없음: 파생값 저장 없음 · SQL 없음 · 서버 무변경 · `_req` 경유(직접 `fetch` 없음)
+- 함정 1(`scrollIntoView`) 없음 · 함정 5(색) CSS 변수 + 다크 짝 양쪽(`@media` · `[data-theme]`) 충족
+- 함정 7(전역 클래스명): 신규 클래스 전부 `.lm-education-*` 접두사. **지시를 지켰다**
+- `toast(msg,"warn")`는 helper가 `t-` 접두사를 붙이므로 맞다(`app.js:201`)
+- `booted` 가드 미접촉 · 기존 `.sec`/`.sec-h`/`.card`/`openSheet` 재사용 · 빈 상태 문구 있음
+- `itemType` 처리됨 — 배열 분리·숫자 강제까지. 분해 절이 전달됐다
+
+### 검사를 보강했다 — 숫자는 맞았지만 목적을 못 지켰다
+
+`AGENT-CHAIN.md` §8의 세 번째 항목(숫자의 의미)에서 걸렸다. 원래 검사 6건 중:
+
+1. **"폼이 스키마로 조립된다"가 하드코딩과 구별되지 않았다** — 렌더된 입력 개수를
+   `S.educationSchema.fields.length`와 비교했는데, **필드 7개를 박아 넣어도 통과한다.**
+   분해 절이 합격 기준을 명시했는데("스키마 응답에 없는 필드를 넣거나 빼서 폼이 따라 바뀌는 것")
+   반영되지 않았다 → 활성 스키마에 `front_probe`를 끼워 넣고 폼이 늘어나는지, `note`를 빼면
+   사라지는지를 보는 검사로 교체. 흔든 스키마는 `refreshEducation()`으로 원복한다
+2. **완료 조건 3번(필수 필드가 비면 프런트가 막는다) 검사가 아예 없었다.** 코드엔 있는데
+   검사가 없으면 다음 사람이 지운다 → `status`만 채우고 저장을 눌러 시트가 열린 채 남고
+   `S.education`이 0인 것 + 토스트가 이유를 말하는 것까지 확인
+3. **완료 조건 1번의 "항목 0개일 때 빈 상태 문구"가 미검사** — 항목을 만든 뒤만 봤다 → 앞에 추가
+4. **삭제 경로 미검사**(확인 절차 5번) → `#cf-yes`까지 눌러 빈 상태로 돌아오는 것 확인
+5. 추가·수정을 `Api.lmCreate` 직접 호출로 하고 있었다 → **폼을 거쳐** 돌게 바꿨다.
+   API를 직접 부르면 폼 조립·수집 경로가 검사에서 빠진다
+
+검사 6건 → 16건. 이름도 주변과 같은 한국어로 맞췄다.
+
+### 코드 2건을 고쳤다 — 지금은 안 터지는 잠재 결함
+
+1. **`renderMe()`의 `Promise.all`이 Me 탭을 인질로 잡았다.** `Api.lmSchema("education")`이
+   활성 행이 없으면 404를 던지는데(`lifemodel.ts:33`), 거절되면 **Me 본문이 통째로 안 그려진다.**
+   호출부 5곳 중 어디도 `renderMe()`를 await하지 않아 unhandled rejection으로 조용히 죽는다.
+   지금은 0012가 education v1을 등록해 놨으니 안 터지지만, **레지스트리는 버전을 올리려고 둔 것**이라
+   `active` 전환이 예정된 동작이다. → 두 lm 호출에 `.catch`. 덧붙은 섹션이 기존 화면을 죽이지 않는다
+   (`finalizeIgnored`의 `.catch`와 같은 논리)
+2. **제목 추론이 스키마 순서에 의존했다.** `fields.find(f => f.type==="string" && f.required)`인데
+   `status`도 `{"type":"string","enum":[…]}`다. 0012의 properties가 `name`→`status` 순서라
+   **순서 덕에** 맞았고, v2에서 뒤집히면 항목 제목이 `"enrolled"`가 된다 → enum 필드를 후보에서 제외
+3. (부수) 저장 핸들러가 `closeAll()` **뒤에** `educationCtx`를 읽어 토스트 문구를 정했다.
+   `closeAll`은 주석대로 진행 중 컨텍스트를 버리는 함수고(`evxCtx`·`dfxCtx`), 나중에 누가
+   `educationCtx`를 그 목록에 넣으면 "추가했어요"가 조용히 거짓말을 한다 → 앞에서 `editing`으로 잡아 둠
+
+### 남은 것 — 사용자 판단
+
+- **필드 라벨이 영문 raw다**(`name`·`term`·`credits`·`prerequisites`). 나머지 UI는 한국어인데
+  폼만 영어다. 라벨 매핑을 두면 "스키마 필드 하드코딩 금지"와 부딪히므로 **판단이 필요하다**:
+  (a) 그대로 둔다 (b) `lm_schema`의 body에 `title`/`label`을 넣어 서버가 라벨을 준다(스키마 변경 = Cowork)
+  (b)가 레지스트리 취지에 맞지만 마이그레이션이 붙는다
+- 폰 실측은 티켓 §확인 절차 그대로. 특히 4번(status 3색 다크모드 가독)

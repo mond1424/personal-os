@@ -63,6 +63,11 @@ const Api = {
   // Me · 설정 · 분석
   me: () => _req("GET", "/me"),
   putMe: (field, value) => _req("PUT", "/me/" + field, { value }),
+  lmSchema: (section) => _req("GET", "/lm/" + encodeURIComponent(section) + "/schema"),
+  lmItems: (section) => _req("GET", "/lm/" + encodeURIComponent(section)),
+  lmCreate: (section, body) => _req("POST", "/lm/" + encodeURIComponent(section), body),
+  lmUpdate: (id, body) => _req("PATCH", "/lm/item/" + encodeURIComponent(id), body),
+  lmDelete: (id) => _req("DELETE", "/lm/item/" + encodeURIComponent(id)),
   putSetting: (key, value) => _req("PUT", "/settings/" + key, { value }),
   providers: () => _req("GET", "/ai/providers"),
   connections: () => _req("GET", "/ai/connections"),

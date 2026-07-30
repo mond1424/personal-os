@@ -149,6 +149,54 @@ ok("AI 연결 행 · 토큰 위", rows.findIndex((r) => r.includes("AI 연결"))
 ok("모델 행이 토큰 아래", rows.findIndex((r) => r.includes("앱 접근 토큰")) < rows.findIndex((r) => r.includes("모델 — Low")));
 ok("표준시 오프셋이 내보내기 위", rows.findIndex((r) => r.includes("표준시")) < rows.findIndex((r) => r.includes("내보내기")));
 
+console.log("\n[Education — 스키마가 폼을 정한다]");
+const eduKeys = () => [...$("#lm-education-fields").querySelectorAll("[data-lm-education-key]")].map((el) => el.dataset.lmEducationKey);
+const eduRows = () => $("#lm-education-list").querySelectorAll("[data-lm-education-id]").length;
+w.toggleSet(false); await sleep(150);
+ok("Education 섹션이 Me 본문에 있다", !!$("#lm-education-list") && !!$("#lm-education-list").closest(".sec"));
+ok("항목 0개 — 빈 상태 문구", txt("#lm-education-list").includes("아직 Education 항목이 없어요"), txt("#lm-education-list").slice(0, 40));
+
+// **하드코딩과 구별되는 검사.** 필드 수를 세는 것만으로는 7개를 박아 넣어도 통과한다.
+// 활성 스키마를 흔들어 폼이 따라 움직이는지 본다 — 그게 레지스트리를 둔 이유다.
+w.openEducationForm(); await sleep(120);
+ok("폼 입력칸 = 스키마 필드", eduKeys().join(",") === ev("S.educationSchema.fields.map((f)=>f.key).join(',')"), eduKeys().join(","));
+ev(`S.educationSchema.fields.push({ key: "front_probe", type: "string", required: false })`);
+w.openEducationForm(); await sleep(120);
+ok("스키마에 없던 필드를 넣으면 폼에 생긴다", eduKeys().includes("front_probe"), eduKeys().join(","));
+ev(`S.educationSchema.fields = S.educationSchema.fields.filter((f) => f.key !== "front_probe" && f.key !== "note")`);
+w.openEducationForm(); await sleep(120);
+ok("스키마에서 빼면 폼에서도 사라진다", !eduKeys().includes("front_probe") && !eduKeys().includes("note"), eduKeys().join(","));
+ok("enum 필드는 select", $("#lm-education-fields [data-lm-education-key='status']")?.tagName === "SELECT");
+ok("배열 필드는 itemType을 보고 조립된다",
+  ($("#lm-education-fields [data-lm-education-key='prerequisites']")?.getAttribute("placeholder") || "").includes("string"));
+await ev("refreshEducation()"); await sleep(200);   // 흔든 스키마를 서버 값으로 원복 — 뒤 검사가 조작된 것을 보면 안 된다
+
+// 필수 필드는 서버 400 이전에 프런트가 막는다
+w.openEducationForm(); await sleep(120);
+$("#lm-education-fields [data-lm-education-key='status']").value = "planned";
+$("#lm-education-save").click(); await sleep(400);
+ok("필수 필드가 비면 저장이 막힌다", ev("S.education.length") === 0 && $("#sh-education").classList.contains("on"), `n=${ev("S.education.length")}`);
+ok("막힌 이유를 말해 준다", txt("#toast").includes("필수"), txt("#toast"));
+
+// 추가 → 수정 → 삭제
+$("#lm-education-fields [data-lm-education-key='name']").value = "프런트 확인 과목";
+$("#lm-education-fields [data-lm-education-key='term']").value = "2026-2";
+$("#lm-education-save").click(); await sleep(700);
+ok("추가 — 목록에 뜬다", eduRows() === 1, `rows=${eduRows()}`);
+ok("status 배지", !!$("#lm-education-list").querySelector('[data-status="planned"]'));
+ok("term이 한 줄에 함께 보인다", txt("#lm-education-list").includes("2026-2"));
+const eduId = $("#lm-education-list [data-lm-education-id]").dataset.lmEducationId;
+w.openEducationForm(eduId); await sleep(150);
+ok("수정 — 기존 값이 폼에 실린다", $("#lm-education-fields [data-lm-education-key='name']").value === "프런트 확인 과목");
+$("#lm-education-fields [data-lm-education-key='name']").value = "프런트 확인 과목(수정)";
+$("#lm-education-save").click(); await sleep(700);
+ok("수정 — 목록이 갱신된다", txt("#lm-education-list").includes("프런트 확인 과목(수정)"));
+ok("수정이 행을 늘리지 않는다", eduRows() === 1, `rows=${eduRows()}`);
+w.openEducationForm(eduId); await sleep(150);
+$("#lm-education-delete").click(); await sleep(150);
+$("#cf-yes").click(); await sleep(700);
+ok("삭제 — 빈 상태로 돌아간다", eduRows() === 0 && txt("#lm-education-list").includes("아직 Education 항목이 없어요"), `rows=${eduRows()}`);
+
 console.log("\n[시트 — 열림 검증]");
 w.openSetting("model_high"); await sleep(200);
 ok("모델 후보 = 제공자/모델 조합", $("#st-options").querySelectorAll(".optrow").length === ev("modelOptions().length"),
