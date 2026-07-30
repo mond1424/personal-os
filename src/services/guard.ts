@@ -266,8 +266,18 @@ export interface VerifyResult {
   source: VerifySource;
 }
 
-const stay3 = (source: VerifySource, reason: string): VerifyResult =>
-  ({ level: 3, approved: false, reason, ai_used: 0, cached: false, source });
+/**
+ * `ai_used`는 **"판정을 받았는가"가 아니라 "모델을 불렀는가"**다 (T-07).
+ *
+ * 통제 ③이 지키려는 것은 판정의 수가 아니라 **지출**이다. 그러니 세는 지점도 돈이 나가는 지점 —
+ * 요청이 나갔으면 1이다. 타임아웃·제공자 실패·파싱 실패는 전부 요청이 **이미 나간 뒤**다.
+ * 이걸 0으로 세면 8초 타임아웃이 반복되는 밤에 상한이 사실상 사라진다.
+ *
+ * 가르는 선은 하나: **`callModel`에 들어갔는가.** 들어가기 전에 막힌 것(킬 스위치·캐시·상한·
+ * 키 없음)은 0, 들어간 뒤 무슨 일이 나든 1이다.
+ */
+const stay3 = (source: VerifySource, reason: string, aiUsed: 0 | 1 = 0): VerifyResult =>
+  ({ level: 3, approved: false, reason, ai_used: aiUsed, cached: false, source });
 
 export async function verifyLevel4(env: Env, t: TimeCtx, input: any): Promise<VerifyResult> {
   // 이 엔드포인트는 격상 전용이다. 다른 Level을 물어 오는 것은 기기 배선 버그이므로
@@ -331,16 +341,24 @@ export async function verifyLevel4(env: Env, t: TimeCtx, input: any): Promise<Ve
         setTimeout(() => reject(new Error("__timeout__")), AI_TIMEOUT_MS)),
     ]);
   } catch (e: any) {
-    const timedOut = e?.message === "__timeout__";
-    return stay3(timedOut ? "timeout" : "error",
-      timedOut ? `${AI_TIMEOUT_MS / 1000}초 안에 판정이 안 왔어요 — Level 3으로 남아요`
-               : `검증을 못 했어요 — Level 3으로 남아요 (${e?.message ?? "알 수 없는 오류"})`);
+    if (e?.message === "__timeout__") {
+      // **요청은 이미 나갔다.** 응답을 안 기다릴 뿐이므로 지출은 발생했다 → 1 (T-07).
+      return stay3("timeout", `${AI_TIMEOUT_MS / 1000}초 안에 판정이 안 왔어요 — Level 3으로 남아요`, 1);
+    }
+    // 503은 `callModel`이 **요청을 보내기 전에** 키가 없어서 던지는 것이다(ai.ts).
+    // 위에서 이미 걸렀으므로 여기 오는 건 그 사이에 키가 지워진 경우뿐 — 나가지 않았으니 0.
+    // 그 밖(502 제공자 응답 실패·fetch 거절)은 전부 요청이 나간 뒤다 → 1.
+    const wentOut = !(e instanceof ApiError && e.status === 503);
+    return stay3("error",
+      `검증을 못 했어요 — Level 3으로 남아요 (${e?.message ?? "알 수 없는 오류"})`,
+      wentOut ? 1 : 0);
   }
 
   // 형식을 어긴 응답은 **사용자에 대한 판단으로 번역하지 않는다.** 거부가 아니라 판정 불가다.
+  // 요청도 응답도 있었으므로 지출은 발생했다 → 1.
   const parsed = parseModelJson<{ approve?: unknown; reason?: unknown }>(text);
   if (!parsed || typeof parsed.approve !== "boolean") {
-    return stay3("error", "판정을 형식대로 받지 못했어요 — Level 3으로 남아요");
+    return stay3("error", "판정을 형식대로 받지 못했어요 — Level 3으로 남아요", 1);
   }
 
   const reason = typeof parsed.reason === "string" && parsed.reason.trim()

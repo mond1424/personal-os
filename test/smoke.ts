@@ -580,6 +580,46 @@ ok("키 없음 → 200 · level 3 · source error", vNoKey.status === 200
   JSON.stringify(vNoKey.json));
 ok("판정 불가는 approved=false (fail-open 아님)", vNoKey.json.approved === false);
 
+// (T-07) `ai_used`는 **"판정을 받았는가"가 아니라 "모델을 불렀는가"**다.
+// 통제 ③이 지키는 것은 판정 수가 아니라 지출이므로, 요청이 나갔으면 1이어야 한다.
+// 이걸 0으로 세면 8초 타임아웃이 반복되는 밤에 상한이 사실상 사라진다.
+//
+// **AI를 실제로 부르지 않는다** — `fetch`를 갈아 끼워 제공자 응답만 흉내 낸다.
+// **상한을 채우기 전에** 둔다 — `guard_events`는 삭제가 트리거로 막혀 있어(개입 이력 영구 보존)
+// 나중에 상한을 비울 수 없다. 검사 순서 자체가 불변성에 걸려 있다.
+await api("PUT", "/api/settings/ai_key_anthropic", { value: "sk-ant-smoke-fake" });
+const realFetch = globalThis.fetch;
+// event_id를 새로 줘서 캐시를 피한다 — 캐시에 걸리면 callModel까지 가지 못한다
+const VCALL = { ...VBASE, client_id: "verify-call-1", event_id: "20260731-777" };
+
+globalThis.fetch = (async () =>
+  new Response(JSON.stringify({ error: { message: "provider down" } }), { status: 500 })) as typeof fetch;
+const vProv = await verify(VCALL);
+ok("제공자 응답 실패 → ai_used 1 (요청이 나갔다)",
+  vProv.json.source === "error" && vProv.json.ai_used === 1 && vProv.json.level === 3,
+  JSON.stringify(vProv.json));
+
+globalThis.fetch = (async () => { throw new TypeError("network down"); }) as typeof fetch;
+const vNet = await verify(VCALL);
+ok("네트워크 거절 → ai_used 1", vNet.json.source === "error" && vNet.json.ai_used === 1,
+  JSON.stringify(vNet.json));
+
+// 200인데 JSON이 아닌 응답 — **요청도 응답도 있었으므로** 지출은 발생했다.
+globalThis.fetch = (async () =>
+  new Response(JSON.stringify({ content: [{ type: "text", text: "판정을 형식 없이 말해 버림" }] }),
+    { status: 200 })) as typeof fetch;
+const vParse = await verify(VCALL);
+ok("파싱 실패 → ai_used 1 · 거부가 아니라 판정 불가",
+  vParse.json.source === "error" && vParse.json.ai_used === 1 && vParse.json.approved === false,
+  JSON.stringify(vParse.json));
+
+globalThis.fetch = realFetch;
+await api("PUT", "/api/settings/ai_key_anthropic", { value: "" });
+// 키를 지우면 다시 **호출 전** 실패다 → 0. 이 대비가 T-07이 가르는 선이다.
+const vNoKey2 = await verify(VCALL);
+ok("키 없음은 여전히 ai_used 0 (호출 전에 막혔다)",
+  vNoKey2.json.source === "error" && vNoKey2.json.ai_used === 0, JSON.stringify(vNoKey2.json));
+
 // ③ 일일 상한 — coach 모드의 ai_daily_cap = 5 (0010 시드). ai_used=1 행을 그만큼 만든다.
 // ai_verdict는 비워 둔다 — 캐시가 먼저 걸리면 상한을 검사하는 게 아니게 된다.
 const capN = (await api("GET", "/api/guard/modes")).json.active.ai_daily_cap;
@@ -617,6 +657,7 @@ ok("킬 스위치 off → level 4 · source off · ai_used 0",
   vOff.json.level === 4 && vOff.json.source === "off" && vOff.json.ai_used === 0, JSON.stringify(vOff.json));
 ok("킬 스위치는 상한·캐시보다 먼저다", vOff.json.cached === false);
 await api("PUT", "/api/settings/guard_ai_verify", { value: "on" });
+
 
 // buildCoreContext (§6.2) — **빈 섹션을 생략하지 않는다.**
 // 생략하면 모델이 빈 곳을 상상으로 메우고, 명시하면 "정보가 없어 판단 보류"가 나온다.

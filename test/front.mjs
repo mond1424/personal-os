@@ -296,7 +296,18 @@ w.startPick({ mode: "defer", id: ev("S.today.todo[0].id"), from: D0, title: "경
 await sleep(800);
 ok("오늘은 비활성 (미루기는 내일부터)", dim(D0) === true, String(dim(D0)));
 ok("내일은 활성", dim(day(1)) === false, String(dim(day(1))));
-ok("이번 달 마지막 날 활성", dim(`${D0.slice(0, 8)}31`) === false, String(dim(`${D0.slice(0, 8)}31`)));
+// 달 끝자락도 눌려야 한다 — 이 줄이 지키는 것은 '달 경계에서 비활성으로 새지 않는가'다.
+//
+// 전엔 `${이번달}31`을 그대로 썼는데, 그러면 **31일이 있는 달의 1~30일에만** 통과한다:
+//   · 오늘이 31일이면 그 날짜가 곧 오늘이고, 바로 위 줄이 "오늘은 비활성"을 확인한다 → 자기모순
+//   · 30일까지인 달·2월이면 그 셀이 아예 없어 `dim()`이 null을 준다
+// 실제 말일을 계산하고, 그게 오늘이면 내일(= 다음 달 1일)로 옮긴다 — 어느 쪽이든 달 경계다.
+const lastOfMonth = (() => {
+  const [y, m] = D0.split("-").map(Number);
+  return new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10);   // m은 1-based → 다음 달 0일 = 이번 달 말일
+})();
+const monthEdge = lastOfMonth > D0 ? lastOfMonth : day(1);
+ok("달 끝자락 활성 (말일이 오늘이면 다음 달 1일)", dim(monthEdge) === false, `${monthEdge} → ${dim(monthEdge)}`);
 // 이번 달 그리드의 꼬리에 붙어 나온 다음 달 날짜 — 범위 안이면 여기서도 눌러야 한다
 const tail = [...$$cur(".c.mut")].map((c) => c.dataset.d).filter((d) => d > D0);
 ok("이번 달 그리드 꼬리에 다음 달 날짜 존재", tail.length > 0, tail.join(","));
