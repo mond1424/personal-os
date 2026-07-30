@@ -98,6 +98,15 @@ const FRONT_TIMEOUT_MS = 420_000;
 /** 픽스처 시드 상한. 실측 ~2초 — 여기 걸리면 워커가 응답을 안 주는 것이다. */
 const SEED_TIMEOUT_MS = 60_000;
 
+/**
+ * 실패 보고에 붙일 wrangler dev 출력. 파이프는 항상 비우되 **앞뒤만** 들고 있는다.
+ *
+ * 뒤쪽만 남기면 안 된다 — 헬스 프로브가 매 250ms 요청을 넣어 그 접근 로그가 버퍼를 채우고
+ * **기동 로그를 밀어낸다**(실제로 그랬다). "왜 안 떴나"의 답은 앞쪽에 있다.
+ */
+const DEV_LOG_HEAD = 40;
+const DEV_LOG_TAIL = 20;
+
 let server = null;
 let code = 0;
 
@@ -132,12 +141,36 @@ try {
   // 2) 임시 DB 로 dev 서버 기동 (자식 프로세스)
   const port = await freePort();
   const base = `http://127.0.0.1:${port}`;
+  // `stdio: "ignore"`였다 — **서버가 왜 안 뜨는지를 버리고 있었다.**
+  // 안 뜨면 "30초 안에 응답 없음"만 남고 wrangler가 찍은 이유는 사라진다(Codex 셸이 여기서 막혔다).
+  // 파이프로 받되 **항상 읽어 비운다** — 읽지 않는 파이프는 버퍼가 차면 쓰는 쪽을 막는다.
+  // 무한히 쌓이지 않게 마지막 DEV_LOG_LINES 줄만 남긴다.
+  const devHead = [], devTailBuf = [];
+  let devDropped = 0;
+  const keepDevLine = (chunk) => {
+    for (const line of String(chunk).split(/\r?\n/)) {
+      if (!line.trim()) continue;
+      if (devHead.length < DEV_LOG_HEAD) { devHead.push(line); continue; }
+      devTailBuf.push(line);
+      if (devTailBuf.length > DEV_LOG_TAIL) { devTailBuf.shift(); devDropped++; }
+    }
+  };
   server = spawn(
     process.execPath,
     [wranglerCli, "dev", "--local", "--persist-to", persistDir, "--ip", "127.0.0.1", "--port", String(port)],
-    { cwd: root, stdio: "ignore", env: wEnv, windowsHide: true },
+    { cwd: root, stdio: ["ignore", "pipe", "pipe"], env: wEnv, windowsHide: true },
   );
+  server.stdout.on("data", keepDevLine);
+  server.stderr.on("data", keepDevLine);
   server.on("error", (e) => console.error("[e2e] dev 서버 spawn 실패:", e));
+  // 일찍 죽었으면 30초를 기다릴 이유가 없다 — 죽은 이유를 들고 바로 끝낸다.
+  let devExit = null;
+  server.on("exit", (c, sig) => { devExit = { code: c, signal: sig }; });
+  const devTail = () => {
+    if (!devHead.length) return "\n(wrangler dev가 아무것도 출력하지 않았다 — 프로세스가 시작조차 못 했는지 확인한다)";
+    const mid = devDropped ? [`… (${devDropped}줄 생략) …`] : [];
+    return `\n--- wrangler dev 출력 ---\n${[...devHead, ...mid, ...devTailBuf].join("\n")}`;
+  };
 
   // 3) 헬스 대기 (최대 ~30초)
   //
@@ -147,6 +180,11 @@ try {
   // 상한이 아니게 된다. 러너가 아무 말 없이 바깥 제한 시간까지 도는 자리 중 하나였다.
   let up = false;
   for (let i = 0; i < 120; i++) {
+    if (devExit) {
+      throw new Error(
+        `wrangler dev가 기동 중 종료됐다 (code ${devExit.code}, signal ${devExit.signal}).${devTail()}`,
+      );
+    }
     try {
       const r = await fetch(base + "/api/health", { signal: AbortSignal.timeout(2000) });
       if (r.ok) { up = true; break; }
@@ -155,9 +193,8 @@ try {
   }
   if (!up) {
     throw new Error(
-      "dev 서버가 30초 안에 /api/health에 응답하지 않았다. "
-      + `포트 ${port}는 잡혔는지, wrangler dev가 컴파일에서 막혔는지 확인한다 `
-      + `(로그: ${wEnv.WRANGLER_LOG_PATH}).`,
+      `dev 서버가 30초 안에 ${base}/api/health에 응답하지 않았다 (프로세스는 살아 있다).`
+      + devTail(),
     );
   }
   console.log(`[e2e] 워커 기동 @ ${base}`);
@@ -203,11 +240,19 @@ try {
   // 6) 정리 — 서버 트리 종료 + 임시 DB 삭제 (파일 잠금은 재시도로 흡수)
   killTree(server?.pid);
   await sleep(500);
-  try {
-    rmSync(persistDir, { recursive: true, force: true, maxRetries: 20, retryDelay: 200 });
-  } catch (e) {
-    console.warn("[e2e] 임시 DB 삭제 실패(무해 — OS 임시폴더라 곧 정리됨):", e?.message);
+  if (code === 0) {
+    try {
+      rmSync(persistDir, { recursive: true, force: true, maxRetries: 20, retryDelay: 200 });
+    } catch (e) {
+      console.warn("[e2e] 임시 DB 삭제 실패(무해 — OS 임시폴더라 곧 정리됨):", e?.message);
+    }
+    console.log("[e2e] 정리 완료 — 임시 DB 삭제, 실제 dev DB(.wrangler/state)는 그대로.");
+  } else {
+    // **실패했으면 남긴다.** 지우면서 로그 경로를 알려 주는 건 아무 말도 안 하는 것과 같다 —
+    // 실제로 그랬다(T-06 3차에서 가리킨 wrangler-logs가 이미 삭제된 폴더였다).
+    // OS 임시 폴더라 방치해도 곧 정리되고, 실 `.wrangler/state`는 여전히 불변이다.
+    console.log(`[e2e] 실패라 진단용으로 남겼다: ${persistDir}`);
+    console.log("[e2e] 실제 dev DB(.wrangler/state)는 그대로.");
   }
-  console.log("[e2e] 정리 완료 — 임시 DB 삭제, 실제 dev DB(.wrangler/state)는 그대로.");
   process.exit(code);
 }
