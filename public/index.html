@@ -354,6 +354,21 @@
     <div class="dsep mono">:</div>
     <div class="dcol" id="dial-m"></div>
   </div>
+  <div class="sec ev-protect-section">
+    <div class="sec-h"><span class="sec-t">보호 규칙</span>
+      <label class="ev-protect-switch"><input type="checkbox" id="ev-protect-enabled"><span>켜기</span></label>
+    </div>
+    <div id="ev-protect-fields" style="display:none">
+      <p class="cap">이 일정에 맞춰 Guard가 미리 개입할 시간을 계산해요.</p>
+      <label class="ev-protect-field"><span>보호 시작</span><input type="text" id="ev-protect-from" inputmode="text"></label>
+      <label class="ev-protect-field"><span>최대 Level</span><select id="ev-protect-level"><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option></select></label>
+      <div class="ev-protect-minutes">
+        <label class="ev-protect-field"><span>수면 (분)</span><input type="number" id="ev-protect-sleep" min="0" max="1440" step="1"></label>
+        <label class="ev-protect-field"><span>준비 (분)</span><input type="number" id="ev-protect-prep" min="0" max="1440" step="1"></label>
+      </div>
+      <p class="ev-protect-deadline" id="ev-protect-deadline"></p>
+    </div>
+  </div>
   <div class="actrow">
     <button class="btn ghost" style="flex:1" id="evx-cancel">취소</button>
     <button class="btn" style="flex:1.2" id="evx-ok">완료</button>

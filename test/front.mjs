@@ -530,6 +530,57 @@ await sleep(1200);
 ok("시트가 닫히고 일정이 들어감", !$("#sh-event").classList.contains("on"));
 const added = (await ev(`Api.day("${DD}")`)).events.find((e) => e.title === "다이얼로 넣은 일정");
 ok("고른 시각 그대로 저장", added && added.time === "14:30", JSON.stringify(added));
+// 보호 규칙 — 일정 시트에서 기본값으로 설정·미리보기·해제를 모두 검증한다.
+await w.openDay(DD); await sleep(300);
+ev(`window.__protectCalls = []; window.__originalSetProtect = Api.setProtect;
+  Api.setProtect = async (id, body) => { window.__protectCalls.push({ id, body }); return window.__originalSetProtect(id, body); };`);
+w.openEventEdit(DD, false, added.id); await sleep(160);
+$("#ev-protect-enabled").checked = true;
+$("#ev-protect-enabled").dispatchEvent(new w.Event("change"));
+ok("보호 켜면 기본값 표시", $("#ev-protect-from").value === "-1d 00:00" && $("#ev-protect-level").value === "4" && $("#ev-protect-sleep").value === "360" && $("#ev-protect-prep").value === "90");
+const deadline360 = txt("#ev-protect-deadline");
+$("#ev-protect-sleep").value = "300";
+$("#ev-protect-sleep").dispatchEvent(new w.Event("input"));
+const deadline300 = txt("#ev-protect-deadline");
+// 14:30 일정 − (수면+준비). 360+90=450분 → 07:00 · 300+90=390분 → 08:00.
+// **양쪽 값을 다 박는다** — 한쪽만 보면 prep을 빼먹은 식(−sleep만)도 통과할 수 있다.
+ok("보호 데드라인은 수면 입력에 따라 변함", deadline360 !== deadline300
+  && deadline360.includes("07:00") && deadline300.includes("08:00"), deadline360 + " / " + deadline300);
+$("#ev-protect-sleep").value = "360";
+$("#ev-protect-sleep").dispatchEvent(new w.Event("input"));
+$("#evx-ok").dispatchEvent(new w.Event("click")); await sleep(1000);
+ok("보호 설정 본문은 명시 기본값", ev(`JSON.stringify(window.__protectCalls[0]?.body)`) === JSON.stringify({ protect_from: "-1d 00:00", protect_level: 4, protect_sleep_min: 360, protect_prep_min: 90 }), ev(`JSON.stringify(window.__protectCalls)`));
+w.switchTab("cal"); await sleep(800);
+ok("보호 일정은 캘린더에서 표시", !!$cur(`.c[data-d="${DD}"] .ev-protect-dot`));
+await w.openDay(DD); await sleep(300); w.openEventEdit(DD, false, added.id); await sleep(160);
+$("#ev-protect-enabled").checked = false;
+$("#ev-protect-enabled").dispatchEvent(new w.Event("change"));
+$("#evx-ok").dispatchEvent(new w.Event("click")); await sleep(900);
+ok("보호 해제 본문", ev(`window.__protectCalls[1]?.body?.protect`) === false, ev(`JSON.stringify(window.__protectCalls)`));
+// 완료 조건 4 — 잘못된 protect_from은 **서버 400 이전에** 프런트가 막는다.
+await w.openDay(DD); await sleep(300); w.openEventEdit(DD, false, added.id); await sleep(160);
+$("#ev-protect-enabled").checked = true;
+$("#ev-protect-enabled").dispatchEvent(new w.Event("change"));
+$("#ev-protect-from").value = "어제 자정";
+$("#ev-protect-from").dispatchEvent(new w.Event("input"));
+const callsBefore = ev("window.__protectCalls.length");
+$("#evx-ok").dispatchEvent(new w.Event("click")); await sleep(400);
+ok("잘못된 보호 시작은 저장 전에 막힌다",
+  ev("window.__protectCalls.length") === callsBefore && $("#sh-event").classList.contains("on"),
+  `calls ${callsBefore}→${ev("window.__protectCalls.length")}`);
+ok("보호 — 막힌 이유를 말해 준다", txt("#toast").includes("형식"), txt("#toast"));
+$("#evx-cancel").dispatchEvent(new w.Event("click")); await sleep(200);
+ev("Api.setProtect = window.__originalSetProtect");
+// 종일 일정은 서버가 09:00으로 본다(guard.ts:66) — 프런트 미리보기도 같은 폴백을 써야 한다.
+// 09:00 − (360+90) = 01:30. **설계 §6.1의 예시 그대로**이고, 서버 쪽은 smoke가 같은 값을 박고 있다.
+w.openEventSheet(DD); await sleep(200);
+$("#ev-protect-enabled").checked = true;
+$("#ev-protect-enabled").dispatchEvent(new w.Event("change"));
+ok("종일 일정은 09:00 기준 — 설계 §6.1의 01:30", txt("#ev-protect-deadline").includes("01:30"),
+  txt("#ev-protect-deadline"));
+$("#ev-protect-enabled").checked = false;
+$("#ev-protect-enabled").dispatchEvent(new w.Event("change"));
+$("#evx-cancel").dispatchEvent(new w.Event("click")); await sleep(200);
 w.openEventSheet(DD); await sleep(200);
 ok("다시 열면 종일로 초기화", $("#evx-dial").style.display === "none" && $("#evx-title").value === "");
 $("#evx-cancel").dispatchEvent(new w.Event("click"));

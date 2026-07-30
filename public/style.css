@@ -506,6 +506,8 @@ nav,.logbar{background:var(--bar)}
 /* 글줄의 흰 배경 제거 — 기간색 위에 흰 조각이 뜨지 않게 */
 .ev{background:none;border-left-width:3px;padding-left:4px;color:var(--ink)}
 .ev.evt{font-weight:700}
+.ev-protect-calendar{display:flex;align-items:baseline;gap:3px}
+.ev-protect-dot{display:inline-block;width:5px;height:5px;border-radius:50%;background:var(--brick);flex:none}
 /* 할 일 압축 줄 — 일정보다 한 단계 물러난 톤 */
 .ev.tsum{font-weight:600;color:var(--sub);display:flex;align-items:baseline;gap:3px}
 /* +n 배지는 말줄임 대상에서 뺀다 — 제목만 줄고 배지는 항상 남는다.
@@ -523,6 +525,19 @@ nav,.logbar{background:var(--bar)}
 /* 일정 = 사건, 할 일과 구분 */
 .evrow{display:flex;align-items:center;gap:9px;padding:9px 2px;border-bottom:1px solid var(--line2)}
 .evrow:last-child{border-bottom:none}
+.ev-protect-badge{flex:none;border-radius:999px;padding:2px 6px;background:var(--brick-soft);color:var(--brick);font-size:10px;font-weight:700}
+/* 날짜 팝업의 일정 제목이 span.en → button으로 바뀌었다(보호 편집 진입).
+   `.evrow .en`이 주던 flex:1·14px·600을 여기서 되살린다 — 없으면 제목이 얇아지고
+   행을 채우지 않아 × 가 오른쪽으로 밀리지 않는다. (font는 전역 button 리셋이 inherit) */
+.ev-protect-event-title{flex:1;min-width:0;font-size:14px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink);text-align:left}
+.ev-protect-section{margin-top:16px}
+.ev-protect-switch{margin-left:auto;display:flex;align-items:center;gap:6px;font-size:12px;color:var(--sub);font-weight:700}
+.ev-protect-switch input{accent-color:var(--brick)}
+.ev-protect-field{display:block;margin-top:10px}
+.ev-protect-field>span{display:block;margin-bottom:5px;font-size:11px;letter-spacing:.08em;color:var(--sub);font-weight:700}
+.ev-protect-field input,.ev-protect-field select{width:100%;font:inherit;border:1px solid var(--line);border-radius:12px;padding:10px 12px;background:var(--card);color:var(--ink);outline:none}
+.ev-protect-minutes{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.ev-protect-deadline{margin-top:12px;padding:10px 12px;border-radius:12px;background:var(--brick-soft);color:var(--brick);font-size:12px;font-weight:700}
 .evrow .et{flex:none;font-size:12px;color:var(--sub);width:42px}
 .evrow .en{flex:1;font-size:14px;font-weight:600}
 .evrow .ex{flex:none;color:var(--faint);font-size:16px;padding:0 4px}

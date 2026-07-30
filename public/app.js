@@ -312,7 +312,8 @@ function renderToday() {
     evBox.style.display = "";
     evBox.innerHTML = `<div class="sec-h"><span class="sec-t">일정</span><span class="cnt">${evsToday.length} · 캘린더에서 관리</span></div>
       <div class="card" style="padding:4px 14px">` + evsToday.map((e) =>
-        `<div class="evrow"><span class="et mono">${e.time || "종일"}</span><span class="en">${esc(e.title)}</span></div>`).join("") + `</div>`;
+        `<div class="evrow"><span class="et mono">${e.time || "종일"}</span><span class="en">${esc(e.title)}</span>` +
+        (e.protect_from ? '<span class="ev-protect-badge">보호</span>' : "") + `</div>`).join("") + `</div>`;
   } else evBox.style.display = "none";
 
   // TODO / Done / 재배정 대기
@@ -587,9 +588,11 @@ async function openDay(k) {
     const evs = day.events || [];
     const closed = !!(day.daily && day.daily.status === "closed");
     h += `<div class="sec-h" style="margin-top:16px"><span class="sec-t">일정</span><span class="cnt">${evs.length}</span></div>`;
-    h += `<div class="card" style="padding:4px 14px">` + (evs.map((e) =>
-      `<div class="evrow"><span class="et mono">${e.time || "종일"}</span><span class="en">${esc(e.title)}</span>` +
-      (closed ? "" : `<button class="ex" onclick="removeEvent('${e.id}','${k}')">×</button>`) + `</div>`).join("")
+    h += `<div class="card" style="padding:4px 14px">` + (evs.map((e) => {
+      evxItems.set(e.id, e);
+      return `<div class="evrow"><span class="et mono">${e.time || "종일"}</span><button class="ev-protect-event-title" onclick="openEventEdit('${k}',${closed},'${e.id}')">${esc(e.title)}</button>` +
+      (e.protect_from ? '<span class="ev-protect-badge">보호</span>' : "") +
+      (closed ? "" : `<button class="ex" onclick="removeEvent('${e.id}','${k}')">×</button>`) + `</div>`}).join("")
       || `<div class="evrow"><span class="cap">이 날의 일정이 없어요</span></div>`) + `</div>`;
     // 통합 추가 영역 — [일정 | 할 일 | memo] (relation별 가용 세그). 기존 함수 재사용.
     h += addZoneHtml(k, day.relation, closed);
@@ -671,6 +674,7 @@ function markDial() {
   $$("#dial-m .dopt").forEach((b, i) => b.classList.toggle("on", i === mi));
   const pv = $("#evx-preview");
   if (pv) pv.textContent = dialSt ? dialValue() : "";
+  updateEventProtectionPreview();
 }
 function scrollDial() {
   if (!dialSt) return;
@@ -681,19 +685,73 @@ function scrollDial() {
 /* ── 일정 추가 시트 ────────────────────────────────────────
  * 인라인 한 줄이던 걸 팝업으로 뺐다. 드럼은 별도 시트가 아니라 이 안에 들어 있다 —
  * 시트를 세 겹 쌓으면 뒤로 가기가 어디로 가는지 알 수 없어진다. */
-let evxCtx = null;   // { date, allday }
+let evxCtx = null;   // { date, allday, item? }
+const evxItems = new Map();
 
-function openEventSheet(k, closed) {
-  evxCtx = { date: k, allday: true };
-  dialSt = { h: 9, m: 0 };
+function protectionDeadline(date, time, sleepMin, prepMin) {
+  const [y, mo, d] = date.split("-").map(Number);
+  const [h, mi] = (time || "09:00").split(":").map(Number);
+  const at = new Date(Date.UTC(y, mo - 1, d, h, mi) - (Number(sleepMin) + Number(prepMin)) * 60_000);
+  return `${at.getUTCMonth() + 1}/${at.getUTCDate()} ${pad2(at.getUTCHours())}:${pad2(at.getUTCMinutes())}`;
+}
+
+function updateEventProtectionPreview() {
+  const enabled = $("#ev-protect-enabled");
+  const fields = $("#ev-protect-fields");
+  const preview = $("#ev-protect-deadline");
+  if (!enabled || !fields || !preview) return;
+  fields.style.display = enabled.checked ? "" : "none";
+  if (!enabled.checked || !evxCtx) return;
+  const sleep = Number($("#ev-protect-sleep").value);
+  const prep = Number($("#ev-protect-prep").value);
+  if (!Number.isFinite(sleep) || !Number.isFinite(prep)) {
+    preview.textContent = "수면과 준비 시간을 분 단위로 적어 주세요.";
+    return;
+  }
+  const time = evxCtx.allday ? "09:00" : dialValue();
+  preview.textContent = `수면·준비를 채우려면 ${protectionDeadline(evxCtx.date, time, sleep, prep)}부터 자야 해요.`;
+}
+
+function protectionBody() {
+  if (!$("#ev-protect-enabled").checked) return { protect: false };
+  const from = $("#ev-protect-from").value.trim();
+  const level = Number($("#ev-protect-level").value);
+  const sleep = Number($("#ev-protect-sleep").value);
+  const prep = Number($("#ev-protect-prep").value);
+  if (!/^([+-]?\d+)d\s+([01]\d|2[0-3]):([0-5]\d)$/.test(from)) return { error: "보호 시작 형식은 '-1d 00:00'예요" };
+  if (!Number.isInteger(level) || level < 1 || level > 4) return { error: "최대 Level은 1~4로 골라 주세요" };
+  if (!Number.isInteger(sleep) || sleep < 0 || sleep > 1440 || !Number.isInteger(prep) || prep < 0 || prep > 1440) {
+    return { error: "수면과 준비 시간은 0~1440분으로 적어 주세요" };
+  }
+  return { protect_from: from, protect_level: level, protect_sleep_min: sleep, protect_prep_min: prep };
+}
+
+function openEventEdit(k, closed, id) {
+  const item = evxItems.get(id);
+  if (!item) return toast("일정을 다시 불러와 주세요", "warn");
+  openEventSheet(k, closed, item);
+}
+
+function openEventSheet(k, closed, item = null) {
+  const eventTime = item?.time || "09:00";
+  const [h, m] = eventTime.split(":").map(Number);
+  evxCtx = { date: k, allday: !item?.time, item };
+  dialSt = { h: Number.isInteger(h) ? h : 9, m: Number.isInteger(m) ? m : 0 };
   $("#evx-date").textContent = dlabel(k);
   // 마감된 날에 추가하면 그 일정은 수정·삭제가 막힌다 — 미리 알린다 (1.3)
   const warn = $("#evx-warn"); if (warn) warn.style.display = closed ? "" : "none";
-  $("#evx-title").value = "";
+  $("#evx-title").value = item?.title || "";
+  $("#ev-protect-enabled").checked = !!item?.protect_from;
+  $("#ev-protect-from").value = item?.protect_from || "-1d 00:00";
+  $("#ev-protect-level").value = String(item?.protect_level ?? 4);
+  $("#ev-protect-sleep").value = String(item?.protect_sleep_min ?? 360);
+  $("#ev-protect-prep").value = String(item?.protect_prep_min ?? 90);
   buildDrum($("#dial-h"), 24, (i) => pad2(i), "h");
   buildDrum($("#dial-m"), 12, (i) => pad2(i * 5), "m");
   markDial();
   evxMode(true);
+  if (item?.time) evxMode(false);
+  updateEventProtectionPreview();
   openSheet("sh-event");
 }
 function evxMode(allday) {
@@ -705,17 +763,27 @@ function evxMode(allday) {
 }
 function bindEventSheet() {
   $$("#evx-seg button").forEach((b) => (b.onclick = () => evxMode(b.dataset.t === "all")));
+  $("#ev-protect-enabled").onchange = updateEventProtectionPreview;
+  ["#ev-protect-from", "#ev-protect-level", "#ev-protect-sleep", "#ev-protect-prep"].forEach((sel) => {
+    $(sel).oninput = updateEventProtectionPreview;
+    $(sel).onchange = updateEventProtectionPreview;
+  });
   $("#evx-cancel").onclick = () => { closeSheet("sh-event"); evxCtx = null; };
   $("#evx-ok").onclick = () => {
     if (!evxCtx) return;
     const title = $("#evx-title").value.trim();
     if (!title) return toast("일정 내용을 적어 주세요", "warn");
     const k = evxCtx.date, time = evxCtx.allday ? null : dialValue();
+    const item = evxCtx.item;
+    const protect = protectionBody();
+    if (protect.error) return toast(protect.error, "warn");
     closeSheet("sh-event");
     evxCtx = null;
     run(async () => {
-      await Api.createEvent({ title, date: k, time });
-      toast(`${md(k)} 일정을 추가했어요`, "ok");
+      const unchanged = item && item.title === title && item.date === k && item.time === time;
+      const saved = unchanged ? item : (item ? await Api.updateEvent(item.id, { title, date: k, time }) : await Api.createEvent({ title, date: k, time }));
+      if (protect.protect_from || (item?.protect_from && protect.protect === false)) await Api.setProtect(saved.id, protect);
+      toast(item ? `${md(k)} 일정을 수정했어요` : `${md(k)} 일정을 추가했어요`, "ok");
       await Promise.all([refreshToday(), renderCalendar()]);
       openDay(k);
     });
@@ -845,7 +913,7 @@ async function renderCalendar() {
 
       // 일정 — 셀에서는 제목만. 시각·종일 구분은 날짜 팝업에서(1단계). 초과분은 '일정 +N' 한 줄.
       let h = evs.slice(0, evShow).map((e) =>
-        `<span class="ev evt${past}${e.time ? " timed" : ""}" style="border-left-color:${e.color || "var(--ink)"}">${esc(e.title)}</span>`).join("");
+        `<span class="ev evt${past}${e.time ? " timed" : ""}${e.protect_from ? " ev-protect-calendar" : ""}" style="border-left-color:${e.color || "var(--ink)"}">${esc(e.title)}${e.protect_from ? '<i class="ev-protect-dot" title="보호 규칙 켜짐"></i>' : ""}</span>`).join("");
       if (evOver > 0) h += `<span class="ev more">일정 +${evOver}</span>`;
 
       // 할 일 — 살아 있는 항목(미완료·미이동)을 created_at 순으로 먼저 채운다

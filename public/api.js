@@ -75,6 +75,7 @@ const Api = {
   createEvent: (b) => _req("POST", "/events", b),
   updateEvent: (id, b) => _req("PATCH", "/events/" + id, b),
   deleteEvent: (id) => _req("DELETE", "/events/" + id),
+  setProtect: (id, b) => _req("PUT", "/events/" + encodeURIComponent(id) + "/protect", b),
   runAnalysis: (prompt, depth) => _req("POST", "/analyses", { prompt, depth }),
   contextRaw: () => _req("GET", "/analyses/context-raw"),
   meHistory: () => _req("GET", "/me/history"),
