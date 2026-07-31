@@ -149,6 +149,87 @@ ok("AI 연결 행 · 토큰 위", rows.findIndex((r) => r.includes("AI 연결"))
 ok("모델 행이 토큰 아래", rows.findIndex((r) => r.includes("앱 접근 토큰")) < rows.findIndex((r) => r.includes("모델 — Low")));
 ok("표준시 오프셋이 내보내기 위", rows.findIndex((r) => r.includes("표준시")) < rows.findIndex((r) => r.includes("내보내기")));
 
+console.log("\n[Goals — 스키마 폼 · 귀속일 디데이]");
+const goalKeys = () => [...$("#lm-goals-fields").querySelectorAll("[data-lm-goals-key]")].map((el) => el.dataset.lmGoalsKey);
+const goalRows = () => $("#lm-goals-list").querySelectorAll("[data-lm-goals-id]").length;
+w.toggleSet(false); await sleep(150);
+ok("Goals 섹션이 Me 본문에 있다", !!$("#lm-goals-list") && !!$("#lm-goals-list").closest(".sec"));
+ok("Goals 0개 — 빈 상태 문구", txt("#lm-goals-list").includes("아직 Goals 항목이 없어요"), txt("#lm-goals-list").slice(0, 40));
+ok("nav Me 분리 훅 = Me에만", $("nav [data-go='me']")?.classList.contains("nav-me-tab")
+  && $("nav").querySelectorAll(".nav-me-tab").length === 1);
+
+// **하드코딩과 구별되는 검사.** 실제 스키마의 현재 목록을 확인하는 데서 끝내지 않고,
+// 실행 중 스키마에 필드를 넣고 빼서 폼이 그대로 따라 움직이는지 본다.
+w.openGoalsForm(); await sleep(120);
+ok("Goals 폼 입력칸 = 스키마 필드", goalKeys().join(",") === ev("S.goalsSchema.fields.map((f)=>f.key).join(',')"), goalKeys().join(","));
+ev(`S.goalsSchema.fields.push({ key: "front_probe", title: "검사 필드", type: "string", required: false })`);
+w.openGoalsForm(); await sleep(120);
+ok("Goals 스키마에 필드를 넣으면 폼에 생긴다", goalKeys().includes("front_probe"), goalKeys().join(","));
+ev(`S.goalsSchema.fields = S.goalsSchema.fields.filter((f) => f.key !== "front_probe" && f.key !== "metric")`);
+w.openGoalsForm(); await sleep(120);
+ok("Goals 스키마에서 빼면 폼에서도 사라진다", !goalKeys().includes("front_probe") && !goalKeys().includes("metric"), goalKeys().join(","));
+await ev("refreshGoals()"); await sleep(200);
+
+w.openGoalsForm(); await sleep(120);
+const goalPeriodSelect = $("#lm-goals-fields [data-lm-goals-key='period_id']");
+ok("period_id는 기간 선택", goalPeriodSelect?.tagName === "SELECT"
+  && goalPeriodSelect.options.length === ev("S.periods.length + 1"), goalPeriodSelect?.tagName);
+$("#lm-goals-title").value = "프런트 확인 목표";
+$("#lm-goals-save").click(); await sleep(300);
+ok("Goals 필수 필드가 비면 저장이 막힌다", ev("S.goals.length") === 0
+  && $("#sh-goals").classList.contains("on") && txt("#toast").includes("필수"), txt("#toast"));
+
+const goalPid = ev("S.periods[0].id");
+$("#lm-goals-fields [data-lm-goals-key='horizon']").value = "long";
+$("#lm-goals-fields [data-lm-goals-key='period_id']").value = goalPid;
+$("#lm-goals-save").click(); await sleep(700);
+ok("Goals 추가 — 목록에 뜬다", goalRows() === 1 && txt("#lm-goals-list").includes("프런트 확인 목표"), `rows=${goalRows()}`);
+
+// 같은 목표·같은 period_id를 둔 채 기간 행만 흔든다. 고정 D-N 문자열이면 이 검사를 통과하지 못한다.
+const goalPidJs = JSON.stringify(goalPid);
+ev(`S.periods = S.periods.map((p) => p.id === ${goalPidJs} ? { ...p, kind:"period", dday_label:"숨김", end_date:addDaysStr(S.today.date, 10) } : p); renderGoals()`);
+const periodKindHidden = !$("#lm-goals-list .lm-goals-dday");
+ev(`S.periods = S.periods.map((p) => p.id === ${goalPidJs} ? { ...p, kind:"constraint", dday_label:"" } : p); renderGoals()`);
+ok("일반 기간·빈 라벨은 디데이를 숨긴다", periodKindHidden && !$("#lm-goals-list .lm-goals-dday"));
+
+ev(`S.periods = S.periods.map((p) => p.id === ${goalPidJs} ? { ...p, kind:"constraint", dday_label:"입대", end_date:addDaysStr(S.today.date, 10) } : p); renderGoals()`);
+const dday10 = txt("#lm-goals-list .lm-goals-dday");
+ev(`S.periods = S.periods.map((p) => p.id === ${goalPidJs} ? { ...p, end_date:addDaysStr(S.today.date, 13) } : p); renderGoals()`);
+const dday13 = txt("#lm-goals-list .lm-goals-dday");
+ok("디데이는 end_date와 귀속일로 다시 계산된다", dday10 === "입대 D-10" && dday13 === "입대 D-13", `${dday10} → ${dday13}`);
+
+// **귀속일 센티널.** 실행일과 S.today.date가 같으면 new Date()를 잘못 써도 위 검사가 통과한다.
+// 서버 귀속일을 확실히 다른 고정값으로 바꿔, 기기 날짜를 읽는 구현이 반드시 빨간불이 되게 한다.
+const goalTodayOrig = ev("S.today.date");
+ev(`S.today.date = "2001-01-15";
+  S.periods = S.periods.map((p) => p.id === ${goalPidJs} ? { ...p, end_date:"2001-01-25" } : p);
+  renderGoals()`);
+const deviceDateAtSentinel = ev("new Date().toISOString().slice(0, 10)");
+ok("귀속일 센티널 — 기기 날짜가 달라도 S.today.date 기준", deviceDateAtSentinel !== "2001-01-15"
+  && txt("#lm-goals-list .lm-goals-dday") === "입대 D-10",
+  `device=${deviceDateAtSentinel} · attributed=${ev("S.today.date")} · ${txt("#lm-goals-list .lm-goals-dday")}`);
+ev(`S.today.date = ${JSON.stringify(goalTodayOrig)}`);
+
+ev(`S.periods = S.periods.map((p) => p.id === ${goalPidJs} ? { ...p, end_date:S.today.date } : p); renderGoals()`);
+ok("디데이 당일 = D-DAY", txt("#lm-goals-list .lm-goals-dday") === "입대 D-DAY", txt("#lm-goals-list .lm-goals-dday"));
+ev(`S.periods = S.periods.map((p) => p.id === ${goalPidJs} ? { ...p, end_date:addDaysStr(S.today.date, -2) } : p); renderGoals()`);
+ok("지난 디데이 = D+N", txt("#lm-goals-list .lm-goals-dday") === "입대 D+2", txt("#lm-goals-list .lm-goals-dday"));
+
+await ev("refreshGoals()"); await sleep(200);   // 기간·목표를 서버 값으로 원복
+const goalId = $("#lm-goals-list [data-lm-goals-id]").dataset.lmGoalsId;
+w.openGoalsForm(goalId); await sleep(150);
+ok("Goals 수정 — 기존 값이 폼에 실린다", $("#lm-goals-title").value === "프런트 확인 목표"
+  && $("#lm-goals-fields [data-lm-goals-key='period_id']").value === String(goalPid));
+$("#lm-goals-title").value = "프런트 확인 목표(수정)";
+$("#lm-goals-fields [data-lm-goals-key='metric']").value = "하루 20분";
+$("#lm-goals-save").click(); await sleep(700);
+ok("Goals 수정 — 목록이 갱신된다", goalRows() === 1 && txt("#lm-goals-list").includes("프런트 확인 목표(수정)")
+  && txt("#lm-goals-list").includes("하루 20분"), txt("#lm-goals-list"));
+w.openGoalsForm(goalId); await sleep(150);
+$("#lm-goals-delete").click(); await sleep(150);
+$("#cf-yes").click(); await sleep(700);
+ok("Goals 삭제 — 빈 상태로 돌아간다", goalRows() === 0 && txt("#lm-goals-list").includes("아직 Goals 항목이 없어요"), `rows=${goalRows()}`);
+
 console.log("\n[Education — 스키마가 폼을 정한다]");
 const eduKeys = () => [...$("#lm-education-fields").querySelectorAll("[data-lm-education-key]")].map((el) => el.dataset.lmEducationKey);
 const eduRows = () => $("#lm-education-list").querySelectorAll("[data-lm-education-id]").length;

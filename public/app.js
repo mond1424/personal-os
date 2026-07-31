@@ -178,6 +178,8 @@ const S = {
   settings: {},         // key→value
   cal: { y: 0, m: 0 },  // 표시 중인 달
   calData: null,
+  goals: [],
+  goalsSchema: null,
   education: [],
   educationSchema: null,
   pick: null,           // {mode:'defer'|'schedule', id, title, from?, origin}
@@ -1398,17 +1400,23 @@ const ME_GUIDE = {
   personality:  { desc: "스스로 보는 성향·강점·약점.", eg: "예: 몰입형. 시작은 느리지만 깊게 판다." },
   life_pattern: { desc: "수면·집중·기복 등 반복되는 하루 리듬.", eg: "예: 밤에 집중이 잘 되고 오전엔 느리다." },
 };
+
 async function renderMe() {
-  // Education은 덧붙은 섹션이다 — 실패해도 Me 본문을 인질로 잡지 않는다.
+  // Life Model 섹션은 덧붙은 화면이다 — 하나가 실패해도 Me 본문을 인질로 잡지 않는다.
   // lmSchema는 활성 행이 없으면 404를 던진다(lifemodel.ts). v2 전환·비활성화 중에
   // Promise.all이 그대로 거절되면 Me 탭이 통째로 안 그려진다.
-  const [me, hist, guard, educationSchema, education] = await Promise.all([
+  const [me, hist, guard, goalsSchema, goals, educationSchema, education, periods] = await Promise.all([
     Api.me(), Api.meHistory(), Api.guardEvents(),
+    Api.lmSchema("goals").catch(() => null), Api.lmItems("goals").catch(() => []),
     Api.lmSchema("education").catch(() => null), Api.lmItems("education").catch(() => []),
+    Api.periods().catch(() => S.periods),
   ]);
   S.me = me;
+  S.goalsSchema = goalsSchema;
+  S.goals = goals;
   S.educationSchema = educationSchema;
   S.education = education;
+  if (Array.isArray(periods)) S.periods = periods;
   let h = "";
   // 기본 5필드는 값이 없어도 항상 노출 — 눌러 바로 입력하도록(직접입력 진입을 명시). 그 뒤에 5필드 밖의 값(있으면)을 잇는다.
   const byField = Object.fromEntries(me.fields.map((f) => [f.field, f.value]));
@@ -1430,6 +1438,7 @@ async function renderMe() {
       <span>${esc(ME_LABELS[r.field] || r.field)} — ${r.old_value ? `“${esc(r.old_value)}” → ` : ""}“${esc(r.new_value)}”${r.source === "ai" ? ' <span class="cap">AI 제안 승인</span>' : ""}</span></div>`).join("") ||
     `<div class="lrow"><span class="ts mono">—</span><span style="color:var(--faint)">아직 변경 이력이 없어요</span></div>`;
 
+  renderGoals();
   renderEducation();
 
   const ff = feelingsFields().join(" · ");
@@ -1461,6 +1470,149 @@ async function renderMe() {
 }
 
 function toggleSet(on) { $("#me-main").style.display = on ? "none" : ""; $("#me-set").style.display = on ? "" : "none"; }
+
+/* ── Goals (Life Model) ─────────────────────────────────── */
+let goalsCtx = null;
+
+function goalDday(item) {
+  const periodId = item?.data && typeof item.data === "object" ? item.data.period_id : null;
+  const period = periodId ? S.periods.find((p) => String(p.id) === String(periodId)) : null;
+  const label = String(period?.dday_label || "").trim();
+  if (!period || period.kind !== "constraint" || !label || !S.today?.date || !period.end_date) return "";
+  const days = diffDaysStr(period.end_date, S.today.date);   // 기기 날짜가 아니라 서버가 준 현재 귀속일
+  if (!Number.isFinite(days)) return "";
+  const value = days === 0 ? "D-DAY" : days > 0 ? `D-${days}` : `D+${Math.abs(days)}`;
+  return `${label} ${value}`;
+}
+
+function renderGoals() {
+  const box = $("#lm-goals-list");
+  if (!box) return;
+  const items = S.goals || [];
+  if (!items.length) {
+    box.innerHTML = '<div class="lrow"><span class="ts mono">—</span><span style="color:var(--faint)">아직 Goals 항목이 없어요 — 방향이 생기면 하나씩 적어 봐요.</span></div>';
+    return;
+  }
+  box.innerHTML = items.map((item) => {
+    const data = item.data && typeof item.data === "object" ? item.data : {};
+    const meta = [data.horizon, data.metric].filter((v) => v !== null && v !== undefined && String(v).trim()).join(" · ");
+    const dday = goalDday(item);
+    return '<button class="lm-goals-row" data-lm-goals-id="' + esc(item.id) + '">' +
+      '<span class="lm-goals-copy"><span class="lm-goals-title">' + esc(item.title) + '</span>' +
+      (meta ? '<span class="lm-goals-meta">' + esc(meta) + '</span>' : "") + '</span>' +
+      (dday ? '<span class="lm-goals-dday">' + esc(dday) + '</span>' : "") +
+      '</button>';
+  }).join("");
+  $$("#lm-goals-list [data-lm-goals-id]").forEach((b) => {
+    b.onclick = () => openGoalsForm(b.dataset.lmGoalsId);
+  });
+}
+
+function goalsFieldLabel(field) {
+  if (field && typeof field === "object") return field.title || String(field.key).replace(/_/g, " ");
+  return String(field).replace(/_/g, " ");
+}
+
+function goalsFieldControl(field, data) {
+  const key = String(field.key || "");
+  const value = data[key];
+  const required = field.required ? '<span class="lm-goals-required"> · 필수</span>' : "";
+  let control = "";
+  if (key === "period_id") {
+    const options = S.periods.map((p) => {
+      const label = [p.title || p.id, p.start_date && p.end_date ? `${p.start_date}~${p.end_date}` : ""].filter(Boolean).join(" · ");
+      return '<option value="' + esc(p.id) + '"' + (String(value ?? "") === String(p.id) ? " selected" : "") + '>' + esc(label) + '</option>';
+    }).join("");
+    control = '<select class="lm-goals-input" data-lm-goals-key="' + esc(key) + '"><option value="">연결 안 함</option>' + options + '</select>';
+  } else if (Array.isArray(field.enum)) {
+    control = '<select class="lm-goals-input" data-lm-goals-key="' + esc(key) + '"><option value="">선택…</option>' +
+      field.enum.map((v) => '<option value="' + esc(v) + '"' + (value === v ? " selected" : "") + '>' + esc(v) + '</option>').join("") +
+      "</select>";
+  } else {
+    const isArray = field.type === "array";
+    const inputType = field.type === "number" ? "number" : "text";
+    const raw = isArray && Array.isArray(value) ? value.join(", ") : (value ?? "");
+    const hint = isArray
+      ? ' placeholder="쉼표나 줄바꿈으로 구분' + (field.itemType ? " (" + esc(field.itemType) + ")" : "") + '"'
+      : "";
+    control = '<input class="lm-goals-input" type="' + inputType + '" data-lm-goals-key="' + esc(key) + '" value="' + esc(raw) + '"' + hint + ">";
+  }
+  return '<label class="lm-goals-field"><span class="lm-goals-field-label">' +
+    esc(goalsFieldLabel(field)) + required + "</span>" + control + "</label>";
+}
+
+function openGoalsForm(id = null) {
+  const schema = S.goalsSchema;
+  if (!schema || !Array.isArray(schema.fields)) return toast("Goals 스키마를 아직 불러오지 못했어요", "warn");
+  const item = id ? S.goals.find((x) => String(x.id) === String(id)) : null;
+  if (id && !item) return toast("해당 Goals 항목을 찾지 못했어요", "warn");
+  goalsCtx = item || null;
+  const data = goalsCtx?.data && typeof goalsCtx.data === "object" ? goalsCtx.data : {};
+  $("#lm-goals-head").textContent = goalsCtx ? "Goals 수정" : "Goals 추가";
+  $("#lm-goals-title").value = goalsCtx?.title || "";
+  $("#lm-goals-fields").innerHTML = schema.fields.map((field) => goalsFieldControl(field, data)).join("");
+  $("#lm-goals-delete").style.display = goalsCtx ? "" : "none";
+  openSheet("sh-goals");
+}
+
+function collectGoalsForm() {
+  const title = $("#lm-goals-title").value.trim();
+  if (!title) return { error: "목표명 항목은 필수예요" };
+  const fields = S.goalsSchema?.fields || [];
+  const inputs = [...$("#lm-goals-fields").querySelectorAll("[data-lm-goals-key]")];
+  const data = {};
+  for (const field of fields) {
+    const input = inputs.find((el) => el.dataset.lmGoalsKey === String(field.key));
+    const raw = (input?.value || "").trim();
+    const isArray = field.type === "array";
+    if (field.required && !raw) return { error: goalsFieldLabel(field) + " 항목은 필수예요" };
+    if (!raw) continue;
+    if (isArray) {
+      const values = raw.split(/[,\n]/).map((v) => v.trim()).filter(Boolean);
+      if (field.required && !values.length) return { error: goalsFieldLabel(field) + " 항목은 필수예요" };
+      if (field.itemType === "number") {
+        const numbers = values.map(Number);
+        if (numbers.some((v) => !Number.isFinite(v))) return { error: goalsFieldLabel(field) + "은 숫자로 적어 주세요" };
+        data[field.key] = numbers;
+      } else data[field.key] = values;
+    } else if (field.type === "number") {
+      const value = Number(raw);
+      if (!Number.isFinite(value)) return { error: goalsFieldLabel(field) + "은 숫자로 적어 주세요" };
+      data[field.key] = value;
+    } else data[field.key] = raw;
+  }
+  return { title, data };
+}
+
+async function refreshGoals() {
+  const [schema, items, periods] = await Promise.all([Api.lmSchema("goals"), Api.lmItems("goals"), Api.periods()]);
+  S.goalsSchema = schema;
+  S.goals = items;
+  S.periods = periods;
+  renderGoals();
+}
+
+function bindGoalsSheet() {
+  $("#lm-goals-save").onclick = () => run(async () => {
+    const form = collectGoalsForm();
+    if (form.error) return toast(form.error, "warn");
+    const editing = !!goalsCtx;
+    if (editing) await Api.lmUpdate(goalsCtx.id, { title: form.title, data: form.data });
+    else await Api.lmCreate("goals", { title: form.title, data: form.data });
+    closeAll();
+    toast(editing ? "Goals 항목을 수정했어요" : "Goals 항목을 추가했어요", "ok");
+    await refreshGoals();
+  });
+  $("#lm-goals-delete").onclick = () => run(async () => {
+    if (!goalsCtx) return;
+    const okd = await confirmAsk("Goals 항목을 삭제할까요?", "삭제한 항목은 되돌릴 수 없어요.", "삭제");
+    if (okd !== "ok") return;
+    await Api.lmDelete(goalsCtx.id);
+    closeAll();
+    toast("Goals 항목을 삭제했어요", "warn");
+    await refreshGoals();
+  });
+}
 
 /* ── Education (Life Model) ─────────────────────────────── */
 let educationCtx = null;
@@ -2340,6 +2492,7 @@ async function boot() {
   bindFieldsSheet();
   bindAiSheet();
   bindMeSheet();
+  bindGoalsSheet();
   bindEducationSheet();
   bindSettingSheet();
   bindLogSheet();

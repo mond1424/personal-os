@@ -1,4 +1,4 @@
-# STATE — 최종 갱신 2026-07-30
+# STATE — 최종 갱신 2026-07-31
 
 ## 저장소
 - repo: https://github.com/mond1424/personal-os
@@ -388,6 +388,21 @@ Codex 구현 · Claude Code 검토. **경로 A(시각 예약)가 화면에서 �
 걸려면 그 일정을 열어야 하므로 불가피하다. `PATCH /api/events/:id`가 UI에서 처음 닿는다 —
 마감된 날의 제목 수정은 409가 뜬다(정상).
 
+### T-09 — Goals 디데이 + 하단 바 Me 분리 (2026-07-31)
+
+Codex 구현 · 독립 검토 통과. **Me Reinforcement Plan Phase 1(P1-c)이 닫혔다.** 서버·마이그레이션은
+바꾸지 않고 기존 Life Model·기간 API를 화면에 연결했다.
+
+- Goals 목록·추가·수정·삭제. `data` 필드는 `lm_schema` 응답으로 조립하고, `period_id`만 자유 문자열 대신
+  `Api.periods()` 선택으로 받는다. 목표명은 `lm_item.title`이라 스키마 `data` 필드 밖의 고정 입력이다.
+- 디데이는 저장하지 않는다. `kind='constraint'`이고 `dday_label`이 있을 때만 `end_date - S.today.date`를
+  렌더 시 계산한다. 미래 `D-N` · 당일 `D-DAY` · 과거 `D+N`; 일반 기간·빈 라벨은 표시하지 않는다.
+- 하단 바는 Me 버튼에 구분선용 `.nav-me-tab`만 붙였다. 탭 전환·스와이프·`#nav-dot` 로직은 무변경.
+- 검사는 스키마 필드 증감·기간 `end_date` 변동·일반 기간/빈 라벨·CRUD를 실제 경로로 확인한다.
+  특히 `S.today.date='2001-01-15'` 센티널로 기기 날짜를 잘못 쓰는 구현이 통과하지 못하게 했다.
+- T-09 단독 증가분은 front 193→210(17건). 구현 당시 작업 트리의 214는 미검토 T-08 검사 4건을 포함한 수치다.
+  `docs/api-surface.md`는 기존 API 시그니처가 그대로라 재생성하지 않았다. deploy·폰 실측은 대기.
+
 ## ★ 진행 중 — 8월 Guard v1 (APP-PLAN)
 
 **목표: 8/31까지 Guard 탑재 Android 앱, 9/1 실사용 시작.**
@@ -516,7 +531,7 @@ Guard v1이 1순위라는 건 안 바뀐다. Phase 1을 셋으로 쪼개 **UI를
 |---|---|---|
 | **P1-a** | 마이그레이션 0012 — analysis 앵커 4컬럼+backfill · 기간 `kind`/`dday_label` · `lm_item`(version 트리거) · `lm_schema` 레지스트리 | ✅ |
 | **P1-b** | 경량 스키마 검증기 · `lm_item` CRUD API · Me→Overview 이관 · analysis가 앵커·`source_versions` 실제 기록 | ✅ |
-| **P1-c** | 하단 바 (4탭/Me) 분리·애니메이션 · Education 폼 · Goals 디데이 표시 | 🔄 **Education 폼 ✅**(T-01, 07-30) / 하단 바·Goals 디데이 ⬜ — Guard 3주차 이후 |
+| **P1-c** | 하단 바 (4탭/Me) 분리·애니메이션 · Education 폼 · Goals 디데이 표시 | ✅ **T-01·T-09 완료** |
 
 **P1-a를 8월로 당긴 이유** — 계획서 §2.3: `source_versions`는 생성 시점의 입력 스냅샷이라 나중에 만들 수 없다. 9~11월 analysis가 앵커 없이 쌓이면 그 구간은 영영 stale 판정(§5) 밖이다. `guard_events.risk_snapshot`과 같은 논리(ADR-020).
 
@@ -562,7 +577,9 @@ Guard v1이 1순위라는 건 안 바뀐다. Phase 1을 셋으로 쪼개 **UI를
 - style.css      https://raw.githubusercontent.com/mond1424/personal-os/main/public/style.css
 
 ## 기준선
-typecheck 통과 / **smoke 237** / **front 193** / 실패 0 / verify exit 0
+typecheck 통과 / **smoke 237** / **front 210** / 실패 0 / verify exit 0
+(T-09 Goals 디데이·Me 분리: front 193→210 — 스키마 동적 폼·CRUD·디데이 계산/숨김·귀속일 센티널 17건.
+ 구현 작업 트리의 214는 커밋에서 제외한 T-08 검사 4건을 포함했다.)
 (T-07 `ai_used` 의미: smoke 233→237 — 호출 후 실패 3건이 1로 세는지 + 키 없음은 여전히 0.
  front는 무변경이나 **말일 검사 하나를 고쳤다** — 아래 T-07 참조.)
 (T-05 보호 규칙 UI: front 185→190(Codex) →193(검토 보강 3건). smoke 무변경 — 서버는 이미 완성돼 있었다.)

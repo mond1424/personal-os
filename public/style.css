@@ -251,6 +251,18 @@ details.fold[open] summary::before{transform:rotate(90deg)}
 .merow{padding:9px 0;border-bottom:1px solid var(--line2);font-size:13.5px;line-height:1.6}
 .merow:last-child{border-bottom:none}
 .merow .ml{font-size:11px;letter-spacing:.12em;color:var(--faint);font-weight:700;display:block;margin-bottom:2px}
+.lm-goals-row{display:flex;align-items:flex-start;gap:10px;padding:10px 0;border-bottom:1px solid var(--line2);width:100%}
+.lm-goals-row:last-child{border-bottom:none}
+.lm-goals-copy{flex:1;min-width:0}
+.lm-goals-title{display:block;font-size:13.5px;font-weight:600;line-height:1.4}
+.lm-goals-meta{display:block;font-size:11.5px;color:var(--faint);margin-top:3px}
+.lm-goals-dday{flex:none;border:1px solid var(--line);border-radius:999px;padding:3px 7px;font-size:10.5px;font-weight:700;line-height:1.25;color:var(--ink)}
+.lm-goals-field{display:block;margin-top:10px}
+.lm-goals-field:first-child{margin-top:0}
+.lm-goals-field-label{display:block;margin-bottom:5px;font-size:11px;letter-spacing:.08em;color:var(--sub);font-weight:700}
+.lm-goals-required{color:var(--brick)}
+.lm-goals-input{width:100%;font:inherit;border:1px solid var(--line);border-radius:12px;padding:10px 12px;background:var(--card);color:var(--ink);outline:none}
+.lm-goals-input:focus{border-color:var(--sub)}
 .lm-education-row{display:flex;align-items:flex-start;gap:10px;padding:10px 0;border-bottom:1px solid var(--line2);width:100%}
 .lm-education-row:last-child{border-bottom:none}
 .lm-education-copy{flex:1;min-width:0}
@@ -278,6 +290,8 @@ nav{position:absolute;left:0;right:0;bottom:0;height:64px;display:grid;grid-temp
 nav button{display:grid;place-items:center;gap:3px;color:var(--faint);font-size:10px;font-weight:600;text-align:center}
 nav button svg{width:21px;height:21px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 nav button.on{color:var(--ink)}
+.nav-me-tab{position:relative}
+.nav-me-tab::before{content:"";position:absolute;left:0;top:12px;bottom:12px;width:1px;background:var(--line)}
 /* 트랙을 따라 함께 미끄러지는 표식. 폭이 정확히 한 칸(20%)이라
    translateX(100%)가 곧 한 탭 — 소수 인덱스를 그대로 넣으면 된다. */
 .navdot{position:absolute;top:0;left:0;width:20%;height:3px;pointer-events:none;will-change:transform}
