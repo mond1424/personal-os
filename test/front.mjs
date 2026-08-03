@@ -360,7 +360,23 @@ ok("task 삭제 버튼", !!$("#tk-delete"));
 w.closeAll();
 
 console.log("\n[날짜 선택 — 달 경계를 걸친 2주]");
+const realD0 = ev("S.today.date");
+// 서버의 실제 오늘과 분리한다. 기본값은 30일 달, 두 번째 실행은 FRONT_DATE_CASE로
+// 다른 달(예: 윤년 2월)을 주입해 같은 경계 조건을 다시 검증한다.
+const fixedD0 = process.env.FRONT_DATE_CASE || "2026-04-20";
+if (!/^\d{4}-\d{2}-\d{2}$/.test(fixedD0)) throw new Error(`FRONT_DATE_CASE 형식 오류: ${fixedD0}`);
+const [fixedY, fixedM] = fixedD0.split("-").map(Number);
 w.switchTab("cal"); await sleep(1000);
+// 날짜 선택 중에도 switchTab의 인접 Today 프리렌더가 반복된다. 검사 동안 응답의 date만
+// 고정해 S.today.date 주입이 풀리지 않게 하고, 블록 끝에서 원래 Api.today를 돌려놓는다.
+await ev(`(async()=>{
+  window.__frontDateTodayOrig=Api.today;
+  Api.today=async()=>({...await window.__frontDateTodayOrig(),date:${JSON.stringify(fixedD0)}});
+  S.today={...S.today,date:${JSON.stringify(fixedD0)}};
+  S.cal={y:${fixedY},m:${fixedM}};
+  await renderCalendar();
+})()`); await sleep(300);
+console.log(`  · 고정 today 주입: ${fixedD0}`);
 const D0 = ev("S.today.date");
 // null = 그 달 그리드에 없는 날 / true = 비활성(흐림) / false = 선택 가능
 const dim = (d) => {
@@ -410,6 +426,14 @@ const anyFar = [...$$cur(".c")].filter((c) => c.dataset.d > d15);
 ok("신규 일정 — 2주 밖도 전부 활성", anyFar.length === 0 || anyFar.every((c) => dim(c.dataset.d) === false),
   anyFar.slice(0, 3).map((c) => c.dataset.d + ":" + dim(c.dataset.d)).join(" "));
 w.exitPick(); await sleep(300);
+
+const [realY, realM] = realD0.split("-").map(Number);
+await ev(`(async()=>{
+  Api.today=window.__frontDateTodayOrig;
+  delete window.__frontDateTodayOrig;
+  await refreshToday();
+  S.cal={y:${realY},m:${realM}};
+})()`);
 
 console.log("\n[이월 — 캘린더에서 옛 날짜 정리]");
 w.switchTab("cal"); await sleep(1200);
