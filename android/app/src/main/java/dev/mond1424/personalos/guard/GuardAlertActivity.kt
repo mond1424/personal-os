@@ -23,8 +23,8 @@ import dev.mond1424.personalos.R
  * FSI가 띄우는 화면 — 잠긴 화면 위에 그대로 뜬다. **개입의 본체**다.
  *
  * 설계 §6.3 — Override는 금지가 아니라 마찰:
- *   [알겠습니다]        마찰 없음. accepted
- *   [그래도 계속하기]   눌러야 마찰이 드러난다 → 사유 20자 + 대기 → override
+ *   [알겠습니다]        직접 마찰 없음. accepted + 계속 사용 시 5분 뒤 재확인
+ *   [그래도 계속하기]   눌러야 마찰이 드러난다 → 사유 + 대기 → override
  *
  * 마찰을 처음부터 보이지 않는 이유: 나란히 두면 대등한 선택지로 읽힌다.
  * 한 번 더 누르게 하는 것 자체가 마찰의 일부다.
@@ -116,7 +116,10 @@ class GuardAlertActivity : Activity() {
         val go = findViewById<Button>(R.id.guard_override_go)
         val note = findViewById<TextView>(R.id.guard_wait_note)
 
-        accept.setOnClickListener { finishWith("accepted", null) }
+        accept.setOnClickListener {
+            finishWith("accepted", null)
+            GuardRecheck.arm(this, level)
+        }
 
         // Level 1~2는 마찰이 없다 — 알림·맥락 경고일 뿐 개입이 아니다(§6.1).
         waitSec = waitSecFor(level)
@@ -172,8 +175,7 @@ class GuardAlertActivity : Activity() {
      * **마찰에 들어간 뒤에는 올리지 않는다.** 사유를 쓰고 있는데 대기가 늘면 배신이다.
      * 그 경우 개입은 Level 3으로 끝나고, 기록에도 3으로 남는다 — 실제로 그렇게 개입했으므로 맞다.
      *
-     * 소리를 다시 시작하는 이유: `overrideSilentAtL4`가 **Level 4에서만** 무음 모드를 넘는다
-     * (GuardAlertPolicy.plan). 격상 전에 무음이라 조용했다면 지금부터는 울려야 한다.
+     * 격상된 Level의 재생 정책을 적용하기 위해 플레이어를 다시 시작한다.
      * `start()`가 내부에서 `stop()`을 먼저 부르므로 두 번 겹치지 않는다.
      */
     private fun applyUpgrade(newLevel: Int) {

@@ -180,7 +180,6 @@ class GuardPlugin : Plugin() {
             JSObject()
                 .put("sound", s.sound)
                 .put("vibration", s.vibration)
-                .put("overrideSilentAtL4", s.overrideSilentAtL4)
                 .put("ringerMode", ringerModeName())
                 .put("effectiveL3", JSObject().put("sound", plan.sound).put("vibrate", plan.vibrate))
                 .put("effectiveL4", JSObject().put("sound", planL4.sound).put("vibrate", planL4.vibrate)),
@@ -192,7 +191,6 @@ class GuardPlugin : Plugin() {
         val s = GuardSettings(context)
         call.getBoolean("sound")?.let { s.sound = it }
         call.getBoolean("vibration")?.let { s.vibration = it }
-        call.getBoolean("overrideSilentAtL4")?.let { s.overrideSilentAtL4 = it }
         getSettings(call)
     }
 
@@ -296,6 +294,12 @@ class GuardPlugin : Plugin() {
     fun resetWatchNight(call: PluginCall) {
         GuardWatch.resetNight(context)
         call.resolve(JSObject().put("reset", true))
+    }
+
+    /** 수락 재확인이 arm됐는지, 5분·화면·오늘 상한 중 무엇이 막는지 확인한다. */
+    @PluginMethod
+    fun recheckStatus(call: PluginCall) {
+        call.resolve(JSObject.fromJSONObject(GuardRecheck.status(context)))
     }
 
     // ── 서버 동기화 (S2.3) ───────────────────────────────────

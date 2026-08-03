@@ -62,7 +62,11 @@ class GuardService : Service() {
         override fun onReceive(c: Context, i: Intent) {
             when (i.action) {
                 Intent.ACTION_SCREEN_ON -> { screenOn = true; GuardActivityLog.note(c, "screen_on", null); schedulePoll() }
-                Intent.ACTION_SCREEN_OFF -> { screenOn = false; GuardActivityLog.note(c, "screen_off", null) }
+                Intent.ACTION_SCREEN_OFF -> {
+                    screenOn = false
+                    GuardActivityLog.note(c, "screen_off", null)
+                    GuardRecheck.disarm(c)
+                }
                 Intent.ACTION_USER_PRESENT -> GuardActivityLog.note(c, "unlock", null)
             }
         }
@@ -79,6 +83,7 @@ class GuardService : Service() {
                 // 표본을 뜬 뒤 **두 번째 발동 경로**를 평가한다(ADR-025).
                 // 시각 경로(알람)와 독립이다 — 여기가 죽어도 예약은 시스템에 있다.
                 runCatching { GuardWatch.evaluate(applicationContext) }
+                runCatching { GuardRecheck.evaluate(applicationContext) }
                 handler.postDelayed(this, POLL_MS)
             }
         }
@@ -112,6 +117,7 @@ class GuardService : Service() {
             val pm = getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
             screenOn = pm.isInteractive
             if (screenOn) GuardActivityLog.note(this, "screen_on", null)
+            else GuardRecheck.disarm(this)
         }
         schedulePoll()
         // 죽어도 시스템이 되살린다. 생존이 이 서비스의 절반이다.

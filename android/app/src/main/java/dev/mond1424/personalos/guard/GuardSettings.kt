@@ -22,11 +22,6 @@ class GuardSettings(ctx: Context) {
         get() = p.getBoolean(K_VIBRATION, true)
         set(v) = p.edit().putBoolean(K_VIBRATION, v).apply()
 
-    /** 무음 모드에서도 Level 4는 울린다. 기본 꺼짐 — 켜면 우회로가 하나 막힌다. */
-    var overrideSilentAtL4: Boolean
-        get() = p.getBoolean(K_L4_SILENT, false)
-        set(v) = p.edit().putBoolean(K_L4_SILENT, v).apply()
-
     // ── 감지 기반 발동 (ADR-025) ──────────────────────────────
     // 보호 일정이 없어도 도는 규칙. 이게 없으면 루프가 몇 주에 한 번 돌아
     // 9~11월에 전례가 쌓이지 않는다.
@@ -59,7 +54,6 @@ class GuardSettings(ctx: Context) {
     companion object {
         private const val K_SOUND = "sound"
         private const val K_VIBRATION = "vibration"
-        private const val K_L4_SILENT = "l4_override_silent"
         private const val K_WATCH = "watch_enabled"
         private const val K_BED_FROM = "bed_from"
         private const val K_BED_TO = "bed_to"
@@ -83,15 +77,12 @@ object GuardAlertPolicy {
      *   일반   → 설정 그대로
      *
      * ⚠️ 알람 스트림은 원래 무음 모드에 영향받지 않는다. 여기서 **일부러** 존중하는 것이다.
-     *    대가: 폰을 무음으로 두면 Guard의 소리가 0마찰로 사라진다 — 설계 §6.3이 경계하는
-     *    '비용 없는 Override'다. 그래서 `overrideSilentAtL4`를 남겨 뒀다.
+     *    소리는 도달 수단이고 마찰은 사유·대기·재확인이 진다(ADR-026).
      */
     fun plan(ctx: Context, level: Int): AlertPlan {
         val s = GuardSettings(ctx)
         val am = ctx.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
         val mode = am?.ringerMode ?: AudioManager.RINGER_MODE_NORMAL
-
-        if (level >= 4 && s.overrideSilentAtL4) return AlertPlan(s.sound, s.vibration)
 
         return when (mode) {
             AudioManager.RINGER_MODE_SILENT -> AlertPlan(sound = false, vibrate = false)
