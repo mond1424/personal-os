@@ -1,5 +1,32 @@
+import java.security.KeyStore
+import java.security.MessageDigest
+
 apply plugin: 'com.android.application'
 apply plugin: 'org.jetbrains.kotlin.android'
+
+def formatSha256 = { byte[] digest ->
+    digest.collect { String.format('%02X', it & 0xff) }.join(':')
+}
+
+def keystoreSha256 = { File keystoreFile, String password, String alias ->
+    Exception lastFailure = null
+    for (String storeType : ['PKCS12', 'JKS']) {
+        try {
+            def keystore = KeyStore.getInstance(storeType)
+            keystoreFile.withInputStream { stream ->
+                keystore.load(stream, password.toCharArray())
+            }
+            def certificate = keystore.getCertificate(alias)
+            if (certificate == null) {
+                throw new GradleException("release signing alias was not found in the keystore")
+            }
+            return formatSha256(MessageDigest.getInstance('SHA-256').digest(certificate.encoded))
+        } catch (Exception failure) {
+            lastFailure = failure
+        }
+    }
+    throw new GradleException("release keystore certificate could not be read", lastFailure)
+}
 
 android {
     namespace = "dev.mond1424.personalos"
@@ -73,6 +100,65 @@ android {
     }
     kotlinOptions {
         jvmTarget = '21'
+    }
+}
+
+def verifyReleaseSigning = tasks.register('verifyReleaseSigning') {
+    group = 'verification'
+    description = 'Verifies the generated release APK certificate against the configured keystore.'
+    dependsOn('packageRelease')
+
+    doLast {
+        def apk = layout.buildDirectory.file('outputs/apk/release/app-release.apk').get().asFile
+        if (!apk.exists()) {
+            throw new GradleException("release APK was not generated: ${apk.absolutePath}")
+        }
+
+        def executableName = System.getProperty('os.name').toLowerCase().contains('windows')
+            ? 'apksigner.bat'
+            : 'apksigner'
+        def apksigner = new File(android.sdkDirectory,
+            "build-tools/${android.buildToolsVersion}/${executableName}")
+        if (!apksigner.exists()) {
+            throw new GradleException("apksigner was not found for build tools ${android.buildToolsVersion}")
+        }
+
+        def stdout = new ByteArrayOutputStream()
+        def stderr = new ByteArrayOutputStream()
+        def result = project.exec {
+            commandLine apksigner.absolutePath, 'verify', '--print-certs', apk.absolutePath
+            standardOutput = stdout
+            errorOutput = stderr
+            ignoreExitValue = true
+        }
+        if (result.exitValue != 0) {
+            throw new GradleException("release APK signature verification failed: ${stderr.toString('UTF-8').trim()}")
+        }
+
+        def matcher = stdout.toString('UTF-8') =~ /(?m)^Signer #1 certificate SHA-256 digest:\s*([0-9a-fA-F]{64})\s*$/
+        if (!matcher.find()) {
+            throw new GradleException('release APK SHA-256 certificate digest was not reported by apksigner')
+        }
+        def actual = matcher.group(1).toUpperCase().replaceAll(/(..)(?!$)/, '$1:')
+        def releaseSigning = android.signingConfigs.release
+        def expected = keystoreSha256(
+            releaseSigning.storeFile,
+            releaseSigning.storePassword,
+            releaseSigning.keyAlias
+        )
+
+        logger.lifecycle("[signing] release SHA-256=${actual}")
+        if (actual != expected) {
+            throw new GradleException(
+                "release APK signing certificate mismatch: actual=${actual}, keystore=${expected}"
+            )
+        }
+    }
+}
+
+tasks.configureEach { task ->
+    if (task.name == 'assembleRelease') {
+        task.dependsOn(verifyReleaseSigning)
     }
 }
 

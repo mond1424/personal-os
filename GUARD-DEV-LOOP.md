@@ -16,9 +16,20 @@ Android가 삭제 후 재설치를 강제한다. 그때 **권한과 예약 원�
 cd C:\dev\personal-os-worker\worker
 npx cap sync android
 cd android
+gradlew --stop
 gradlew assembleRelease
 adb install -r app\build\outputs\apk\release\app-release.apk
 ```
+
+`assembleRelease`가 끝나기 전에 생성된 APK의 실제 서명을 `apksigner`로 읽고,
+설정된 keystore 인증서와 비교한다. 둘이 같을 때만 아래 줄이 찍히며 빌드가 성공한다.
+
+```text
+[signing] release SHA-256=<SHA-256 지문>
+```
+
+이 줄이 없거나 지문 불일치로 빌드가 실패하면 `adb install -r`로 넘어가지 않는다.
+진단 기록에는 이 SHA-256 지문만 남기고 비밀번호나 키 자체는 적지 않는다.
 
 `-r`이 핵심이다 — 같은 서명이면 **데이터를 유지한 채** 교체된다.
 `adb`가 PATH에 없으면 `"%LOCALAPPDATA%\Android\Sdk\platform-tools\adb.exe"`.
