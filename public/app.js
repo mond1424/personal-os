@@ -898,7 +898,7 @@ async function renderCalendar() {
     const paths = bandPaths(row, cal.periods, rx)
       .map((p) => `<path d="${p.d}" fill="${p.fill}" fill-opacity=".4"/>`).join("");
     const cells = row.map((d) => {
-      const mut = +d.slice(5, 7) !== mm ? " mut" : "";
+      const mut = +d.slice(5, 7) !== mm ? " mut cal-dim-cell" : "";
       const today = d === D ? " today" : "";
       const past = d < D ? " past" : "";
       const evs = evByDate[d] || [], tks = tkByDate[d] || [], mo = memoByDate[d]; // mo=memo (mm은 상위의 '월' 파라미터)
@@ -2138,6 +2138,36 @@ function syncAll() {
   if (tab !== "today") loadTab(tab);
 }
 
+/* ── 누름 피드백 ─────────────────────────────────────────────
+ * 박스형 조작부만 한 곳에서 위임해 동적 렌더 뒤에도 그대로 적용한다.
+ * 캐러셀이 가로축을 확정하면 이미 .dragging을 붙이므로 그 신호만 읽어 피드백을 걷는다.
+ * 제스처 임계값을 여기서 다시 계산하지 않는다. */
+const PRESS_FEEDBACK_SELECTOR = [
+  ".c", ".trow", ".evrow", ".merow", ".lm-goals-row", ".lm-education-row",
+  ".seg button", ".wseg", ".seg-mini button",
+].join(",");
+let pressFeedbackTarget = null;
+function clearPressFeedback() {
+  if (pressFeedbackTarget) pressFeedbackTarget.classList.remove("press-feedback-on");
+  pressFeedbackTarget = null;
+}
+function bindPressFeedback() {
+  const host = $("#phone");
+  host.addEventListener("pointerdown", (e) => {
+    clearPressFeedback();
+    const target = e.target.closest && e.target.closest(PRESS_FEEDBACK_SELECTOR);
+    if (!target || !host.contains(target)) return;
+    pressFeedbackTarget = target;
+    target.classList.add("press-feedback-on");
+  }, { passive: true });
+  host.addEventListener("pointermove", (e) => {
+    if (pressFeedbackTarget && e.target.closest && e.target.closest(".dragging")) clearPressFeedback();
+  }, { passive: true });
+  for (const type of ["pointerup", "pointercancel", "pointerleave", "lostpointercapture"])
+    host.addEventListener(type, clearPressFeedback, { passive: true });
+  window.addEventListener("blur", clearPressFeedback);
+}
+
 /* ── 스와이프 ───────────────────────────────────────────────
  * 화면 가로 스와이프 = 탭 이동. 단 캘린더 그리드 위에서는 '달 넘기기'가 먼저다.
  * 가로 스크롤 영역(점수 막대·세그먼트)과 세로 스크롤은 건드리지 않는다.
@@ -2482,6 +2512,7 @@ async function boot() {
   applyTheme();
   bindSwipe();
   bindCalendarDrag();
+  bindPressFeedback();
   bindEdgeStretch();       // 경계 스트레치 (A-6) — 문제 시 이 줄만 제거하면 꺼짐
   switchTab($("#phone").dataset.tab || "today", false);   // 트랙 초기 위치
   $("#tut-next").onclick = () => { tutStep++; if (tutStep >= TUT.length) endTutorial(); else renderTut(); };

@@ -157,22 +157,25 @@ T-06의 방식대로 — **상한을 늘려 덮지 말고 어디서 막혔는지
 
 ```
 티켓: T-17
-바꾼 파일:
-기준선: typecheck 통과 · smoke A → B · front C → D · 실패 0
-곁일(adb): 첫 실행에서 start-server 없이 성공했는가
-설계와 어긋난 점:
-막힌 것:
+바꾼 파일: public/app.js, public/style.css, test/front.mjs · 곁일: test/device.mjs
+기준선: typecheck 통과 · smoke 244 → 244 · front 213 → 217 · 실패 0
+곁일(adb): 데몬 기동은 예 — 수동 start-server 없이 devices까지 진입. 폰 unauthorized로 CDP·JS 평가는 중단
+설계와 어긋난 점: 없음
+막힌 것: 시각 3항목은 deploy 후 사용자 실측 · adb 전체 왕복은 기기 USB 디버깅 승인 후 재확인
 ```
+
+검사 4번 변이 확인: 가로 이동 해제를 제거해 `:active`와 같은 유지 동작으로 돌리면
+**front 216 · 실패 1**, 유일한 실패가 `가로 이동 시 press 해제`였다. 정상 복원 후 217 · 실패 0.
 
 ---
 
 ## 검토 (검토 세션이 채운다 · HANDOFF-0731 §2)
 
 ```
-검사 4번(가로 이동 시 press 해제)이 :active 구현에서 빨간불이 되는가:
-제스처 상수를 안 건드렸는가:
-색이 전부 CSS 변수이고 다크 짝이 있는가:
-침범 셀의 pointer-events 가 살아 있는가:
-설계 위반 · 함정 재발:
-판정:
+검사 4번(가로 이동 시 press 해제)이 :active 구현에서 빨간불이 되는가: 예 — 해제 로직 제거 변이를 직접 재현했고 front 216 · 실패 1, 유일한 실패가 해당 검사였다
+제스처 상수를 안 건드렸는가: 예 — dragBlockUntil·AXIS_LOCK(20)·FLICK_V(0.5)는 HEAD와 동일하다
+색이 전부 CSS 변수이고 다크 짝이 있는가: 예 — --press·--cal-dim을 기본값과 [data-theme="dark"]·@media prefers-color-scheme:dark 양쪽에 정의했다
+침범 셀의 pointer-events 가 살아 있는가: 예 — 오버레이 규칙에 pointer-events가 없고 해당 날짜 열기 검사도 통과한다
+설계 위반 · 함정 재발: 없음 — 신규 클래스 cal-dim-cell·press-feedback-on은 모두 접두사이고 booted·scrollIntoView 관련 회귀가 없다
+판정: 통과
 ```

@@ -102,6 +102,32 @@ ok("셀 7의 배수", $$cur(".c").length % 7 === 0);
 ok("3-pane 조립 (이전·현재·다음)", w.document.querySelectorAll("#cal-track .calpane").length === 3);
 ok("밴드 path 생성", $$cur("svg.band path").length >= 1);
 ok("기간 카드", $("#p-list").querySelectorAll(".prow").length >= 1);
+const t17Css = await (await fetch(BASE + "/style.css")).text();
+const dimCells = $$cur(".c.cal-dim-cell");
+const dimRule = t17Css.match(/\.c\.cal-dim-cell::after\s*\{([^}]*)\}/)?.[1] || "";
+ok("침범 셀에만 전체 덮는 레이어", dimCells.length > 0
+  && dimCells.length === $$cur(".c.mut").length
+  && $$cur(".c:not(.mut).cal-dim-cell").length === 0
+  && dimRule.includes("background:var(--cal-dim)"), `${dimCells.length} / ${dimRule}`);
+const dimCell = dimCells[0], dimDate = dimCell?.dataset.d;
+dimCell?.click(); await sleep(600);
+ok("침범 셀 클릭은 해당 날짜를 연다", !!dimDate
+  && !dimRule.includes("pointer-events")
+  && $("#sh-day").classList.contains("on")
+  && txt("#day-body .sh-t") === ev(`dlabel("${dimDate}")`), `${dimDate} / ${txt("#day-body .sh-t")}`);
+w.closeAll();
+const pressCell = $cur(".c:not(.mut)");
+const pressEvent = (type, x, y) => new w.MouseEvent(type, { bubbles: true, clientX: x, clientY: y });
+pressCell.dispatchEvent(pressEvent("pointerdown", 300, 400));
+const pressAttached = pressCell.classList.contains("press-feedback-on");
+pressCell.dispatchEvent(pressEvent("pointerup", 300, 400));
+ok("박스를 누르면 press가 붙고 떼면 해제", pressAttached && !pressCell.classList.contains("press-feedback-on"));
+pressCell.dispatchEvent(pressEvent("pointerdown", 300, 400));
+const pressBeforeDrag = pressCell.classList.contains("press-feedback-on");
+pressCell.dispatchEvent(pressEvent("pointermove", 250, 402));
+const pressAfterDrag = pressCell.classList.contains("press-feedback-on");
+pressCell.dispatchEvent(pressEvent("pointerup", 250, 402));
+ok("가로 이동 시 press 해제", pressBeforeDrag && !pressAfterDrag, `${pressBeforeDrag} → ${pressAfterDrag}`);
 await w.openDay(ev("S.today.date")); await sleep(600);
 ok("날짜 팝업 조립", $("#day-body").textContent.includes("작성 중"), $("#day-body").textContent.slice(0, 40));
 w.closeAll();

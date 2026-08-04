@@ -5,6 +5,7 @@
   --lm-education-completed-bg:#E3F3EA; --lm-education-completed-ink:#236540;
   --lm-education-enrolled-bg:#FFF1D1; --lm-education-enrolled-ink:#855D14;
   --lm-education-planned-bg:#EEEAE3; --lm-education-planned-ink:#625C51;
+  --press:rgba(38,34,28,.10); --cal-dim:rgba(251,250,247,.72);
   --r:16px;
   /* 팝업 그림자·배경 농도 — 겹침 깊이는 .phone[data-depth]가 정한다 */
   --sh-sheet:0 -14px 40px rgba(40,34,24,.22);
@@ -61,6 +62,7 @@ input[type=range]{width:100%; accent-color:var(--ink)}
 .seg{display:inline-flex; border:1px solid var(--line); border-radius:999px; padding:3px; background:var(--card)}
 .seg button{padding:5px 12px; border-radius:999px; font-size:12px; color:var(--sub); font-weight:600}
 .seg button.on{background:var(--ink); color:var(--paper)}
+.press-feedback-on{box-shadow:inset 0 0 0 999px var(--press)}
 .memobox{display:flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:12px;
   background:var(--card);padding:5px;margin-top:12px}
 .memobox input{flex:1;border:none;outline:none;background:none;padding:7px 4px;font:inherit;color:var(--ink);min-width:0}
@@ -158,6 +160,8 @@ details.fold[open] summary::before{transform:rotate(90deg)}
 .c + .c{border-left:1px solid rgba(38,34,28,.035)}   /* 있는 듯 없는 듯 — 밴드의 흐름을 끊지 않을 만큼만 */
 .c .d{font-size:10.5px;line-height:1;color:var(--sub)}
 .c.mut .d{color:var(--faint)}   /* 다른 달 날짜 — 두 모드 모두 --sub보다 항상 흐리게(#3) */
+.c.cal-dim-cell::after{content:"";position:absolute;inset:0;z-index:3;background:var(--cal-dim)}
+.c.press-feedback-on::before{content:"";position:absolute;inset:0;z-index:4;background:var(--press)}
 .dr{display:block;width:10px;height:2.5px;border-radius:2px;background:var(--faint);margin:3px 0 0 1px}
 .c.today .d{display:inline-grid;place-items:center;width:17px;height:17px;
   background:var(--ink);color:var(--paper);border-radius:50%;font-size:10px}
@@ -364,6 +368,7 @@ input[type=date]:focus, select:focus{border-color:var(--sub)}
     --lm-education-completed-bg:#17301F; --lm-education-completed-ink:#8FD0AA;
     --lm-education-enrolled-bg:#312A16; --lm-education-enrolled-ink:#E1C573;
     --lm-education-planned-bg:#302C25; --lm-education-planned-ink:#C5BDB0;
+    --press:rgba(255,255,255,.13); --cal-dim:rgba(26,23,19,.72);
     /* 어두운 표면에서는 그림자가 흐려진다 — 더 짙고 넓게 */
     --sh-sheet:0 -14px 44px rgba(0,0,0,.58);
     --sh-box:0 20px 56px rgba(0,0,0,.64);
@@ -377,6 +382,7 @@ input[type=date]:focus, select:focus{border-color:var(--sub)}
   --lm-education-completed-bg:#17301F; --lm-education-completed-ink:#8FD0AA;
   --lm-education-enrolled-bg:#312A16; --lm-education-enrolled-ink:#E1C573;
   --lm-education-planned-bg:#302C25; --lm-education-planned-ink:#C5BDB0;
+  --press:rgba(255,255,255,.13); --cal-dim:rgba(26,23,19,.72);
   --sh-sheet:0 -14px 44px rgba(0,0,0,.58);
   --sh-box:0 20px 56px rgba(0,0,0,.64);
   --dim-rgb:0,0,0; --dim-a:.52;
