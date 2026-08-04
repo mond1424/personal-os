@@ -42,7 +42,7 @@ export const todayTodo = (env: Env, d: string) => q(env, `
   JOIN tasks t        ON t.id = e.task_id
   LEFT JOIN periods p ON p.id = t.period_id
   JOIN v_task_stats s ON s.id = t.id
-  WHERE e.date = ? AND t.status = 'not_finished' AND e.deferred_to IS NULL
+  WHERE e.date = ? AND s.state = 'not_finished' AND e.deferred_to IS NULL
   ORDER BY t.created_at`).bind(d).all<{
     id: string; title: string; period_id: string | null; color: string | null;
     rate: number; defer_count: number;
@@ -58,7 +58,7 @@ export const todayDone = (env: Env, d: string) => q(env, `
 export const reassignQueue = (env: Env, d: string) => q(env, `
   SELECT s.id, s.title, s.defer_count, s.latest_date
   FROM v_task_stats s
-  WHERE s.status = 'not_finished' AND s.entry_count > 0 AND s.latest_date < ?
+  WHERE s.state = 'not_finished' AND s.entry_count > 0 AND s.latest_date < ?
   ORDER BY s.latest_date`).bind(d).all<{
     id: string; title: string; defer_count: number; latest_date: string;
   }>();
@@ -280,7 +280,7 @@ export const worksScheduled = (env: Env, d: string) => q(env, `
   JOIN tasks t        ON t.id = e.task_id
   JOIN v_task_stats s ON s.id = t.id
   LEFT JOIN periods p ON p.id = t.period_id
-  WHERE t.status = 'not_finished' AND e.deferred_to IS NULL AND e.date >= ?
+  WHERE s.state = 'not_finished' AND e.deferred_to IS NULL AND e.date >= ?
   ORDER BY e.date, t.created_at`).bind(d).all<{
     date: string; id: string; title: string; defer_count: number;
     color: string | null; rate: number;

@@ -7,6 +7,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import worker from "../src/index";
+import * as db from "../src/db";
 import { autoClose } from "../src/scheduled";
 import { attributionDate, isoNow, addDays, mondayOf, diffDays, loadTime } from "../src/lib/time";
 import { buildCoreContext } from "../src/lib/context";
@@ -382,6 +383,15 @@ ok("취소해도 마감된 날(D) 예정은 보존",
   && (raw.prepare("SELECT COUNT(*) AS n FROM schedule_entries WHERE task_id=? AND date=?").get(tCanKeep, D) as any).n === 1);
 ok("취소된 task도 마감된 날엔 여전히 missed(분류 불변)",
   (await api("GET", `/api/days/${D}`)).json.tasks.find((x: any) => x.id === tCanKeep)?.class === "missed");
+ok("취소된 task는 Today Todo에서 제외",
+  !(await api("GET", "/api/today")).json.todo.some((x: any) => x.id === tCanKeep));
+ok("취소된 task는 예정 목록에서 제외",
+  !(await api("GET", "/api/works/scheduled")).json.some((x: any) => x.id === tCanKeep));
+ok("취소된 task는 재배정 대기에서 제외",
+  !(await db.reassignQueue(env, N1)).results.some((x) => x.id === tCanKeep));
+await api("POST", `/api/tasks/${tCanKeep}/uncancel`);
+ok("취소 해제하면 재배정 대기에 다시 등장",
+  (await db.reassignQueue(env, N1)).results.some((x) => x.id === tCanKeep));
 
 // (5) 취소는 기간 달성률 평균을 오염시키지 않는다 (v_period_achievement: state <> 'cancelled')
 const pCan = (await api("POST", "/api/periods",
