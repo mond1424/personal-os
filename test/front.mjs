@@ -166,6 +166,52 @@ w.switchTab("me"); await sleep(1200);
 ok("Me 필드 렌더", $("#me-fields").querySelectorAll(".merow").length >= 1);
 ok("'지금' 파생 표시", $("#me-fields").textContent.includes("지금"));
 ok("이력 렌더", $("#me-history").querySelectorAll(".lrow").length >= 1);
+
+const renderMeFixture = async (history, guardEvents) => {
+  const historyJs = JSON.stringify(history), guardJs = JSON.stringify(guardEvents);
+  await ev(`(async()=>{
+    const oldHistory = Api.meHistory, oldGuardEvents = Api.guardEvents;
+    Api.meHistory = async () => ${historyJs};
+    Api.guardEvents = async () => ${guardJs};
+    try { await renderMe(); }
+    finally { Api.meHistory = oldHistory; Api.guardEvents = oldGuardEvents; }
+  })()`);
+};
+const history7 = Array.from({ length: 7 }, (_, i) => ({
+  field: "direction", old_value: i ? `이전 ${i}` : null, new_value: `변경 ${i}`,
+  source: "user", changed_at: `2026-08-${String(7 - i).padStart(2, "0")}T12:00:00+09:00`,
+}));
+await renderMeFixture(history7, []);
+const foldedHistoryN = $("#me-history").querySelectorAll(".hist-row").length;
+const historyMoreText = txt("#me-history .hist-more");
+$("#me-history .hist-more")?.click();
+ok("이력 6건 이상은 5건과 남은 개수를 보이고 펼치면 전부", foldedHistoryN === 5
+  && historyMoreText === "더 보기 (2건)"
+  && $("#me-history").querySelectorAll(".hist-row").length === 7,
+  `${foldedHistoryN} / ${historyMoreText} / ${$("#me-history").querySelectorAll(".hist-row").length}`);
+
+await renderMeFixture(history7.slice(0, 5), []);
+ok("이력 5건 이하는 더 보기 없음", $("#me-history").querySelectorAll(".hist-row").length === 5
+  && !$("#me-history .hist-more"));
+
+await renderMeFixture([], []);
+ok("Guard 이력 0건은 아직 없음", txt("#guard-memory").includes("아직 없음"), txt("#guard-memory"));
+
+const guardFixture = [
+  { id:"g1", fired_at:"2001-01-15T01:30:00+14:00", level:2, cause:"protect:아무거나", reaction:null, outcome:null },
+  { id:"g2", fired_at:"2026-08-05T02:00:00+09:00", level:3, cause:"zzz:모름", reaction:"accepted", outcome:null },
+  { id:"g3", fired_at:"2026-08-05T02:30:00+09:00", level:4, cause:"diagnostic", reaction:"override", override_reason:"조금만 더", override_class:"avoidant", outcome:"failure" },
+];
+await renderMeFixture([], guardFixture);
+const causeLabels = [...$("#guard-memory").querySelectorAll(".gmem-cause-value")].map((el) => el.textContent.trim());
+ok("모르는 cause도 접두사 번역 또는 원문으로 남는다", causeLabels[0] === "보호 규칙 · 아무거나"
+  && causeLabels[1] === "zzz:모름" && causeLabels[2] === "diagnostic", causeLabels.join(" | "));
+const nullReaction = txt("#guard-memory .gmem-reaction-value");
+const nullOutcome = txt("#guard-memory .gmem-outcome-value");
+ok("reaction null과 outcome null은 다르게 표시", nullReaction === "아직 반응 없음"
+  && nullOutcome === "결과 미정" && nullReaction !== nullOutcome, `${nullReaction} / ${nullOutcome}`);
+ok("Override 사유와 분류 표시", [...$("#guard-memory").querySelectorAll(".gmem-reaction-value")][2]?.textContent.includes("조금만 더")
+  && [...$("#guard-memory").querySelectorAll(".gmem-reaction-value")][2]?.textContent.includes("회피"));
 w.toggleSet(true); await sleep(200);
 const rows = [...$("#set-list").querySelectorAll(".srow")].map((r) => r.textContent);
 ok("설정 11행 (AI 연결 통합)", rows.length === 11, String(rows.length));

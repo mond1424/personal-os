@@ -1402,6 +1402,72 @@ const ME_GUIDE = {
   life_pattern: { desc: "수면·집중·기복 등 반복되는 하루 리듬.", eg: "예: 밤에 집중이 잘 되고 오전엔 느리다." },
 };
 
+function renderMeHistory(hist, expanded = false) {
+  const box = $("#me-history");
+  if (!hist.length) {
+    box.innerHTML = `<div class="lrow hist-row"><span class="ts mono">—</span><span style="color:var(--faint)">아직 변경 이력이 없어요</span></div>`;
+    return;
+  }
+  const shown = expanded ? hist : hist.slice(0, 5);
+  box.innerHTML = shown.map((r) =>
+    `<div class="lrow hist-row"><span class="ts mono">${md(r.changed_at.slice(0, 10))}</span>
+      <span>${esc(ME_LABELS[r.field] || r.field)} — ${r.old_value ? `“${esc(r.old_value)}” → ` : ""}“${esc(r.new_value)}”${r.source === "ai" ? ' <span class="cap">AI 제안 승인</span>' : ""}</span></div>`).join("");
+  if (!expanded && hist.length > 5) {
+    const more = document.createElement("button");
+    more.className = "hist-more";
+    more.textContent = `더 보기 (${hist.length - 5}건)`;
+    more.onclick = () => renderMeHistory(hist, true);
+    box.appendChild(more);
+  }
+}
+
+const GUARD_CAUSE_PREFIX = { watch: "감지", protect: "보호 규칙", recheck: "재확인" };
+function guardCauseLabel(cause) {
+  const raw = String(cause ?? "").trim();
+  const colon = raw.indexOf(":");
+  if (colon < 0) return raw;
+  const label = GUARD_CAUSE_PREFIX[raw.slice(0, colon)];
+  if (!label) return raw;
+  const detail = raw.slice(colon + 1).trim();
+  return detail ? `${label} · ${detail}` : label;
+}
+
+function guardReactionLabel(row) {
+  if (row.reaction == null) return "아직 반응 없음";
+  if (row.reaction === "accepted") return "수용";
+  if (row.reaction === "ignored") return "무반응 확정";
+  if (row.reaction !== "override") return String(row.reaction);
+  const klass = { avoidant: "회피", legitimate: "정당" }[row.override_class] || row.override_class;
+  return ["Override", row.override_reason ? `“${row.override_reason}”` : "", klass || ""].filter(Boolean).join(" · ");
+}
+
+function guardOutcomeLabel(outcome) {
+  if (outcome == null) return "결과 미정";
+  return { success: "성공", failure: "실패" }[outcome] || String(outcome);
+}
+
+function guardFiredLabel(firedAt) {
+  const raw = String(firedAt ?? "");
+  // 서버가 정규화한 로컬 표기의 자리만 줄인다. Date 파싱·오프셋 재계산은 하지 않는다.
+  return raw.length >= 16 && raw[10] === "T" ? `${raw.slice(0, 10)} ${raw.slice(11, 16)}` : raw || "—";
+}
+
+function renderGuardMemory(events) {
+  const box = $("#guard-memory");
+  if (!events.length) {
+    box.innerHTML = `<div class="gmem-empty">아직 없음 — Guard 개입 이력이 쌓이면 여기에 보여요.</div>`;
+    return;
+  }
+  box.innerHTML = events.map((row) =>
+    `<div class="gmem-row">
+      <span class="gmem-time mono">${esc(guardFiredLabel(row.fired_at))}</span>
+      <span class="gmem-level">Level ${esc(row.level)}</span>
+      <span class="gmem-cause"><b>원인</b> <span class="gmem-cause-value">${esc(guardCauseLabel(row.cause))}</span></span>
+      <span class="gmem-reaction"><b>반응</b> <span class="gmem-reaction-value">${esc(guardReactionLabel(row))}</span></span>
+      <span class="gmem-outcome"><b>결과</b> <span class="gmem-outcome-value">${esc(guardOutcomeLabel(row.outcome))}</span></span>
+    </div>`).join("");
+}
+
 async function renderMe() {
   // Life Model 섹션은 덧붙은 화면이다 — 하나가 실패해도 Me 본문을 인질로 잡지 않는다.
   // lmSchema는 활성 행이 없으면 404를 던진다(lifemodel.ts). v2 전환·비활성화 중에
@@ -1434,10 +1500,8 @@ async function renderMe() {
   h += `<p class="cap" style="margin-top:9px">'지금' 줄은 periods의 목표를 조인한 파생 — Me에 중복 저장하지 않아요.</p>`;
   $("#me-fields").innerHTML = h;
 
-  $("#me-history").innerHTML = hist.map((r) =>
-    `<div class="lrow"><span class="ts mono">${md(r.changed_at.slice(0, 10))}</span>
-      <span>${esc(ME_LABELS[r.field] || r.field)} — ${r.old_value ? `“${esc(r.old_value)}” → ` : ""}“${esc(r.new_value)}”${r.source === "ai" ? ' <span class="cap">AI 제안 승인</span>' : ""}</span></div>`).join("") ||
-    `<div class="lrow"><span class="ts mono">—</span><span style="color:var(--faint)">아직 변경 이력이 없어요</span></div>`;
+  renderMeHistory(hist);
+  renderGuardMemory(guard);
 
   renderGoals();
   renderEducation();
