@@ -115,6 +115,11 @@ details.fold[open] summary::before{transform:rotate(90deg)}
 .notice button{color:var(--ink);font-weight:700;text-decoration:underline}
 .lrow{display:flex;gap:11px;padding:8px 2px;font-size:13.5px;line-height:1.5}
 .lrow .ts{color:var(--faint);font-size:12px;padding-top:2px;flex:none}
+.memo-origin-row{align-items:baseline}
+.memo-origin-text{min-width:0;overflow-wrap:anywhere}
+.memo-origin-later{border-left:2px solid var(--line);padding-left:8px}
+.memo-origin-added{display:inline-block;margin-right:6px;color:var(--sub);font-size:11.5px;font-weight:600}
+.memo-origin-empty{color:var(--faint)}
 .scorehead{display:flex;justify-content:space-between;align-items:baseline}
 .scorehead b{font-size:22px}
 .closerow{display:flex;align-items:center;justify-content:space-between;margin-top:12px;gap:10px}

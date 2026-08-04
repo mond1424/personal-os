@@ -719,8 +719,29 @@ await sleep(1200);
 const azDay = await ev(`Api.day("${AZF}")`);
 ok("미래 날짜 memo 저장(daily 자동 생성)",
   azDay.memos.some((m) => m.text === "미래에 남기는 memo") && !!azDay.daily, JSON.stringify(azDay.memos));
+const addedMemo = azDay.memos.find((m) => m.text === "미래에 남기는 memo");
+const addedMemoDate = `${+addedMemo.created_at.slice(5, 7)}/${+addedMemo.created_at.slice(8, 10)}`;
 await w.openDay(AZF); await sleep(500);
 ok("미래 날짜 시트에 memo 표시", $("#day-body").innerHTML.includes("미래에 남기는 memo"));
+const laterMemoRow = [...$("#day-body").querySelectorAll(".memo-origin-row")]
+  .find((row) => row.textContent.includes("미래에 남기는 memo"));
+ok("귀속일이 다른 memo는 추가 날짜와 구분 표시",
+  laterMemoRow?.classList.contains("memo-origin-later")
+    && laterMemoRow.querySelector(".memo-origin-added")?.textContent.includes(`${addedMemoDate}에 추가`),
+  laterMemoRow?.outerHTML || "row 없음");
+w.closeAll(); await sleep(150);
+await ev(`Api.memo(S.today.date, isoNowLocal(), "그날 쓴 memo 표시")`);
+await w.openDay(ev("S.today.date")); await sleep(500);
+const sameDayMemoRow = [...$("#day-body").querySelectorAll(".memo-origin-row")]
+  .find((row) => row.textContent.includes("그날 쓴 memo 표시"));
+ok("그날 쓴 memo는 나중 표식 없이 표시",
+  !!sameDayMemoRow && !sameDayMemoRow.classList.contains("memo-origin-later")
+    && !sameDayMemoRow.querySelector(".memo-origin-added"),
+  sameDayMemoRow?.outerHTML || "row 없음");
+w.closeAll(); await sleep(150);
+const memoEmptyDate = ev("addDaysStr(S.today.date,40)");
+await w.openDay(memoEmptyDate); await sleep(500);
+ok("memo 0건이면 빈 상태 명시", $("#day-body").textContent.includes("memo 없음"), $("#day-body").textContent.slice(0, 120));
 w.closeAll(); await sleep(150);
 
 // ③ 완료율 화면 제거(2단계) — task 시트에 %·막대 없음. 상태(완료/대기/예정)만 읽기전용 표시.

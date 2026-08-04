@@ -23,7 +23,7 @@
 | POST `/api/daily/classify-feelings` | — | `{date, values, model}` | `daily.classifyFeelings` |
 | POST `/api/daily/close` | `{kind?: manual\|brief}` | `{date, kind}` | `daily.closeDay` |
 | GET `/api/calendar?start&end` | — | `{periods, entries, diary, events, memos}` | `daily.calendar` |
-| GET `/api/days/:date` | — | 날짜 팝업 조립(relation·periods·tasks·events·daily·feelings·logs·memos) | `daily.assembleDay` |
+| GET `/api/days/:date` | — | 날짜 팝업 조립(relation·periods·tasks·events·daily·feelings·logs·memos[{id, ts, text, created_at, same_day}]) | `daily.assembleDay` |
 | GET `/api/diary?limit` | — | 일기 목록 rows | `daily.diaryFeed` |
 | POST `/api/memos` | `{date, ts?, text}` | `{id, date}` (201) | `memos.addMemo` |
 | GET `/api/works/:segment` | — | seg rows (scheduled·waiting·deferring·periods·done) | `tasks.segment` |
@@ -101,7 +101,7 @@
 - `classifyFeelings(env, t, date?)` → `{date, values, model}` · AI(low 모델) 분류, 마감 시 자동 호출
 - `setScore(env, t, score)` → `{date, score}`
 - `closeDay(env, t, kind, date?)` → `{date, kind}` · **기록→mech 물화→close** 순서 batch
-- `assembleDay(env, t, k)` → 날짜 팝업 조인(과거는 done/deferred/missed)
+- `assembleDay(env, t, k)` → 날짜 팝업 조인(과거는 done/deferred/missed) · memo의 `same_day`는 `attributionOfIso(created_at, boundary) === k`로 조회 시 계산
 - `calendar(env, start, end)` → `{periods, entries, diary, events, memos}` (memos: 날짜별 대표 1건+개수 — 셀 memo 줄)
 - `diaryFeed(env, t, limit=30)` → 일기 rows(최대 90)
 

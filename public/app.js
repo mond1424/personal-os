@@ -581,9 +581,10 @@ async function openDay(k) {
     }
     // memo 표시 — 어느 날짜에든(3단계): 과거·오늘·미래 모두. 추가는 아래 통합 영역에서.
     // 팝업은 memo 전문, 캘린더 셀은 대표 1건 + '+n'(calMemos) — 같은 memo의 두 시야.
-    if (day.memos.length)
-      h += `<div class="card" style="margin-top:9px;padding:6px 14px">` + day.memos.map((m) =>
-        `<div class="lrow"><span class="ts mono">${hm(m.ts)}</span><span>${esc(m.text)} <span class="cap">memo</span></span></div>`).join("") + `</div>`;
+    h += `<div class="card" style="margin-top:9px;padding:6px 14px">` + (day.memos.map((m) => {
+      const added = m.same_day ? "" : `<span class="memo-origin-added">(${md(m.created_at)}에 추가)</span>`;
+      return `<div class="lrow memo-origin-row${m.same_day ? "" : " memo-origin-later"}"><span class="ts mono">${hm(m.ts)}</span><span class="memo-origin-text">${added}${esc(m.text)}</span></div>`;
+    }).join("") || `<div class="lrow memo-origin-empty"><span class="cap">memo 없음</span></div>`) + `</div>`;
     // 일정 — 캘린더에서만 다루는 사건 (할 일과 분리).
     // 마감된 날에도 일정은 추가할 수 있다 (1.3 "과거엔 추가만 가능") — 단 추가하면 수정·삭제가
     // 막히므로 시트에서 경고한다. 삭제(×)는 '마감 안 된 날'에만 보인다(마감된 날은 트리거가 막는다).

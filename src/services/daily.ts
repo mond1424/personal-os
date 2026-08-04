@@ -202,7 +202,10 @@ export async function assembleDay(env: Env, t: TimeCtx, k: string) {
     daily: daily ?? null,
     feelings: feelings.results,
     logs: logs.results,
-    memos: memos.results,
+    memos: memos.results.map((m) => ({
+      ...m,
+      same_day: attributionOfIso(m.created_at, t.boundary) === k,
+    })),
     // 보호 규칙 표시는 구현 3 (Guard)
   };
 }

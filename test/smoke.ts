@@ -152,6 +152,18 @@ ok("마감 후 다이얼 → 동결 409", (await api("PUT", `/api/tasks/${tA}/ra
 console.log("\n[5] memo — 어느 날짜에든 + stale");
 ok("memo 추가 201", (await api("POST", "/api/memos", { date: D, text: "마감 후 소회" })).status === 201);
 ok("daily summary stale=1", raw.prepare("SELECT stale FROM summaries WHERE kind='daily' AND key=?").get(D)!.stale === 1);
+raw.prepare("INSERT INTO memos (id, date, ts, text, created_at) VALUES (?, ?, ?, ?, ?)")
+  .run("memo-origin-boundary", D, "14:30", "경계 안쪽 작성", `${N1}T03:00:00+09:00`);
+raw.prepare("INSERT INTO memos (id, date, ts, text, created_at) VALUES (?, ?, ?, ?, ?)")
+  .run("memo-origin-later", D, "09:00", "나중 작성", `${N1}T09:00:00+09:00`);
+const memoOriginDay = (await api("GET", `/api/days/${D}`)).json;
+ok("귀속일 경계를 넘은 03:00 memo도 그날 쓴 것으로 판정",
+  memoOriginDay.memos.find((m: any) => m.id === "memo-origin-boundary")?.same_day === true);
+ok("귀속일이 다른 나중 memo는 same_day=false",
+  memoOriginDay.memos.find((m: any) => m.id === "memo-origin-later")?.same_day === false);
+ok("memo 순서는 created_at이 아니라 ts 그대로",
+  memoOriginDay.memos.filter((m: any) => m.id.startsWith("memo-origin-"))
+    .map((m: any) => m.ts).join(",") === "09:00,14:30");
 // 3단계: memo는 어느 날짜에든 붙는다 — daily가 없으면 자동으로 open daily를 만들고 붙인다(404 폐기).
 // (미래일로 검증 — 과거 open daily는 뒤의 autoClose 테스트에 섞이므로.)
 const memoFut = addDays(D, 6);

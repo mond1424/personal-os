@@ -602,7 +602,9 @@ Guard v1이 1순위라는 건 안 바뀐다. Phase 1을 셋으로 쪼개 **UI를
 - style.css      https://raw.githubusercontent.com/mond1424/personal-os/main/public/style.css
 
 ## 기준선
-typecheck 통과 / **smoke 237** / **front 210** / 실패 0 / verify exit 0
+typecheck 통과 / **smoke 244** / **front 213** / 실패 0 / verify exit 0
+(T-16 memo 작성 시점 구분: smoke 241→244 — 05:00 경계 판정·나중 memo·ts 정렬 3건 / front 210→213 — 추가 날짜·그날 작성·빈 상태 3건. 마이그레이션 없음.)
+(T-15 취소 상태 판정: smoke 237→241 — Today Todo·예정·재배정 제외와 취소 해제 재등장 4건. front 무변경.)
 (T-12 날짜 검사: `S.today.date` 고정 주입으로 30일 달·윤년 2월을 각각 재검증. 검사 수는 유지.)
 (T-09 Goals 디데이·Me 분리: front 193→210 — 스키마 동적 폼·CRUD·디데이 계산/숨김·귀속일 센티널 17건.)
 (T-08 불합격 UI·검사 4건을 stash로 제거해 작업 트리 기준 front 214→210.)
