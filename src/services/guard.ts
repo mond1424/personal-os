@@ -10,7 +10,7 @@ import * as db from "../db";
 import { aiConfig, callModel, parseModelJson, splitModel } from "../lib/ai";
 import { buildCoreContext } from "../lib/context";
 import { nextId } from "../lib/id";
-import { attributionOfIso, isoNow, normalizeIso } from "../lib/time";
+import { attributionOfIso, isoNow, loadTime, normalizeIso } from "../lib/time";
 import { ApiError, type Env, type TimeCtx } from "../types";
 
 /** 설정 기본값 — event별 값이 없을 때. 초기값의 정확도보다 조정 가능한 구조가 중요하다. */
@@ -31,10 +31,24 @@ const REACTIONS = ["accepted", "override", "ignored"];
 export const events = async (env: Env, limit = 100) =>
   (await db.guardEventsList(env, limit)).results;
 
-export const modes = async (env: Env) => ({
-  modes: (await db.guardModes(env)).results,
-  active: await db.guardActiveMode(env),
-});
+export async function modes(env: Env) {
+  const rows = (await db.guardModes(env)).results;
+  const active = rows.find((m) => m.active === 1) ?? null;
+  const protecting = await protectingNow(env, await loadTime(env));
+
+  return {
+    modes: rows.map((mode) => ({
+      ...mode,
+      downgrade: active ? isDowngrade(active, mode) : false,
+    })),
+    active,
+    protecting: protecting ? {
+      title: protecting.title,
+      start: protecting.protect_from,
+      until: protecting.start,
+    } : null,
+  };
+}
 
 /**
  * **하향 = 강도 파라미터 중 하나라도 약해지는 것** (ADR-027 ①).

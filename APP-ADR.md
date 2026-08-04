@@ -1332,7 +1332,7 @@ me_history 에 reason TEXT NULL 추가
 그러면 자기 보정이 읽을 곳이 둘로 갈린다.
 
 ```
-setMode(env, key, reason?)
+setMode(env, t, key, reason?)     ← 보호 구간 판정에 시간 맥락이 필요하다
   ① 존재 확인                                    (지금 있는 것)
   ② 하향인가 — 다섯 파라미터 비교
   ③ 하향이고 보호 구간 중       → 409  "보호 중에는 내릴 수 없어요"

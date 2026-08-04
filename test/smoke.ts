@@ -474,6 +474,12 @@ ok("발동 예정이 Level별로 생성됨",
 // (3) 모드 — 파라미터 프로파일 (ADR-019)
 const modes = (await api("GET", "/api/guard/modes")).json;
 ok("모드 2종 · coach 활성", modes.modes.length === 2 && modes.active.key === "coach");
+ok("모드 판정 응답 — 각 모드에 downgrade boolean",
+  modes.modes.every((m: any) => typeof m.downgrade === "boolean"), JSON.stringify(modes.modes));
+ok("모드 판정 응답 — 활성 모드 자신은 downgrade=false",
+  modes.modes.find((m: any) => m.key === modes.active.key)?.downgrade === false, JSON.stringify(modes));
+ok("모드 판정 응답 — 보호 구간 밖이면 protecting=null",
+  modes.protecting === null, JSON.stringify(modes.protecting));
 // coach → secretary는 **하향**이라 이제 사유가 필요하다 (ADR-027). 여기선 마찰이 아니라
 // 'Level 2 상한'을 보는 자리이므로 사유를 실어 통과시킨다 — 마찰 자체는 (3b)가 본다.
 await api("PUT", "/api/guard/modes/active", { key: "secretary", reason: "상한 검사" });
@@ -497,6 +503,17 @@ raw.prepare(`INSERT INTO guard_modes (key, label, max_level, risk_threshold, fri
              VALUES ('smoke_cap', '예산만 낮은 모드', 4, 40, 1.0, 1, 1, 0, 9, 0)`).run();
 const activeKey = async () => (await api("GET", "/api/guard/modes")).json.active.key;
 
+const guardModeColumns = raw.prepare("PRAGMA table_info(guard_modes)").all() as Array<{ name: string }>;
+ok("모드 판정 응답 — guard_modes에 파생 컬럼 없음",
+  guardModeColumns.map((c) => c.name).join(",") ===
+    "key,label,max_level,risk_threshold,friction_mult,use_fsi,use_overlay,ai_daily_cap,sort,active",
+  JSON.stringify(guardModeColumns.map((c) => c.name)));
+
+const modeVerdicts = (await api("GET", "/api/guard/modes")).json;
+ok("모드 판정 응답 — risk_threshold만 높은 모드도 downgrade=true",
+  modeVerdicts.modes.find((m: any) => m.key === "smoke_risk")?.downgrade === true,
+  JSON.stringify(modeVerdicts.modes));
+
 // ★ 5번 — **`risk_threshold`만 높은 모드도 하향이다.** 문턱이라 방향이 반대다.
 //   다섯을 전부 "낮아지면 약함"으로 짜면 이 줄만 빨간불이 된다(다른 줄은 그대로 통과한다).
 ok("risk_threshold만 높은 모드로 바꾸면 하향 — 사유 없으면 400",
@@ -511,6 +528,14 @@ ok("문턱을 되내리는 것은 상향 — 사유 없이 통과",
 ok("ai_daily_cap만 낮은 모드는 하향이 아니다 — 사유 없이 200",
   (await api("PUT", "/api/guard/modes/active", { key: "smoke_cap" })).status === 200);
 await api("PUT", "/api/guard/modes/active", { key: "coach" });
+
+// ★ T-19 6번 — 응답의 downgrade는 힌트일 뿐이다. 요청 본문으로 거짓 판정을 보내도 PUT이 다시 판정한다.
+const forgedVerdict = await api("PUT", "/api/guard/modes/active", { key: "secretary", downgrade: false });
+ok("모드 판정 응답 — 요청의 downgrade=false를 믿지 않고 하향 차단",
+  forgedVerdict.status === 400, JSON.stringify(forgedVerdict.json));
+// 변이에서 거짓 판정을 믿어 모드가 바뀌어도 뒤 검사가 연쇄 실패하지 않게 전제를 독립 복원한다.
+raw.prepare("UPDATE guard_modes SET active = 0").run();
+raw.prepare("UPDATE guard_modes SET active = 1 WHERE key = 'coach'").run();
 
 // 2·3번 — 보호 구간 밖의 하향: 사유가 없으면 400, 있으면 통과하고 `me_history`에 남는다.
 ok("보호 구간 밖 하향 · 사유 없음 400",
@@ -538,6 +563,11 @@ const nowPlan = ((await api("GET", "/api/guard/schedule")).json.events as any[])
 ok("보호 구간이 지금을 포함한다 (검사의 전제)",
   !!nowPlan && Date.parse(nowPlan.protect_from) <= Date.now() && Date.now() <= Date.parse(nowPlan.start),
   JSON.stringify(nowPlan && { from: nowPlan.protect_from, start: nowPlan.start }));
+const protectedVerdict = (await api("GET", "/api/guard/modes")).json.protecting;
+ok("모드 판정 응답 — 보호 구간이면 일정 이름과 until",
+  protectedVerdict?.title === "지금 보호 중인 시험" &&
+    protectedVerdict.start === nowPlan?.protect_from && protectedVerdict.until === nowPlan?.start,
+  JSON.stringify(protectedVerdict));
 // 4번 — **상향은 보호 구간 중에도 자유롭다**(부수 규칙 1). 사유도 대기도 없다.
 ok("보호 구간 중 상향은 사유 없이 200 (secretary → coach)",
   (await api("PUT", "/api/guard/modes/active", { key: "coach" })).status === 200);

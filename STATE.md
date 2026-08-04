@@ -1,4 +1,4 @@
-# STATE — 최종 갱신 2026-08-04
+# STATE — 최종 갱신 2026-08-05
 
 ## 저장소
 - repo: https://github.com/mond1424/personal-os
@@ -646,7 +646,9 @@ Guard v1이 1순위라는 건 안 바뀐다. Phase 1을 셋으로 쪼개 **UI를
 - style.css      https://raw.githubusercontent.com/mond1424/personal-os/main/public/style.css
 
 ## 기준선
-typecheck 통과 / **smoke 260** / **front 223** / 실패 0 / verify exit 0
+typecheck 통과 / **smoke 267** / **front 223** / 실패 0 / verify exit 0
+(T-19 모드 판정 응답: smoke 260→267 — modes[].downgrade·활성 false·보호 구간 값/null·
+ risk_threshold 방향·요청 판정 위조 차단·guard_modes 무변경 7건. front 무변경, 마이그레이션 없음.)
 (T-10 모드 하향 마찰: smoke 244→260 — 하향 판정(risk_threshold·ai_daily_cap)·보호 구간 409·사유 400·
  `me_history` 사유·상향 자유 16건. front 무변경 — 프런트는 T-08′이 받는다.)
 (T-16 memo 작성 시점 구분: smoke 241→244 — 05:00 경계 판정·나중 memo·ts 정렬 3건 / front 210→213 — 추가 날짜·그날 작성·빈 상태 3건. 마이그레이션 없음.)
