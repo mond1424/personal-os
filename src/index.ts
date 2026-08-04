@@ -271,9 +271,10 @@ app.get("/api/guard/pending-outcome", async (c) => c.json(await guard.pendingOut
 
 // 모드 — 규칙이 아니라 파라미터 프로파일 (ADR-019)
 app.get("/api/guard/modes", async (c) => c.json(await guard.modes(c.env)));
+/** 하향에는 사유가 필요하다 — 보호 구간 중이면 사유가 있어도 409 (ADR-019 부수 규칙 1·2 · ADR-027). */
 app.put("/api/guard/modes/active", async (c) => {
-  const b = await body<{ key: string }>(c);
-  return c.json(await guard.setMode(c.env, b.key));
+  const b = await body<{ key: string; reason?: string }>(c);
+  return c.json(await guard.setMode(c.env, c.get("t"), b.key, b.reason));
 });
 
 // 감시 목록 — PC 확장 자리 (ADR-022)

@@ -15,7 +15,7 @@ import type { Env } from "../src/types";
 import { makeD1, rawOf } from "./d1shim";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const schema = ["0001_init.sql", "0002_models.sql", "0003_ai_provider.sql", "0004_events.sql", "0005_delete_scope.sql", "0006_fix_model_high.sql", "0007_defer_reason.sql", "0008_cancel_task.sql", "0009_cancel_reason.sql", "0010_guard.sql", "0011_guard_sync.sql", "0012_life_model.sql", "0013_analysis_backfill.sql", "0014_schema_titles.sql"]
+const schema = ["0001_init.sql", "0002_models.sql", "0003_ai_provider.sql", "0004_events.sql", "0005_delete_scope.sql", "0006_fix_model_high.sql", "0007_defer_reason.sql", "0008_cancel_task.sql", "0009_cancel_reason.sql", "0010_guard.sql", "0011_guard_sync.sql", "0012_life_model.sql", "0013_analysis_backfill.sql", "0014_schema_titles.sql", "0015_me_history_reason.sql"]
   .map((f) => readFileSync(join(here, "../migrations/" + f), "utf8")).join("\n");
 const env: Env = { DB: makeD1(schema) };
 const raw = rawOf(env.DB);
@@ -474,13 +474,91 @@ ok("발동 예정이 Level별로 생성됨",
 // (3) 모드 — 파라미터 프로파일 (ADR-019)
 const modes = (await api("GET", "/api/guard/modes")).json;
 ok("모드 2종 · coach 활성", modes.modes.length === 2 && modes.active.key === "coach");
-await api("PUT", "/api/guard/modes/active", { key: "secretary" });
+// coach → secretary는 **하향**이라 이제 사유가 필요하다 (ADR-027). 여기선 마찰이 아니라
+// 'Level 2 상한'을 보는 자리이므로 사유를 실어 통과시킨다 — 마찰 자체는 (3b)가 본다.
+await api("PUT", "/api/guard/modes/active", { key: "secretary", reason: "상한 검사" });
 const sec = (await api("GET", "/api/guard/schedule")).json;
 const secPlan = (sec.events as any[]).find((e) => e.event_id === gEv);
 ok("secretary 모드는 Level 2로 상한 — L3·L4 발동 없음",
   !!secPlan && secPlan.max_level === 2 && secPlan.fires.every((f: any) => f.level <= 2));
 ok("없는 모드 404", (await api("PUT", "/api/guard/modes/active", { key: "없음" })).status === 404);
 await api("PUT", "/api/guard/modes/active", { key: "coach" });
+
+// (3b) 모드 하향에는 마찰이 붙는다 — ADR-019 부수 규칙 1·2, 판정은 ADR-027 ①
+//
+// 모드 전환은 Override의 완벽한 우회로다. 새벽에 coach → secretary로 내리면 마찰이 전부 사라진다.
+// 판정은 **강도 파라미터 다섯**이고, `ai_daily_cap`(지출)·`sort`(표시)는 들어가지 않는다.
+//
+// 검사용 행을 따로 만든다 — `coach`·`secretary`는 실사용 행이라 고치지 않는다.
+// 둘 다 coach(4 · 40 · 1.0 · 1 · 1 · cap 5)에서 **한 컬럼만** 다르다.
+raw.prepare(`INSERT INTO guard_modes (key, label, max_level, risk_threshold, friction_mult, use_fsi, use_overlay, ai_daily_cap, sort, active)
+             VALUES ('smoke_risk', '문턱만 높은 모드', 4, 90, 1.0, 1, 1, 5, 9, 0)`).run();
+raw.prepare(`INSERT INTO guard_modes (key, label, max_level, risk_threshold, friction_mult, use_fsi, use_overlay, ai_daily_cap, sort, active)
+             VALUES ('smoke_cap', '예산만 낮은 모드', 4, 40, 1.0, 1, 1, 0, 9, 0)`).run();
+const activeKey = async () => (await api("GET", "/api/guard/modes")).json.active.key;
+
+// ★ 5번 — **`risk_threshold`만 높은 모드도 하향이다.** 문턱이라 방향이 반대다.
+//   다섯을 전부 "낮아지면 약함"으로 짜면 이 줄만 빨간불이 된다(다른 줄은 그대로 통과한다).
+ok("risk_threshold만 높은 모드로 바꾸면 하향 — 사유 없으면 400",
+  (await api("PUT", "/api/guard/modes/active", { key: "smoke_risk" })).status === 400);
+ok("400이면 모드는 그대로 coach", (await activeKey()) === "coach");
+ok("사유를 실으면 같은 전환이 통과", (await api("PUT", "/api/guard/modes/active",
+  { key: "smoke_risk", reason: "문턱을 올려 본다" })).status === 200);
+ok("문턱을 되내리는 것은 상향 — 사유 없이 통과",
+  (await api("PUT", "/api/guard/modes/active", { key: "coach" })).status === 200);
+
+// 6번 — `ai_daily_cap`은 지출 통제다(ADR-024). 강도로 세면 예산 절감이 마찰을 부른다.
+ok("ai_daily_cap만 낮은 모드는 하향이 아니다 — 사유 없이 200",
+  (await api("PUT", "/api/guard/modes/active", { key: "smoke_cap" })).status === 200);
+await api("PUT", "/api/guard/modes/active", { key: "coach" });
+
+// 2·3번 — 보호 구간 밖의 하향: 사유가 없으면 400, 있으면 통과하고 `me_history`에 남는다.
+ok("보호 구간 밖 하향 · 사유 없음 400",
+  (await api("PUT", "/api/guard/modes/active", { key: "secretary" })).status === 400);
+ok("공백만 사유도 400",
+  (await api("PUT", "/api/guard/modes/active", { key: "secretary", reason: "   " })).status === 400);
+const downRes = await api("PUT", "/api/guard/modes/active", { key: "secretary", reason: "시험 끝나서 며칠 쉰다" });
+ok("보호 구간 밖 하향 · 사유 있으면 200 · downgrade=true",
+  downRes.status === 200 && downRes.json.downgrade === true, JSON.stringify(downRes.json));
+const mh = raw.prepare("SELECT old_value, new_value, reason FROM me_history WHERE field='guard_mode' ORDER BY id DESC LIMIT 1").get() as any;
+ok("me_history에 사유가 남는다 (0015 · field='guard_mode')",
+  mh?.old_value === "coach" && mh?.new_value === "secretary" && mh?.reason === "시험 끝나서 며칠 쉰다",
+  JSON.stringify(mh));
+
+// 1·4번 — 보호 구간 중. 지금이 [protect_from, start] 안에 들어가는 일정을 하나 건다.
+//   `d+2` 일정에 '-2d 00:00' → 구간은 [귀속일 00:00, d+2 09:00]이라 하루 중 언제 돌려도 안에 있다.
+const dPlus = (n: number) => {
+  const x = new Date(`${sched.d}T00:00:00Z`);
+  x.setUTCDate(x.getUTCDate() + n);
+  return x.toISOString().slice(0, 10);
+};
+const gNow = (await api("POST", "/api/events", { title: "지금 보호 중인 시험", date: dPlus(2), time: "09:00" })).json.id as string;
+await api("PUT", `/api/events/${gNow}/protect`, { protect_from: "-2d 00:00", protect_level: 4 });
+const nowPlan = ((await api("GET", "/api/guard/schedule")).json.events as any[]).find((e) => e.event_id === gNow);
+ok("보호 구간이 지금을 포함한다 (검사의 전제)",
+  !!nowPlan && Date.parse(nowPlan.protect_from) <= Date.now() && Date.now() <= Date.parse(nowPlan.start),
+  JSON.stringify(nowPlan && { from: nowPlan.protect_from, start: nowPlan.start }));
+// 4번 — **상향은 보호 구간 중에도 자유롭다**(부수 규칙 1). 사유도 대기도 없다.
+ok("보호 구간 중 상향은 사유 없이 200 (secretary → coach)",
+  (await api("PUT", "/api/guard/modes/active", { key: "coach" })).status === 200);
+// 1번 — 그 구간이 바로 사전 서약이 지켜야 할 구간이다. 사유가 있어도 막는다.
+const blocked = await api("PUT", "/api/guard/modes/active", { key: "secretary", reason: "그래도 내리고 싶다" });
+ok("보호 구간 중 하향은 사유가 있어도 409", blocked.status === 409, JSON.stringify(blocked.json));
+ok("409면 모드는 그대로 coach", (await activeKey()) === "coach");
+// 상향 기록에는 사유가 없다 — 방향과 무관하게 궤적은 남긴다(§3).
+const mhUp = raw.prepare("SELECT new_value, reason FROM me_history WHERE field='guard_mode' ORDER BY id DESC LIMIT 1").get() as any;
+ok("상향도 me_history에 남되 reason은 NULL",
+  mhUp?.new_value === "coach" && mhUp?.reason === null, JSON.stringify(mhUp));
+
+ok("이 블록이 끝난 시점의 활성 모드는 coach (API 경로가 남긴 상태)", (await activeKey()) === "coach");
+// 정리는 **검사 결과와 무관하게** 되돌린다. 여기서 하향 판정이 깨지면 활성 모드가 엉뚱한 곳에
+// 멈추는데, 그대로 두면 뒤의 `ai_daily_cap` 검사들이 함께 빨간불이 되어 원인이 흐려진다.
+await api("PUT", `/api/events/${gNow}/protect`, { protect: false });
+raw.prepare("UPDATE guard_modes SET active = 0").run();
+raw.prepare("UPDATE guard_modes SET active = 1 WHERE key = 'coach'").run();
+raw.prepare("DELETE FROM guard_modes WHERE key IN ('smoke_risk','smoke_cap')").run();
+ok("정리 후 모드 2종 · coach 활성", (await api("GET", "/api/guard/modes")).json.modes.length === 2
+  && (await activeKey()) === "coach");
 
 // (4) 발동 기록 — 기기가 밀어 올린다
 const gRec = await api("POST", "/api/guard/events", {

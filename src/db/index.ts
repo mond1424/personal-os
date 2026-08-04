@@ -468,9 +468,13 @@ export const meAll = (env: Env) =>
 export const meGet = (env: Env, field: string) =>
   q(env, "SELECT value FROM me WHERE field = ?").bind(field).first<{ value: string }>();
 
-export const stMeHistory = (env: Env, field: string, oldV: string | null, newV: string, source: string, now: string) =>
-  q(env, "INSERT INTO me_history (field, old_value, new_value, source, changed_at) VALUES (?, ?, ?, ?, ?)")
-    .bind(field, oldV, newV, source, now);
+/** `reason`은 0015에서 붙었다 — Guard 모드 하향의 사유(ADR-027). 그 밖의 변경은 NULL이다. */
+export const stMeHistory = (
+  env: Env, field: string, oldV: string | null, newV: string, source: string, now: string,
+  reason: string | null = null,
+) =>
+  q(env, "INSERT INTO me_history (field, old_value, new_value, source, changed_at, reason) VALUES (?, ?, ?, ?, ?, ?)")
+    .bind(field, oldV, newV, source, now, reason);
 
 export const stMeUpsert = (env: Env, field: string, value: string, now: string) => q(env, `
   INSERT INTO me (field, value, updated_at) VALUES (?, ?, ?)

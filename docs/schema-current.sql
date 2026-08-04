@@ -1,8 +1,9 @@
 -- docs/schema-current.sql — 스키마 스냅샷 (자동 생성)
 -- migrations/ 전체를 인메모리 sqlite에 적용한 뒤 sqlite_master를 덤프한 것.
--- 최신 마이그레이션: 0014_schema_titles.sql  ·  갱신 2026-07-30
--- 0013·0014는 DDL을 바꾸지 않아 아래 덤프는 0012와 동일하다:
---   0013 = analyses backfill(트리거를 원문 그대로 복원) · 0014 = lm_schema.body에 title 얹기(UPDATE만).
+-- 최신 마이그레이션: 0015_me_history_reason.sql  ·  갱신 2026-08-05
+-- 0013·0014는 DDL을 바꾸지 않는다: 0013 = analyses backfill(트리거를 원문 그대로 복원) ·
+--   0014 = lm_schema.body에 title 얹기(UPDATE만).
+-- 0015 = me_history에 reason TEXT 추가(ADR-027 — 모드 하향 사유). ALTER라 컬럼이 표 끝에 붙는다.
 -- 손으로 고치지 않는다 — 마이그레이션을 추가하고 다시 덤프한다 (CLAUDE.md 세션 종료 규칙).
 
 
@@ -142,7 +143,7 @@ CREATE TABLE me_history (
   source     TEXT NOT NULL DEFAULT 'user' CHECK (source IN ('user','ai')),
                                      -- 'ai' = 승인된 AI 제안(diff) — 구현 2
   changed_at TEXT NOT NULL
-);
+, reason TEXT);
 
 CREATE TABLE memos (
   id         TEXT PRIMARY KEY,      -- YYYYMMDD-NNN
@@ -232,7 +233,6 @@ CREATE TABLE watch_apps (
   PRIMARY KEY (source, identifier)
 );
 
-
 -- ==========================================================
 -- 뷰
 -- ==========================================================
@@ -269,7 +269,6 @@ SELECT
         AND NOT EXISTS (SELECT 1 FROM schedule_entries e WHERE e.task_id = t.id)
        THEN 1 ELSE 0 END AS is_waiting
 FROM tasks t;
-
 
 -- ==========================================================
 -- 인덱스
@@ -308,7 +307,6 @@ CREATE INDEX idx_tasks_period ON tasks(period_id);
 CREATE INDEX idx_tasks_status ON tasks(status);
 
 CREATE INDEX idx_wait_ext_task ON wait_extensions(task_id, extended_at);
-
 
 -- ==========================================================
 -- 트리거

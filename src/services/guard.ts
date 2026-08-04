@@ -36,12 +36,82 @@ export const modes = async (env: Env) => ({
   active: await db.guardActiveMode(env),
 });
 
-export async function setMode(env: Env, key: string) {
+/**
+ * **하향 = 강도 파라미터 중 하나라도 약해지는 것** (ADR-027 ①).
+ *
+ * 값이 커질수록 강한 것이 `+1`, 작아질수록 강한 것이 `-1`이다.
+ * **`risk_threshold`만 `-1`이다 — 문턱이라 방향이 반대다.** 위험도가 이 값을 넘어야 개입하므로
+ * 문턱을 올리면 개입이 줄어든다. 다섯을 전부 "낮아지면 약함"으로 짜면 `risk_threshold`를
+ * 올린 모드가 상향으로 읽히고, 그게 바로 마찰 없이 마찰이 사라지는 길이다.
+ *
+ * 빠진 둘에도 이유가 있다:
+ *   `ai_daily_cap` — ADR-024가 **지출 통제**로 규정한 값이다. 이걸 강도로 세면 예산 절감이 마찰을 부른다
+ *   `sort`         — 표시 순서다. 정렬을 바꾸는 순간 하향 판정이 뒤집힌다
+ */
+const STRENGTH_DIR: Record<string, 1 | -1> = {
+  max_level: 1,
+  risk_threshold: -1,   // ← 높아지면 약함
+  friction_mult: 1,
+  use_fsi: 1,
+  use_overlay: 1,
+};
+
+/** 하나라도 약해지면 하향. 놓치는 것보다 과하게 잡는 편이 옳다(ADR-027 §근거). */
+export function isDowngrade(from: db.GuardModeRow, to: db.GuardModeRow): boolean {
+  return Object.entries(STRENGTH_DIR).some(([col, dir]) => {
+    const key = col as keyof db.GuardModeRow;
+    return (Number(to[key]) - Number(from[key])) * dir < 0;
+  });
+}
+
+/**
+ * 지금이 보호 구간인가 — ADR-027 ②. **판정식을 새로 쓰지 않는다.**
+ *
+ * `schedule()`이 이미 각 보호 일정의 `protect_from`(보호 진입)과 `start`(일정 시각)를 계산한다.
+ * 그 사이에 지금이 들어 있으면 보호 중이다. 데드라인 역산을 두 벌 두면 반드시 갈라지고,
+ * 갈라지면 어느 쪽이 옳은지 알 수 없다 — T-16이 귀속일을 `attributionOfIso` 하나에 맡긴 것과 같다.
+ */
+export async function protectingNow(env: Env, t: TimeCtx) {
+  const nowMs = Date.parse(t.now);
+  const { events } = await schedule(env, t);
+  return events.find((p) =>
+    Date.parse(p.protect_from) <= nowMs && nowMs <= Date.parse(p.start)) ?? null;
+}
+
+/**
+ * 모드 전환. **상향은 지금과 똑같이 자유롭고, 하향에만 마찰이 붙는다**(ADR-019 부수 규칙 1·2).
+ *
+ * 모드 전환은 Override의 완벽한 우회로다 — 새벽에 coach → secretary로 내리면 마찰이 전부
+ * 사라진다. 그래서 하향은 보호 구간 중 금지(409)이고, 밖에서도 사유를 요구한다(400).
+ *
+ * **대기(60초)는 서버가 걸지 않는다**(ADR-027 ③). 서버는 60초가 실제로 흘렀는지 알 수 없다 —
+ * Override의 대기도 기기가 세고 서버엔 결과만 온다. 서버가 할 수 있는 전부는 사유를 막는 것이다.
+ */
+export async function setMode(env: Env, t: TimeCtx, key: string, reason?: unknown) {
   const all = (await db.guardModes(env)).results;
-  if (!all.some((m) => m.key === key)) throw new ApiError(404, "그런 모드가 없어요");
+  const next = all.find((m) => m.key === key);
+  if (!next) throw new ApiError(404, "그런 모드가 없어요");
+  const cur = all.find((m) => m.active === 1) ?? null;
+
+  const down = !!cur && isDowngrade(cur, next);
+  const text = typeof reason === "string" ? reason.trim() : "";
+  if (down) {
+    // ③ 보호 구간이 바로 사전 서약이 지켜야 할 구간이다 — 예외 없이 막는다(ADR-019 §감수하는 비용).
+    const p = await protectingNow(env, t);
+    if (p) throw new ApiError(409, `보호 중에는 내릴 수 없어요 — ${p.title}`);
+    // ④ 사유는 §6.5의 데이터다. Override와 같이 길이 하한은 두지 않는다 — 비어 있지만 않으면 된다.
+    if (!text) throw new ApiError(400, "왜 내리는지 적어주세요");
+  }
+
   // 부분 유니크 인덱스(active=1) 때문에 해제 → 설정 순서를 지켜야 한다. batch로 원자.
-  await env.DB.batch([db.stClearActiveMode(env), db.stSetActiveMode(env, key)]);
-  return { active: key };
+  // ⑤ 기록은 방향과 무관하다 — 변경 궤적 자체가 분석 입력이고(§3), 하향만 남기면
+  //   "내렸다 올렸다"의 앞뒤가 안 보인다. 사유가 붙는 쪽만 하향이다.
+  await env.DB.batch([
+    db.stClearActiveMode(env),
+    db.stSetActiveMode(env, key),
+    db.stMeHistory(env, "guard_mode", cur?.key ?? null, key, "user", t.now, down ? text : null),
+  ]);
+  return { active: key, downgrade: down, reason: down ? text : null };
 }
 
 /**

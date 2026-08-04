@@ -75,7 +75,7 @@
 | POST `/api/guard/events/:id/outcome` | `{outcome}` | `{id, outcome, outcome_at}` · 재확정 409 | `guard.setOutcome` |
 | GET `/api/guard/pending-outcome` | — | outcome 미확정 rows(+event_title) | `guard.pendingOutcome` |
 | GET `/api/guard/modes` | — | `{modes, active}` | `guard.modes` |
-| PUT `/api/guard/modes/active` | `{key}` | `{active}` | `guard.setMode` |
+| PUT `/api/guard/modes/active` | `{key, reason?}` | `{active, downgrade, reason}` · 하향은 보호 중 409 · 사유 없으면 400 | `guard.setMode` |
 | GET `/api/guard/watch-apps?source` | — | rows | `guard.listWatchApps` |
 | POST `/api/guard/watch-apps` | `{source, identifier, label?}` | `{source, identifier}` (201) | `guard.addWatchApp` |
 | DELETE `/api/guard/watch-apps/:source/:identifier` | — | `{deleted}` | `guard.removeWatchApp` |
@@ -171,7 +171,12 @@
   **길이 하한(20자)은 S3.2에서 폐기했다**(마찰이 아니라 강제로 읽혔다. §6.3은 "비용을 치르게 한다"이지 "분량을 채우게 한다"가 아니다)
 - `setOutcome(env, t, id, outcome)` → 사후 확정 한 번만(409). **Guard가 판단하지 않는다**(§6.5)
 - `pendingOutcome(env)` → outcome 미확정 목록(Today 확정 카드용)
-- `modes(env)` / `setMode(env, key)` → 파라미터 프로파일(ADR-019). active는 부분 유니크 인덱스라 **해제 → 설정 batch**
+- `modes(env)` / `setMode(env, t, key, reason?)` → 파라미터 프로파일(ADR-019). active는 부분 유니크 인덱스라 **해제 → 설정 batch**
+  - **하향에만 마찰**(부수 규칙 1·2 · ADR-027): 보호 구간 중이면 409, 밖이면 사유 없이는 400. **상향·동일은 그대로 자유**
+  - `isDowngrade(from, to)` → 강도 파라미터 **다섯**을 `STRENGTH_DIR`로 비교. `risk_threshold`만 방향이 반대(**문턱**이라 높아지면 약함).
+    `ai_daily_cap`(지출 통제 · ADR-024)·`sort`(표시 순서)는 판정에서 제외
+  - `protectingNow(env, t)` → **`schedule()`을 그대로 쓴다.** `[protect_from, start]`에 `t.now`가 들면 보호 중 — 역산식을 두 벌 두지 않는다
+  - 대기(60초)는 서버가 걸지 않는다(ADR-027 ③) — 클라이언트가 센다. 사유는 `me_history(field='guard_mode', reason)`에 남는다(0015)
 - `listWatchApps` / `addWatchApp` / `removeWatchApp` → PC 확장 자리(ADR-022)
 - `verifyLevel4(env, t, input)` → **Level 3→4 격상만** 검증(ADR-024). Level 1~3은 손대지 않는다(ADR-021).
   통제 순서에 뜻이 있다: **⑤킬 스위치 → ②캐시 → ③일일 상한 → 키 확인 → ④타임아웃 8초 → ①호출**
@@ -212,7 +217,7 @@
 **K. 일기 목록** — `diaryList(env, before, limit)`
 **엔티티 단건** — `taskStats(env, id)` · `taskEntries(env, id)`(+`day_status`) · `taskEntryAt(env, id, date)` · `waitExtensions(env, id)`
 **삭제 가드/실행** — `closedEntryDates(env, taskId)`(막는 날짜 이름) · `guardEventCount(env, taskId)` · `stDeleteExtensions` · `stDeleteEntries` · `stDeleteTask(env, id)` · `stDeletePeriod(env, id)`
-**Me** — `meAll(env)` · `meGet(env, field)` · `stMeHistory(env, field, oldV, newV, source, now)` · `stMeUpsert(env, field, value, now)` · `meHistory(env, limit)`
+**Me** — `meAll(env)` · `meGet(env, field)` · `stMeHistory(env, field, oldV, newV, source, now, reason?)` · `stMeUpsert(env, field, value, now)` · `meHistory(env, limit)`
 **settings** — `settingsAll(env)` · `stSettingPut(env, key, value)`
 **analyses/summary** — `analysesList(env)` · `analysisGet(env, id)` · `weeklySummaryGet(env, key)` · `weeklySummaryFull(env, key)` · `mechDaily(env, key)`
 **컨텍스트 범위 조회** — `dailyRange` · `logsRange` · `feelingsRange` · `memosRange` (각 `(env, start, end)`) · `analysesRecentFull(env, n)` · `stInsertAnalysis(env, id, prompt, pass1, pass2, meta, now)`
