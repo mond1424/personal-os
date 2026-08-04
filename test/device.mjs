@@ -1,10 +1,11 @@
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import path from "node:path";
 
 const APP_ID = "dev.mond1424.personalos";
 const CDP_PORT = 9222;
 const COMMAND_TIMEOUT_MS = 5_000;
+const ADB_START_TIMEOUT_MS = 15_000;
 const CDP_TIMEOUT_MS = 5_000;
 const MAX_BUFFER = 4 * 1024 * 1024;
 
@@ -47,17 +48,17 @@ function resolveAdb() {
   );
 }
 
-function runAdb(adb, args, { allowFailure = false } = {}) {
+function runAdb(adb, args, { allowFailure = false, timeoutMs = COMMAND_TIMEOUT_MS } = {}) {
   const result = spawnSync(adb, args, {
     encoding: "utf8",
-    timeout: COMMAND_TIMEOUT_MS,
+    timeout: timeoutMs,
     windowsHide: true,
     maxBuffer: MAX_BUFFER,
   });
   const command = `adb ${args.join(" ")}`;
   if (result.error) {
     if (result.error.code === "ETIMEDOUT") {
-      throw new Error(`${command} 시간 초과 (${COMMAND_TIMEOUT_MS}ms)`);
+      throw new Error(`${command} 시간 초과 (${timeoutMs}ms)`);
     }
     throw new Error(`${command} 실행 실패: ${result.error.message}`);
   }
@@ -66,6 +67,32 @@ function runAdb(adb, args, { allowFailure = false } = {}) {
     throw new Error(`${command} 실패: ${detail}`);
   }
   return result;
+}
+
+function startAdbServer(adb) {
+  // Windows에서 cold start를 spawnSync로 기다리면 adb 데몬이 자식 핸들을 쥔 채 남아
+  // 클라이언트가 끝나도 호출부가 돌아오지 않는다. 직접 자식의 exit만 비동기로 기다린다.
+  return new Promise((resolve, reject) => {
+    const child = spawn(adb, ["start-server"], { stdio: "ignore", windowsHide: true });
+    let settled = false;
+    let timer;
+    const finish = (fn, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      fn(value);
+    };
+    child.once("error", (error) => finish(reject,
+      new Error(`adb 데몬 기동이 안 됩니다: adb start-server 실행 실패: ${error.message}`)));
+    child.once("exit", (code, signal) => {
+      if (code === 0) finish(resolve);
+      else finish(reject, new Error(`adb 데몬 기동이 안 됩니다: adb start-server 실패: ${signal || `exit ${code}`}`));
+    });
+    timer = setTimeout(() => {
+      child.kill();
+      finish(reject, new Error(`adb 데몬 기동이 안 됩니다: adb start-server 시간 초과 (${ADB_START_TIMEOUT_MS}ms)`));
+    }, ADB_START_TIMEOUT_MS);
+  });
 }
 
 function connectedDevice(adb) {
@@ -190,6 +217,7 @@ async function main() {
   }
 
   const adb = resolveAdb();
+  await startAdbServer(adb);
   const serial = connectedDevice(adb);
   const socketName = webViewSocket(adb, serial);
   let forwarded = false;
