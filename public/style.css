@@ -178,8 +178,8 @@ details.fold[open] summary::before{transform:rotate(90deg)}
 /* 달력 파트는 둥근 사각형 한 덩어리. overflow:hidden이 캐러셀 마스크까지 겸한다. */
 .calbox{margin-top:14px}   /* 둥근 카드는 이제 각 .calpane(월 카드)에 있다 — 프레임이 아니라 카드가 통째로 슬라이드 */
 #cal-rows{position:relative;overflow:hidden}
-.caltrack{display:flex;gap:20px;will-change:transform}   /* 달 사이 간격 — app.js CAL_GAP과 일치 (A-4) */
-.calpane{flex:0 0 100%;min-width:0;border:1px solid var(--line);border-radius:18px;overflow:hidden;background:var(--card)}
+.caltrack{display:flex;width:500%;gap:20px;will-change:transform}   /* 5-pane · 달 사이 간격은 app.js CAL_GAP과 일치 (A-4) */
+.calpane{flex:0 0 20%;min-width:0;border:1px solid var(--line);border-radius:18px;overflow:hidden;background:var(--card)}
 .wkdays{display:grid;grid-template-columns:repeat(7,1fr);padding:9px 2px 5px}
 .wkdays span{font-size:10.5px;color:var(--faint);text-align:left;padding-left:5px;letter-spacing:.05em}
 .wkdays span:first-child{color:#C77}   /* 일요일 — 라이트 */

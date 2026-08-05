@@ -646,7 +646,10 @@ Guard v1이 1순위라는 건 안 바뀐다. Phase 1을 셋으로 쪼개 **UI를
 - style.css      https://raw.githubusercontent.com/mond1424/personal-os/main/public/style.css
 
 ## 기준선
-typecheck 통과 / **smoke 268** / **front 238** / 실패 0 / verify exit 0
+typecheck 통과 / **smoke 268** / **front 244** / 실패 0 / verify exit 0
+(T-21 캘린더 pane 재사용: DOM 5-pane·한 칸 이동 시 1-pane만 조립·같은 달 재렌더 0-pane.
+ front 238→244 — 5-pane·1-pane 조립·좌우 3회 대응·캐시 무효화 full rebuild·가운데 pane 6건.
+ 오른쪽 4→3·왼쪽 0→1 변이는 각각 243/1로 자기 방향 검사만 실패. 서버·마이그레이션 없음.)
 (T-20 캘린더 전환: 월 키 메모리 캐시·데이터 5개월·쓰기 뒤 전체 무효화·dragBlockUntil 60.
  front 229→238 — 캐시 요청 3건, 일정 추가·수정·삭제·미루기·마감 무효화 5건, 60ms 1건.
  일정 추가·미루기 무효화 제거 변이는 각각 237/1로 해당 검사만 실패. 서버·마이그레이션 없음.)

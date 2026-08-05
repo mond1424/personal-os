@@ -43,13 +43,25 @@ const ok = (name, cond, detail = "") => {
   else { fails.push(name); console.log(`  ✗ ${name} ${detail}`); }
 };
 const $ = (s) => w.document.querySelector(s);
-// 캘린더는 이전·현재·다음 3-pane이라 같은 날짜 셀이 여러 개다 — 가운데(보고 있는 달)만 본다
+// 캘린더는 좌우 두 달까지 5-pane이라 같은 날짜 셀이 여러 개다 — 가운데(보고 있는 달)만 본다
 const CUR = "#cal-track .calpane.cur";
 const $cur = (s) => w.document.querySelector(`${CUR} ${s}`);
 const $$cur = (s) => [...w.document.querySelectorAll(`${CUR} ${s}`)];
 // const 선언은 window 프로퍼티가 아니다 — 전역 렉시컬 바인딩은 eval로 읽는다
 const ev = (code) => w.eval(code);
 const txt = (s) => ($(s)?.textContent ?? "").trim();
+const testAddMonth = (y, m, n) => {
+  const k = m - 1 + n;
+  return { y: y + Math.floor(k / 12), m: ((k % 12) + 12) % 12 + 1 };
+};
+const testYm = ({ y, m }) => `${y}-${String(m).padStart(2, "0")}`;
+const paneYms = () => [...w.document.querySelectorAll("#cal-track .calpane")].map((p) => p.dataset.ym);
+const panesAligned = (y, m) => {
+  const panes = [...w.document.querySelectorAll("#cal-track .calpane")];
+  const expected = [-2, -1, 0, 1, 2].map((n) => testYm(testAddMonth(y, m, n)));
+  return panes.length === 5 && panes.every((pane, i) => pane.dataset.ym === expected[i]
+    && [...pane.querySelectorAll(".c:not(.mut)")].every((cell) => cell.dataset.d.startsWith(expected[i])));
+};
 
 // 부팅 완료를 기다린다 (고정 대기는 느린 기기·큰 DB에서 깨진다)
 const ev0 = (code) => w.eval(code);
@@ -99,7 +111,7 @@ w.switchTab("cal"); await sleep(1200);
 ok("월 타이틀", /\d{4} · \d+월/.test(txt("#cal-title")), txt("#cal-title"));
 ok("한 달 = 항상 6주 (높이 고정 — 캐러셀의 전제)", $$cur(".cal-row").length === 6, String($$cur(".cal-row").length));
 ok("셀 7의 배수", $$cur(".c").length % 7 === 0);
-ok("3-pane 조립 (이전·현재·다음)", w.document.querySelectorAll("#cal-track .calpane").length === 3);
+ok("5-pane 조립 (좌우 두 달 · 현재 달 가운데)", w.document.querySelectorAll("#cal-track .calpane").length === 5);
 ok("밴드 path 생성", $$cur("svg.band path").length >= 1);
 ok("기간 카드", $("#p-list").querySelectorAll(".prow").length >= 1);
 const t17Css = await (await fetch(BASE + "/style.css")).text();
@@ -145,24 +157,31 @@ await ev(`(async()=>{
     window.__calendarPeriodCalls++;
     return window.__calendarPeriodsOriginal();
   };
+  window.__calendarBuildStart = calendarPaneBuildCount;
   invalidateCalendarCache();
   await renderCalendar();
 })()`);
 const coldRange = ev("window.__calendarCalls[0]");
-ok("달력 콜드 요청은 데이터 5개월 · DOM은 3-pane",
+const coldPaneBuilds = ev("calendarPaneBuildCount - window.__calendarBuildStart");
+ok("캐시 무효화 full rebuild는 pane 5개 조립", coldPaneBuilds === 5, String(coldPaneBuilds));
+ok("캐시 무효화 뒤 pane과 달 대응 유지", panesAligned(cacheY0, cacheM0), paneYms().join(" / "));
+ok("달력 콜드 요청은 데이터 5개월 · DOM도 5-pane",
   ev("window.__calendarCalls.length") === 1
     && coldRange?.start === ev(`calendarMonthStart(addMonth(${cacheY0},${cacheM0},-2))`)
     && coldRange?.end === ev(`calendarMonthEnd(addMonth(${cacheY0},${cacheM0},2))`)
     && ev("calendarMonthCache.size") === 5
-    && w.document.querySelectorAll("#cal-track .calpane").length === 3,
+    && w.document.querySelectorAll("#cal-track .calpane").length === 5,
   JSON.stringify(coldRange));
 const sameMonthCalls = ev("window.__calendarCalls.length");
 const sameMonthPeriodCalls = ev("window.__calendarPeriodCalls");
+const sameMonthPaneBuilds = ev("calendarPaneBuildCount");
 await ev("renderCalendar()");
-ok("같은 달 재렌더는 calendar · periods 요청 0",
+ok("같은 달 재렌더는 calendar · periods 요청 0 · pane 조립 0",
   ev("window.__calendarCalls.length") === sameMonthCalls
-    && ev("window.__calendarPeriodCalls") === sameMonthPeriodCalls,
-  `${sameMonthCalls}→${ev("window.__calendarCalls.length")} / ${sameMonthPeriodCalls}→${ev("window.__calendarPeriodCalls")}`);
+    && ev("window.__calendarPeriodCalls") === sameMonthPeriodCalls
+    && ev("calendarPaneBuildCount") === sameMonthPaneBuilds,
+  `${sameMonthCalls}→${ev("window.__calendarCalls.length")} / ${sameMonthPeriodCalls}→${ev("window.__calendarPeriodCalls")}`
+    + ` / pane ${sameMonthPaneBuilds}→${ev("calendarPaneBuildCount")}`);
 await ev(`(async()=>{ S.cal=addMonth(${cacheY0},${cacheM0},1); calGen++; await renderCalendar(); })()`);
 const movedRange = ev("window.__calendarCalls.at(-1)");
 ok("옆 달 이동은 캐시에 없는 가장자리 한 달만 요청",
@@ -837,16 +856,37 @@ ok("nav 강조가 따라옴", [...w.document.querySelectorAll("nav button")][2].
 w.switchTab("today", false); await sleep(300);
 ok("되돌아오면 0%", tf("#tab-track") === "translateX(0%)", tf("#tab-track"));
 
-// ①-c 달 넘기기 — 넘긴 뒤 조용히 재중심화되고 3-pane이 유지된다
+// ①-c 달 넘기기 — 넘긴 뒤 pane 하나만 조립하고 5-pane을 조용히 재중심화한다
 w.switchTab("cal"); await sleep(1400);
 const m0 = ev("S.cal.m"), y0 = ev("S.cal.y");
+const paneBuilds0 = ev("calendarPaneBuildCount");
 w.calGo(1);
 await sleep(2200);                                   // transitionend 유실 대비 타이머 + 재조립
 const expM = m0 === 12 ? 1 : m0 + 1;
 ok("달 넘김 — 다음 달", ev("S.cal.m") === expM && ev("S.cal.y") === (m0 === 12 ? y0 + 1 : y0), `${m0} → ${ev("S.cal.m")}`);
-ok("넘긴 뒤 트랙은 다시 가운데(gap 보정)", tf("#cal-track") === "translateX(calc(-100%-20px))", tf("#cal-track"));
-ok("3-pane 유지", w.document.querySelectorAll("#cal-track .calpane").length === 3);
-w.calGo(-1); await sleep(2200);
+ok("한 칸 넘기면 새로 조립하는 pane은 1개", ev("calendarPaneBuildCount") - paneBuilds0 === 1,
+  `${paneBuilds0} → ${ev("calendarPaneBuildCount")}`);
+ok("넘긴 뒤 트랙은 다시 가운데(gap 보정)", tf("#cal-track") === "translateX(calc(-40%-40px))", tf("#cal-track"));
+ok("5-pane 유지", w.document.querySelectorAll("#cal-track .calpane").length === 5);
+const afterOne = testAddMonth(y0, m0, 1);
+const centerPane = w.document.querySelectorAll("#cal-track .calpane")[2];
+ok("현재 달은 가운데 pane", centerPane?.classList.contains("cur") && centerPane.dataset.ym === testYm(afterOne),
+  `${centerPane?.dataset.ym} / ${testYm(afterOne)}`);
+w.calGo(1); await sleep(1400);
+w.calGo(1); await sleep(1400);
+const afterThree = testAddMonth(y0, m0, 3);
+ok("오른쪽으로 세 번 연속 넘겨도 각 pane과 달이 맞음", ev("S.cal.y") === afterThree.y && ev("S.cal.m") === afterThree.m
+  && panesAligned(afterThree.y, afterThree.m), paneYms().join(" / "));
+// 반대 방향은 깨끗한 5-pane에서 따로 시작한다. 오른쪽 오류가 왼쪽 검사까지 오염시키면
+// 두 변이가 각자 어느 방향을 방어하는지 구별할 수 없다.
+await ev(`(async()=>{ S.cal={y:${y0},m:${m0}}; calGen++; await renderCalendar(); })()`);
+w.calGo(-1); await sleep(1400);
+w.calGo(-1); await sleep(1400);
+w.calGo(-1); await sleep(1400);
+const beforeThree = testAddMonth(y0, m0, -3);
+ok("왼쪽으로 세 번 연속 넘겨도 각 pane과 달이 맞음", ev("S.cal.y") === beforeThree.y && ev("S.cal.m") === beforeThree.m
+  && panesAligned(beforeThree.y, beforeThree.m), paneYms().join(" / "));
+await ev(`(async()=>{ S.cal={y:${y0},m:${m0}}; calGen++; await renderCalendar(); })()`);
 ok("되돌리기 — 원래 달", ev("S.cal.m") === m0 && ev("S.cal.y") === y0, String(ev("S.cal.m")));
 w.switchTab("today"); await sleep(300);
 
@@ -1099,7 +1139,7 @@ ok("로드 후 부팅 오버레이 닫힘", !$("#boot").classList.contains("on")
   ok("다시 시도 → 복구", !$2("#boot").classList.contains("on") && w2.eval("!!S.today"));
   ok("복구 후 캘린더 렌더", (() => { w2.switchTab("cal"); return true; })());
   await sleep(900);
-  ok("캘린더 그리드 생성됨", $2("#cal-track").querySelectorAll(".calpane").length === 3);
+  ok("캘린더 그리드 생성됨", $2("#cal-track").querySelectorAll(".calpane").length === 5);
 }
 
 console.log("\n[런타임 오류]");
