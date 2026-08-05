@@ -613,6 +613,7 @@ function removeEvent(id, k) {
     const r = await confirmAsk("이 일정을 지울까요?", "일정은 '있었던 일'이라 마감된 날에서는 지울 수 없어요.", "지우기");
     if (r !== "ok") return;
     await Api.deleteEvent(id);
+    invalidateCalendarCache();
     toast("일정을 지웠어요", "warn");
     await Promise.all([refreshToday(), renderCalendar()]);
     openDay(k);
@@ -786,8 +787,20 @@ function bindEventSheet() {
     evxCtx = null;
     run(async () => {
       const unchanged = item && item.title === title && item.date === k && item.time === time;
-      const saved = unchanged ? item : (item ? await Api.updateEvent(item.id, { title, date: k, time }) : await Api.createEvent({ title, date: k, time }));
-      if (protect.protect_from || (item?.protect_from && protect.protect === false)) await Api.setProtect(saved.id, protect);
+      let wrote = false;
+      let saved = item;
+      try {
+        if (!unchanged) {
+          saved = item ? await Api.updateEvent(item.id, { title, date: k, time }) : await Api.createEvent({ title, date: k, time });
+          wrote = true;
+        }
+        if (protect.protect_from || (item?.protect_from && protect.protect === false)) {
+          await Api.setProtect(saved.id, protect);
+          wrote = true;
+        }
+      } finally {
+        if (wrote) invalidateCalendarCache();
+      }
       toast(item ? `${md(k)} 일정을 수정했어요` : `${md(k)} 일정을 추가했어요`, "ok");
       await Promise.all([refreshToday(), renderCalendar()]);
       openDay(k);
@@ -857,6 +870,7 @@ function bindDeferSheet() {
     dfxCtx = null;
     run(async () => {
       await Api.defer(c.id, c.from, c.to, reason);
+      invalidateCalendarCache();
       exitPick();
       await Promise.all([refreshToday(), renderCalendar()]);
       openDay(c.to);
@@ -865,17 +879,88 @@ function bindDeferSheet() {
 }
 
 /* ── Calendar ──────────────────────────────────────────── */
+const calendarMonthCache = new Map();
+let calendarPeriodListCache = null;
+let calendarCacheEpoch = 0;
+
+const calendarMonthKey = ({ y, m }) => `${y}-${pad2(m)}`;
+const calendarMonthStart = (month) => `${calendarMonthKey(month)}-01`;
+const calendarMonthEnd = (month) => addDaysStr(calendarMonthStart(addMonth(month.y, month.m, 1)), -1);
+
+function invalidateCalendarCache() {
+  calendarMonthCache.clear();
+  calendarPeriodListCache = null;
+  calendarCacheEpoch++;
+}
+
+function missingCalendarSegments(months) {
+  const segments = [];
+  let segment = [];
+  for (const month of months) {
+    if (!calendarMonthCache.has(calendarMonthKey(month))) segment.push(month);
+    else if (segment.length) { segments.push(segment); segment = []; }
+  }
+  if (segment.length) segments.push(segment);
+  return segments;
+}
+
+function cacheCalendarSegment(months, data) {
+  for (const month of months) {
+    const start = calendarMonthStart(month), end = calendarMonthEnd(month);
+    const inMonth = (row) => row.date >= start && row.date <= end;
+    calendarMonthCache.set(calendarMonthKey(month), {
+      periods: (data.periods || []).filter((p) => p.start_date <= end && p.end_date >= start),
+      entries: (data.entries || []).filter(inMonth),
+      diary: (data.diary || []).filter(inMonth),
+      events: (data.events || []).filter(inMonth),
+      memos: (data.memos || []).filter(inMonth),
+    });
+  }
+}
+
+function mergeCalendarMonths(months) {
+  const merged = { periods: [], entries: [], diary: [], events: [], memos: [] };
+  const periodIds = new Set();
+  for (const month of months) {
+    const data = calendarMonthCache.get(calendarMonthKey(month));
+    for (const p of data.periods) {
+      if (periodIds.has(p.id)) continue;
+      periodIds.add(p.id);
+      merged.periods.push(p);
+    }
+    for (const key of ["entries", "diary", "events", "memos"]) merged[key].push(...data[key]);
+  }
+  merged.periods.sort((a, b) => pkey(a) < pkey(b) ? -1 : pkey(a) > pkey(b) ? 1 : 0);
+  return merged;
+}
+
+async function calendarDataFor(months) {
+  const epoch = calendarCacheEpoch;
+  const segments = missingCalendarSegments(months);
+  const periodRequest = calendarPeriodListCache ? null : Api.periods();
+  const [segmentData, periodList] = await Promise.all([
+    Promise.all(segments.map((segment) => Api.calendar(
+      calendarMonthStart(segment[0]), calendarMonthEnd(segment[segment.length - 1])))),
+    periodRequest || Promise.resolve(calendarPeriodListCache),
+  ]);
+  // 쓰기 뒤 늦게 도착한 읽기 응답은 캐시를 되살리지 않고 새 세대로 다시 받는다.
+  if (epoch !== calendarCacheEpoch) return calendarDataFor(months);
+  segments.forEach((segment, i) => cacheCalendarSegment(segment, segmentData[i]));
+  if (periodRequest) calendarPeriodListCache = periodList;
+  return [mergeCalendarMonths(months), calendarPeriodListCache];
+}
+
 async function renderCalendar() {
   if (!S.today) return; // 부팅 전 — S.cal이 아직 비어 있다 (날짜 계산 불가)
   const gen = calGen;   // 이 조립을 시작할 때의 세대 — 도중에 달을 더 넘기면 버린다(최신 우선)
   const { y, m } = S.cal;
   $("#cal-title").textContent = `${y} · ${m}월`;
-  /* 이전·현재·다음 달을 한 번에 만든다. 옆으로 밀 때 다음 달이 '이미 거기 있어야'
-   * 끊기지 않기 때문이다. /calendar가 원래 범위 쿼리라 세 달치도 요청 한 번이다. */
+  /* DOM은 이전·현재·다음 3-pane만 만든다. 데이터는 좌우 두 달까지 월 캐시에 쌓아
+   * 한 번 받은 달을 다시 요청하지 않고, 빠진 연속 구간만 /calendar로 받는다. */
   const months = [addMonth(y, m, -1), { y, m }, addMonth(y, m, 1)];
+  const dataMonths = [-2, -1, 0, 1, 2].map((n) => addMonth(y, m, n));
   const grids = months.map((o) => weeksOf(o.y, o.m));
-  const start = grids[0][0][0], end = grids[2][WEEKS_IN_GRID - 1][6];
-  const [cal, plist] = await Promise.all([Api.calendar(start, end), Api.periods()]);
+  const [cal, plist] = await calendarDataFor(dataMonths);
   if (gen !== calGen) return;   // 더 새로운 달 넘김이 있었으면 이 3-pane 조립은 폐기(연속 스와이프 경합 방지)
   S.calData = cal;
   S.periods = plist;
@@ -2024,18 +2109,22 @@ function bindPeriodSheet() {
     if (!body.title) return toast("이름을 적어 주세요");
     if (pdCtx) await Api.updatePeriod(pdCtx.id, body);
     else await Api.createPeriod(body);
+    invalidateCalendarCache();
     closeAll();
     toast(pdCtx ? "기간을 수정했어요" : "기간을 만들었어요", "ok");
     S.periods = await Api.periods();
+    calendarPeriodListCache = S.periods;
     syncAll();
     if ($("#phone").dataset.tab === "cal") renderCalendar();
   });
   $("#pd-delete").onclick = () => run(async () => {
     if (!pdCtx) return;
     await Api.deletePeriod(pdCtx.id);
+    invalidateCalendarCache();
     closeAll();
     toast("기간을 삭제했어요", "warn");
     S.periods = await Api.periods();
+    calendarPeriodListCache = S.periods;
     syncAll();
     if ($("#phone").dataset.tab === "cal") renderCalendar();
   });
@@ -2460,7 +2549,7 @@ function bindCarousel(host, opt) {
     const moved = axis === "x", dx = e.clientX - x0;
     stop();
     if (!moved) return;
-    dragBlockUntil = Date.now() + 200;                  // 끌고 난 직후의 click은 삼킨다(짧게 — A-4)
+    dragBlockUntil = Date.now() + 60;                   // 끌고 난 직후의 click은 삼킨다(짧게 — A-4)
     const v = Date.now() - moveT > VEL_STALE ? 0 : vel;  // 멈췄다가 뗐으면 던진 게 아니다
     opt.commit(trackDir(dx, v, host.clientWidth || 380));
   }, { passive: true });
@@ -2723,8 +2812,14 @@ async function boot() {
     if (!okd) return;
     // confirmAsk는 .on만 벗기고 요소는 남기므로 resolve 직후 읽을 수 있다. 마감 전에 저장해야 트리거에 안 막힌다.
     const ft = ($("#cf-feel")?.value || "").trim();
-    if (ft) await Api.feelingsText(ft);
-    await Api.closeDay(kind);
+    let wrote = false;
+    try {
+      if (ft) { await Api.feelingsText(ft); wrote = true; }
+      await Api.closeDay(kind);
+      wrote = true;
+    } finally {
+      if (wrote) invalidateCalendarCache();
+    }
     toast(kind === "brief" ? "간략히 마감했어요" : "하루 마감 — 기록이 봉인됐어요", "ok");
     refreshToday();
   });

@@ -128,6 +128,51 @@ pressCell.dispatchEvent(pressEvent("pointermove", 250, 402));
 const pressAfterDrag = pressCell.classList.contains("press-feedback-on");
 pressCell.dispatchEvent(pressEvent("pointerup", 250, 402));
 ok("가로 이동 시 press 해제", pressBeforeDrag && !pressAfterDrag, `${pressBeforeDrag} → ${pressAfterDrag}`);
+
+// T-20 — 달력 데이터는 월 키 메모리 캐시. 콜드 5개월 뒤 같은 달은 0건,
+// 한 달 이동은 새 가장자리 한 달만 요청해야 한다.
+const cacheY0 = ev("S.cal.y"), cacheM0 = ev("S.cal.m");
+await ev(`(async()=>{
+  window.__calendarCalls = [];
+  window.__calendarPeriodCalls = 0;
+  window.__calendarOriginal = Api.calendar;
+  window.__calendarPeriodsOriginal = Api.periods;
+  Api.calendar = async (start, end) => {
+    window.__calendarCalls.push({ start, end });
+    return window.__calendarOriginal(start, end);
+  };
+  Api.periods = async () => {
+    window.__calendarPeriodCalls++;
+    return window.__calendarPeriodsOriginal();
+  };
+  invalidateCalendarCache();
+  await renderCalendar();
+})()`);
+const coldRange = ev("window.__calendarCalls[0]");
+ok("달력 콜드 요청은 데이터 5개월 · DOM은 3-pane",
+  ev("window.__calendarCalls.length") === 1
+    && coldRange?.start === ev(`calendarMonthStart(addMonth(${cacheY0},${cacheM0},-2))`)
+    && coldRange?.end === ev(`calendarMonthEnd(addMonth(${cacheY0},${cacheM0},2))`)
+    && ev("calendarMonthCache.size") === 5
+    && w.document.querySelectorAll("#cal-track .calpane").length === 3,
+  JSON.stringify(coldRange));
+const sameMonthCalls = ev("window.__calendarCalls.length");
+const sameMonthPeriodCalls = ev("window.__calendarPeriodCalls");
+await ev("renderCalendar()");
+ok("같은 달 재렌더는 calendar · periods 요청 0",
+  ev("window.__calendarCalls.length") === sameMonthCalls
+    && ev("window.__calendarPeriodCalls") === sameMonthPeriodCalls,
+  `${sameMonthCalls}→${ev("window.__calendarCalls.length")} / ${sameMonthPeriodCalls}→${ev("window.__calendarPeriodCalls")}`);
+await ev(`(async()=>{ S.cal=addMonth(${cacheY0},${cacheM0},1); calGen++; await renderCalendar(); })()`);
+const movedRange = ev("window.__calendarCalls.at(-1)");
+ok("옆 달 이동은 캐시에 없는 가장자리 한 달만 요청",
+  ev("window.__calendarCalls.length") === sameMonthCalls + 1
+    && movedRange?.start === ev(`calendarMonthStart(addMonth(${cacheY0},${cacheM0},3))`)
+    && movedRange?.end === ev(`calendarMonthEnd(addMonth(${cacheY0},${cacheM0},3))`)
+    && ev("window.__calendarPeriodCalls") === sameMonthPeriodCalls,
+  JSON.stringify(movedRange));
+await ev(`(async()=>{ S.cal={y:${cacheY0},m:${cacheM0}}; calGen++; await renderCalendar(); })()`);
+ok("스와이프 직후 click 차단은 60ms", appJs.includes("dragBlockUntil = Date.now() + 60;"));
 await w.openDay(ev("S.today.date")); await sleep(600);
 ok("날짜 팝업 조립", $("#day-body").textContent.includes("작성 중"), $("#day-body").textContent.slice(0, 40));
 w.closeAll();
@@ -711,6 +756,7 @@ w.closeAll();
 console.log("\n[일정(event) — task와 분리]");
 const EVD = ev("addDaysStr(S.today.date,1)");
 const evId = (await ev(`Api.createEvent({title:"일정 분리 확인", date:"${EVD}", time:"10:00"})`)).id;
+ev("invalidateCalendarCache()");   // 직접 API 시드라 제품의 일정 저장 경로를 거치지 않는다
 w.switchTab("cal"); await sleep(1300);
 const evCell = $cur(`.c[data-d="${EVD}"]`);
 ok("캘린더 셀에 일정 표시(.evt)", !!evCell.querySelector(".ev.evt"), evCell.innerHTML.slice(0, 140));
@@ -725,6 +771,7 @@ w.closeAll();
 const worksBefore = (await ev(`Api.works("scheduled")`)).length;
 ok("일정은 Works(할 일)에 섞이지 않음", !(await ev(`Api.works("scheduled")`)).some((r) => r.title === "일정 분리 확인"));
 await ev(`Api.deleteEvent("${evId}")`);
+ev("invalidateCalendarCache()");
 
 console.log("\n[기간 밴드 — 배경·공유 곡선]");
 const bandRow = ["2026-07-19","2026-07-20","2026-07-21","2026-07-22","2026-07-23","2026-07-24","2026-07-25"];
@@ -818,9 +865,13 @@ w.document.querySelectorAll("#dial-h .dopt")[14].dispatchEvent(new w.Event("clic
 w.document.querySelectorAll("#dial-m .dopt")[6].dispatchEvent(new w.Event("click", { bubbles: true }));
 ok("고른 값이 미리보기에 반영", txt("#evx-preview") === "14:30", txt("#evx-preview"));
 $("#evx-title").value = "다이얼로 넣은 일정";
+await ev("renderCalendar()");
+const eventAddCalendarCalls = ev("window.__calendarCalls.length");
 $("#evx-ok").dispatchEvent(new w.Event("click"));
 await sleep(1200);
 ok("시트가 닫히고 일정이 들어감", !$("#sh-event").classList.contains("on"));
+ok("일정 추가 뒤 캐시 무효화 · 재요청", ev("window.__calendarCalls.length") === eventAddCalendarCalls + 1,
+  `${eventAddCalendarCalls}→${ev("window.__calendarCalls.length")}`);
 const added = (await ev(`Api.day("${DD}")`)).events.find((e) => e.title === "다이얼로 넣은 일정");
 ok("고른 시각 그대로 저장", added && added.time === "14:30", JSON.stringify(added));
 // 보호 규칙 — 일정 시트에서 기본값으로 설정·미리보기·해제를 모두 검증한다.
@@ -841,7 +892,12 @@ ok("보호 데드라인은 수면 입력에 따라 변함", deadline360 !== dead
   && deadline360.includes("07:00") && deadline300.includes("08:00"), deadline360 + " / " + deadline300);
 $("#ev-protect-sleep").value = "360";
 $("#ev-protect-sleep").dispatchEvent(new w.Event("input"));
+$("#evx-title").value = "다이얼로 넣은 일정 수정";
+await ev("renderCalendar()");
+const eventUpdateCalendarCalls = ev("window.__calendarCalls.length");
 $("#evx-ok").dispatchEvent(new w.Event("click")); await sleep(1000);
+ok("일정 수정 뒤 캐시 무효화 · 재요청", ev("window.__calendarCalls.length") === eventUpdateCalendarCalls + 1,
+  `${eventUpdateCalendarCalls}→${ev("window.__calendarCalls.length")}`);
 ok("보호 설정 본문은 명시 기본값", ev(`JSON.stringify(window.__protectCalls[0]?.body)`) === JSON.stringify({ protect_from: "-1d 00:00", protect_level: 4, protect_sleep_min: 360, protect_prep_min: 90 }), ev(`JSON.stringify(window.__protectCalls)`));
 w.switchTab("cal"); await sleep(800);
 ok("보호 일정은 캘린더에서 표시", !!$cur(`.c[data-d="${DD}"] .ev-protect-dot`));
@@ -879,7 +935,13 @@ ok("다시 열면 종일로 초기화", $("#evx-dial").style.display === "none" 
 $("#evx-cancel").dispatchEvent(new w.Event("click"));
 ok("취소 — 시트만 닫힘", !$("#sh-event").classList.contains("on"));
 w.closeAll(); await sleep(200);
-await ev(`Api.deleteEvent("${added.id}")`);
+await ev("renderCalendar()");
+const eventDeleteCalendarCalls = ev("window.__calendarCalls.length");
+w.removeEvent(added.id, DD); await sleep(200);
+$("#cf-yes").click(); await sleep(1200);
+ok("일정 삭제 뒤 캐시 무효화 · 재요청", ev("window.__calendarCalls.length") === eventDeleteCalendarCalls + 1,
+  `${eventDeleteCalendarCalls}→${ev("window.__calendarCalls.length")}`);
+w.closeAll(); await sleep(150);
 
 // ②.5 통합 추가 영역 (3단계) — [일정|할 일|memo] 세그 · 어느 날짜에든 memo
 const AZF = ev("addDaysStr(S.today.date,4)");   // 미래
@@ -943,8 +1005,12 @@ ok("확인 시트에 사유칸 · 완료율 바 없음", !!$("#dfx-reason") && $
 ok("사유칸은 빈 값으로 열림", $("#dfx-reason").value === "");
 ok("어디로 가는지 표시", $("#dfx-what").textContent.includes("→") || $("#dfx-what").innerHTML.includes("→"));
 $("#dfx-reason").value = "다른 일이 급해서";
+await ev("renderCalendar()");
+const deferCalendarCalls = ev("window.__calendarCalls.length");
 $("#dfx-ok").dispatchEvent(new w.Event("click"));
 await sleep(1500);
+ok("미루기 뒤 캐시 무효화 · 재요청", ev("window.__calendarCalls.length") === deferCalendarCalls + 1,
+  `${deferCalendarCalls}→${ev("window.__calendarCalls.length")}`);
 const dfd = await ev(`Api.task("${tDf}")`);
 ok("옮겨 간 예정에 사유가 남음", dfd.entries.find((e) => e.date === T2)?.defer_reason === "다른 일이 급해서", JSON.stringify(dfd.entries));
 ok("옮겨 간 예정은 0%에서 시작", dfd.entries.find((e) => e.date === T2)?.rate === 0);
@@ -983,6 +1049,17 @@ ok("AI 연결 — 제공자 3곳 목록", $("#conn-list").querySelectorAll(".con
 ok("연결 테스트 버튼", !!$("#conn-test"));
 ok("키 입력칸 자동완성 차단", $("#conn-key").getAttribute("autocomplete") === "new-password");
 w.closeAll();
+
+// 마감은 뒤의 쓰기 검사를 막으므로 모든 쓰기 왕복을 끝낸 다음 실제 경로를 태운다.
+w.switchTab("today"); await sleep(900);
+await ev("renderCalendar()");
+const closeCalendarCalls = ev("window.__calendarCalls.length");
+$("#btn-close").click(); await sleep(300);
+$("#cf-yes").click(); await sleep(1500);
+await ev("renderCalendar()");
+ok("마감 뒤 캐시 무효화 · 다음 렌더 재요청",
+  ev("window.__calendarCalls.length") === closeCalendarCalls + 1,
+  `${closeCalendarCalls}→${ev("window.__calendarCalls.length")}`);
 
 console.log("\n[부팅 · 연결 실패 복구]");
 ok("로드 후 부팅 오버레이 닫힘", !$("#boot").classList.contains("on"));

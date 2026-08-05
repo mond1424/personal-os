@@ -646,7 +646,10 @@ Guard v1이 1순위라는 건 안 바뀐다. Phase 1을 셋으로 쪼개 **UI를
 - style.css      https://raw.githubusercontent.com/mond1424/personal-os/main/public/style.css
 
 ## 기준선
-typecheck 통과 / **smoke 268** / **front 229** / 실패 0 / verify exit 0
+typecheck 통과 / **smoke 268** / **front 238** / 실패 0 / verify exit 0
+(T-20 캘린더 전환: 월 키 메모리 캐시·데이터 5개월·쓰기 뒤 전체 무효화·dragBlockUntil 60.
+ front 229→238 — 캐시 요청 3건, 일정 추가·수정·삭제·미루기·마감 무효화 5건, 60ms 1건.
+ 일정 추가·미루기 무효화 제거 변이는 각각 237/1로 해당 검사만 실패. 서버·마이그레이션 없음.)
 (T-19 모드 판정 응답: smoke 260→267 — modes[].downgrade·활성 false·보호 구간 값/null·
  risk_threshold 방향·요청 판정 위조 차단·guard_modes 무변경 7건. front 무변경, 마이그레이션 없음.)
 (T-10 모드 하향 마찰: smoke 244→260 — 하향 판정(risk_threshold·ai_daily_cap)·보호 구간 409·사유 400·
