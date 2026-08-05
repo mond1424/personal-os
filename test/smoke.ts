@@ -566,8 +566,13 @@ ok("보호 구간이 지금을 포함한다 (검사의 전제)",
 const protectedVerdict = (await api("GET", "/api/guard/modes")).json.protecting;
 ok("모드 판정 응답 — 보호 구간이면 일정 이름과 until",
   protectedVerdict?.title === "지금 보호 중인 시험" &&
-    protectedVerdict.start === nowPlan?.protect_from && protectedVerdict.until === nowPlan?.start,
+    Date.parse(protectedVerdict.start) === Date.parse(nowPlan?.protect_from) &&
+    Date.parse(protectedVerdict.until) === Date.parse(nowPlan?.start),
   JSON.stringify(protectedVerdict));
+ok("모드 판정 응답 — 사람용 시각만 로컬 오프셋 · schedule UTC 유지",
+  nowPlan?.protect_from.endsWith("Z") && nowPlan?.start.endsWith("Z") &&
+    protectedVerdict?.start.endsWith("+09:00") && protectedVerdict?.until.endsWith("+09:00"),
+  JSON.stringify({ schedule: nowPlan, protecting: protectedVerdict }));
 // 4번 — **상향은 보호 구간 중에도 자유롭다**(부수 규칙 1). 사유도 대기도 없다.
 ok("보호 구간 중 상향은 사유 없이 200 (secretary → coach)",
   (await api("PUT", "/api/guard/modes/active", { key: "coach" })).status === 200);

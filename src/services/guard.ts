@@ -34,7 +34,8 @@ export const events = async (env: Env, limit = 100) =>
 export async function modes(env: Env) {
   const rows = (await db.guardModes(env)).results;
   const active = rows.find((m) => m.active === 1) ?? null;
-  const protecting = await protectingNow(env, await loadTime(env));
+  const t = await loadTime(env);
+  const protecting = await protectingNow(env, t);
 
   return {
     modes: rows.map((mode) => ({
@@ -44,8 +45,8 @@ export async function modes(env: Env) {
     active,
     protecting: protecting ? {
       title: protecting.title,
-      start: protecting.protect_from,
-      until: protecting.start,
+      start: normalizeIso(protecting.protect_from, t.offsetMin),
+      until: normalizeIso(protecting.start, t.offsetMin),
     } : null,
   };
 }
