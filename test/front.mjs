@@ -262,9 +262,9 @@ await renderMeFixture([], []);
 ok("Guard 이력 0건은 아직 없음", txt("#guard-memory").includes("아직 없음"), txt("#guard-memory"));
 
 const guardFixture = [
-  { id:"g1", fired_at:"2001-01-15T01:30:00+14:00", level:2, cause:"protect:아무거나", reaction:null, outcome:null },
-  { id:"g2", fired_at:"2026-08-05T02:00:00+09:00", level:3, cause:"zzz:모름", reaction:"accepted", outcome:null },
-  { id:"g3", fired_at:"2026-08-05T02:30:00+09:00", level:4, cause:"diagnostic", reaction:"override", override_reason:"조금만 더", override_class:"avoidant", outcome:"failure" },
+  { id:"g1", on_date:"2026-08-05", fired_at:"2026-08-05T01:30:00+14:00", level:2, cause:"protect:아무거나", reaction:null, outcome:null },
+  { id:"g2", on_date:"2026-08-05", fired_at:"2026-08-05T02:00:00+09:00", level:3, cause:"zzz:모름", reaction:"accepted", outcome:null },
+  { id:"g3", on_date:"2026-08-05", fired_at:"2026-08-05T02:30:00+09:00", level:4, cause:"diagnostic", reaction:"override", override_reason:"조금만 더", override_class:"avoidant", outcome:"failure" },
 ];
 await renderMeFixture([], guardFixture);
 const causeLabels = [...$("#guard-memory").querySelectorAll(".gmem-cause-value")].map((el) => el.textContent.trim());
@@ -276,6 +276,52 @@ ok("reaction null과 outcome null은 다르게 표시", nullReaction === "아직
   && nullOutcome === "결과 미정" && nullReaction !== nullOutcome, `${nullReaction} / ${nullOutcome}`);
 ok("Override 사유와 분류 표시", [...$("#guard-memory").querySelectorAll(".gmem-reaction-value")][2]?.textContent.includes("조금만 더")
   && [...$("#guard-memory").querySelectorAll(".gmem-reaction-value")][2]?.textContent.includes("회피"));
+
+const guardDays9 = Array.from({ length: 9 }, (_, i) => {
+  const day = String(14 - i).padStart(2, "0");
+  return {
+    id:`gd${i}`, on_date:`2026-08-${day}`, fired_at:`2026-08-${day}T12:00:00+09:00`,
+    level:2, cause:"watch:bedtime", reaction:i === 0 ? "accepted" : null, outcome:null,
+  };
+});
+guardDays9.push({
+  id:"gd-extra", on_date:"2026-08-14", fired_at:"2026-08-14T13:00:00+09:00",
+  level:3, cause:"recheck:bedtime", reaction:"override", override_reason:"오늘만", override_class:"legitimate", outcome:"success",
+});
+await renderMeFixture([], guardDays9);
+const aug14 = $('#guard-memory .gday-section[data-gday-date="2026-08-14"]');
+ok("Guard 이력을 on_date별 요약으로 묶음", $("#guard-memory").querySelectorAll(".gday-section").length === 9
+  && aug14?.querySelectorAll(".gmem-row").length === 2
+  && aug14?.querySelector(".gday-stats")?.textContent.includes("개입 2")
+  && aug14?.querySelector(".gday-stats")?.textContent.includes("수용 1")
+  && aug14?.querySelector(".gday-stats")?.textContent.includes("Override 1"));
+const foldedGuardDays = $("#guard-memory").querySelectorAll(".gday-section:not([hidden])").length;
+const guardMoreText = txt("#guard-memory .gday-more");
+$("#guard-memory .gday-more")?.click();
+ok("Guard 8일 이상은 최근 7일과 남은 일수를 보이고 펼치면 전부", foldedGuardDays === 7
+  && guardMoreText === "더 보기 (2일)"
+  && $("#guard-memory").querySelectorAll(".gday-section:not([hidden])").length === 9
+  && !$("#guard-memory .gday-more"), `${foldedGuardDays} / ${guardMoreText}`);
+
+await renderMeFixture([], guardDays9.filter((row) => row.on_date >= "2026-08-08"));
+ok("Guard 7일 이하는 더 보기 없음", $("#guard-memory").querySelectorAll(".gday-section").length === 7
+  && !$("#guard-memory .gday-more"));
+
+const guardBoundary = [{
+  id:"gb1", on_date:"2026-08-05", fired_at:"2026-08-06T01:30:00+09:00",
+  level:4, cause:"protect:취침", reaction:"override", override_reason:"마무리", override_class:"avoidant", outcome:"failure",
+}];
+await renderMeFixture([], guardBoundary);
+ok("05:00 경계 전 개입은 fired_at 날짜가 아니라 on_date로 묶음",
+  !!$('#guard-memory .gday-section[data-gday-date="2026-08-05"]')
+  && !$('#guard-memory .gday-section[data-gday-date="2026-08-06"]'));
+$("#guard-memory .gday-summary")?.click();
+ok("Guard 날짜를 누르면 T-18 개입 줄이 그대로 펼쳐짐",
+  !$("#guard-memory .gday-events")?.hidden
+  && $("#guard-memory").querySelectorAll(".gmem-row").length === 1
+  && txt("#guard-memory .gmem-cause-value") === "보호 규칙 · 취침"
+  && txt("#guard-memory .gmem-reaction-value").includes("마무리")
+  && txt("#guard-memory .gmem-outcome-value") === "실패");
 
 console.log("\n[Guard 모드 — 서버 판정 · 하향 마찰]");
 const modeFixture = (activeKey = "coach", protecting = null) => {

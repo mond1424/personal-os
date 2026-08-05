@@ -74,7 +74,7 @@
 | POST `/api/guard/events/:id/react` | `{reaction, reason?, reacted_at?}` | `{id, reaction, reacted_at}` · 두 번째는 409 | `guard.react` |
 | POST `/api/guard/events/:id/outcome` | `{outcome}` | `{id, outcome, outcome_at}` · 재확정 409 | `guard.setOutcome` |
 | GET `/api/guard/pending-outcome` | — | outcome 미확정 rows(+event_title) | `guard.pendingOutcome` |
-| GET `/api/guard/modes` | — | `{modes, active}` | `guard.modes` |
+| GET `/api/guard/modes` | — | `{modes[]+downgrade, active, protecting}` · 판정을 **조회 시 계산**해 싣는다(T-19) | `guard.modes` |
 | PUT `/api/guard/modes/active` | `{key, reason?}` | `{active, downgrade, reason}` · 하향은 보호 중 409 · 사유 없으면 400 | `guard.setMode` |
 | GET `/api/guard/watch-apps?source` | — | rows | `guard.listWatchApps` |
 | POST `/api/guard/watch-apps` | `{source, identifier, label?}` | `{source, identifier}` (201) | `guard.addWatchApp` |
@@ -172,6 +172,11 @@
 - `setOutcome(env, t, id, outcome)` → 사후 확정 한 번만(409). **Guard가 판단하지 않는다**(§6.5)
 - `pendingOutcome(env)` → outcome 미확정 목록(Today 확정 카드용)
 - `modes(env)` / `setMode(env, t, key, reason?)` → 파라미터 프로파일(ADR-019). active는 부분 유니크 인덱스라 **해제 → 설정 batch**
+  - `modes(env)`는 **판정을 응답에 싣는다**(T-19 — 화면이 PUT *전에* 알아야 대기를 걸지 말지 정한다):
+    `modes[].downgrade`(활성 모드 기준 `isDowngrade`) · `protecting`(보호 중이면 `{title, start, until}`, 아니면 `null`).
+    `start`=`protect_from`(진입) · `until`=`start`(차단 종료). 둘 다 `normalizeIso`로 **로컬 표기**(`5687455`)
+  - **파생을 저장하지 않는다**(원칙 4) — `guard_modes`에 컬럼이 늘지 않았고 전부 조회 시 계산이다.
+    프런트가 다시 계산하는 것은 ADR-027 위반이라 **서버가 준다**
   - **하향에만 마찰**(부수 규칙 1·2 · ADR-027): 보호 구간 중이면 409, 밖이면 사유 없이는 400. **상향·동일은 그대로 자유**
   - `isDowngrade(from, to)` → 강도 파라미터 **다섯**을 `STRENGTH_DIR`로 비교. `risk_threshold`만 방향이 반대(**문턱**이라 높아지면 약함).
     `ai_daily_cap`(지출 통제 · ADR-024)·`sort`(표시 순서)는 판정에서 제외

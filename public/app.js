@@ -1566,20 +1566,68 @@ function guardFiredLabel(firedAt) {
   return raw.length >= 16 && raw[10] === "T" ? `${raw.slice(0, 10)} ${raw.slice(11, 16)}` : raw || "—";
 }
 
+function guardMemoryRow(row) {
+  return `<div class="gmem-row">
+      <span class="gmem-time mono">${esc(guardFiredLabel(row.fired_at))}</span>
+      <span class="gmem-level">Level ${esc(row.level)}</span>
+      <span class="gmem-cause"><b>원인</b> <span class="gmem-cause-value">${esc(guardCauseLabel(row.cause))}</span></span>
+      <span class="gmem-reaction"><b>반응</b> <span class="gmem-reaction-value">${esc(guardReactionLabel(row))}</span></span>
+      <span class="gmem-outcome"><b>결과</b> <span class="gmem-outcome-value">${esc(guardOutcomeLabel(row.outcome))}</span></span>
+    </div>`;
+}
+
 function renderGuardMemory(events) {
   const box = $("#guard-memory");
   if (!events.length) {
     box.innerHTML = `<div class="gmem-empty">아직 없음 — Guard 개입 이력이 쌓이면 여기에 보여요.</div>`;
     return;
   }
-  box.innerHTML = events.map((row) =>
-    `<div class="gmem-row">
-      <span class="gmem-time mono">${esc(guardFiredLabel(row.fired_at))}</span>
-      <span class="gmem-level">Level ${esc(row.level)}</span>
-      <span class="gmem-cause"><b>원인</b> <span class="gmem-cause-value">${esc(guardCauseLabel(row.cause))}</span></span>
-      <span class="gmem-reaction"><b>반응</b> <span class="gmem-reaction-value">${esc(guardReactionLabel(row))}</span></span>
-      <span class="gmem-outcome"><b>결과</b> <span class="gmem-outcome-value">${esc(guardOutcomeLabel(row.outcome))}</span></span>
-    </div>`).join("");
+
+  const days = new Map();
+  for (const row of events) {
+    const onDate = String(row.on_date ?? "");
+    if (!days.has(onDate)) days.set(onDate, []);
+    days.get(onDate).push(row);
+  }
+  const grouped = [...days.entries()].sort(([a], [b]) => b.localeCompare(a));
+  box.innerHTML = grouped.map(([onDate, rows], index) => {
+    const reactions = new Map();
+    for (const row of rows) {
+      const key = row.reaction == null ? "" : String(row.reaction);
+      reactions.set(key, (reactions.get(key) || 0) + 1);
+    }
+    const reactionText = [...reactions.entries()].map(([reaction, count]) =>
+      `${guardReactionLabel({ reaction: reaction || null })} ${count}`).join(" · ");
+    return `<section class="gday-section" data-gday-date="${esc(onDate)}"${index >= 7 ? " hidden" : ""}>
+      <button type="button" class="gday-summary" aria-expanded="false">
+        <span class="gday-date">${esc(md(onDate))}</span>
+        <span class="gday-stats">개입 ${rows.length} · ${esc(reactionText)}</span>
+      </button>
+      <div class="gday-events" hidden>${rows.map(guardMemoryRow).join("")}</div>
+    </section>`;
+  }).join("") + (grouped.length > 7
+    ? `<button type="button" class="gday-more">더 보기 (${grouped.length - 7}일)</button>` : "");
+
+  box.querySelectorAll(".gday-summary").forEach((button) => {
+    button.addEventListener("click", () => {
+      const section = button.closest(".gday-section");
+      const opening = !section.classList.contains("gday-open");
+      box.querySelectorAll(".gday-section").forEach((item) => {
+        item.classList.remove("gday-open");
+        item.querySelector(".gday-summary").setAttribute("aria-expanded", "false");
+        item.querySelector(".gday-events").hidden = true;
+      });
+      if (opening) {
+        section.classList.add("gday-open");
+        button.setAttribute("aria-expanded", "true");
+        section.querySelector(".gday-events").hidden = false;
+      }
+    });
+  });
+  box.querySelector(".gday-more")?.addEventListener("click", (event) => {
+    box.querySelectorAll(".gday-section[hidden]").forEach((section) => { section.hidden = false; });
+    event.currentTarget.remove();
+  });
 }
 
 const MODE_WAIT_MS = 60_000;
