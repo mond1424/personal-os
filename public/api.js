@@ -88,5 +88,6 @@ const Api = {
   guardPending: () => _req("GET", "/guard/pending-outcome"),
   guardOutcome: (id, outcome) => _req("POST", `/guard/events/${id}/outcome`, { outcome }),
   guardModes: () => _req("GET", "/guard/modes"),
-  guardSetMode: (key) => _req("PUT", "/guard/modes/active", { key }),
+  guardSetMode: (key, reason) => _req("PUT", "/guard/modes/active",
+    reason === undefined ? { key } : { key, reason }),
 };

@@ -212,6 +212,111 @@ ok("reaction null과 outcome null은 다르게 표시", nullReaction === "아직
   && nullOutcome === "결과 미정" && nullReaction !== nullOutcome, `${nullReaction} / ${nullOutcome}`);
 ok("Override 사유와 분류 표시", [...$("#guard-memory").querySelectorAll(".gmem-reaction-value")][2]?.textContent.includes("조금만 더")
   && [...$("#guard-memory").querySelectorAll(".gmem-reaction-value")][2]?.textContent.includes("회피"));
+
+console.log("\n[Guard 모드 — 서버 판정 · 하향 마찰]");
+const modeFixture = (activeKey = "coach", protecting = null) => {
+  const modes = [
+    { key:"secretary", label:"비서 — 알려주고 기록한다", max_level:2, downgrade:activeKey === "coach" },
+    { key:"coach", label:"코치 — 개입한다", max_level:4, downgrade:false },
+  ];
+  return { modes, active:modes.find((mode) => mode.key === activeKey), protecting };
+};
+await ev(`(async()=>{
+  window.__modeOriginalModes = Api.guardModes;
+  window.__modeOriginalSetMode = Api.guardSetMode;
+  window.__modeOriginalSetTimeout = window.setTimeout;
+  window.setTimeout = function (fn, ms, ...args) {
+    return window.__modeOriginalSetTimeout.call(window, fn, ms === 60000 ? 80 : ms, ...args);
+  };
+  Api.guardModes = async () => JSON.parse(JSON.stringify(window.__modeFixture));
+  Api.guardSetMode = async (key, reason) => {
+    window.__modeCalls.push({ key, reason });
+    if (window.__modeBehavior === "409") {
+      window.__modeFixture.protecting = window.__modeProtectAfter;
+      const e = new Error("보호 중에는 내릴 수 없어요 — 물리학 중간고사"); e.status = 409; throw e;
+    }
+    if (window.__modeBehavior === "400") {
+      const e = new Error("왜 내리는지 적어주세요 — 서버 원문"); e.status = 400; throw e;
+    }
+    return { active:key, downgrade:key === "secretary", reason:reason ?? null };
+  };
+})()`);
+const loadModeFixture = async (activeKey, behavior = "success", protecting = null, protectAfter = null) => {
+  const fixture = modeFixture(activeKey, protecting);
+  await ev(`(async()=>{
+    cancelModeChange();
+    window.__modeFixture = ${JSON.stringify(fixture)};
+    window.__modeProtectAfter = ${JSON.stringify(protectAfter)};
+    window.__modeBehavior = ${JSON.stringify(behavior)};
+    window.__modeCalls = [];
+    S.guardModes = await Api.guardModes();
+    renderGuardModes();
+  })()`);
+};
+
+await loadModeFixture("secretary");
+$("#mode-list [data-mode-key='coach']").click(); await sleep(30);
+ok("모드 상향은 사유 칸·대기 없이 즉시 요청", ev("window.__modeCalls.length") === 1
+  && ev("window.__modeCalls[0].reason") === undefined
+  && !$("#sh-mode").classList.contains("on") && ev("modeWaitTimer === null"));
+
+await loadModeFixture("coach");
+$("#mode-list [data-mode-key='secretary']").click();
+const modeReasonOpened = $("#sh-mode").classList.contains("on") && $("#mode-reason-wrap").style.display !== "none";
+$("#mode-confirm").click(); await sleep(20);
+ok("모드 하향은 사유를 묻고 빈 값이면 대기를 시작하지 않음", modeReasonOpened
+  && $("#mode-wait").style.display === "none" && ev("modeWaitTimer === null")
+  && ev("window.__modeCalls.length") === 0);
+
+await loadModeFixture("coach");
+$("#mode-list [data-mode-key='secretary']").click();
+$("#mode-reason").value = "잠깐 쉬고 싶다";
+$("#mode-confirm").click(); await sleep(20);
+const modeWaitingBeforeCancel = $("#mode-wait").style.display !== "none";
+$("#mode-cancel").click(); await sleep(100);
+ok("모드 하향 대기 중 취소하면 표시 모드가 그대로", modeWaitingBeforeCancel
+  && !$("#sh-mode").classList.contains("on") && txt("#mode-current").includes("코치"));
+
+const protectedMode = {
+  title:"물리학 중간고사",
+  start:"2026-08-06T22:00:00+09:00",
+  until:"2026-08-07T09:00:00+09:00",
+};
+await loadModeFixture("coach", "409", null, protectedMode);
+$("#mode-list [data-mode-key='secretary']").click();
+$("#mode-reason").value = "그래도 내리고 싶다";
+$("#mode-confirm").click(); await sleep(140);
+ok("모드 하향 409는 서버 문구와 보호 일정·해제 시각을 표시", txt("#mode-error") === "보호 중에는 내릴 수 없어요 — 물리학 중간고사"
+  && txt("#mode-context").includes("물리학 중간고사") && txt("#mode-context").includes("8/7 09:00"),
+  `${txt("#mode-error")} / ${txt("#mode-context")}`);
+
+await loadModeFixture("coach");
+$("#mode-list [data-mode-key='secretary']").click();
+$("#mode-reason").value = "검사 5 — 기다린 뒤 전송";
+$("#mode-confirm").click();
+const modePutsBeforeWait = ev("window.__modeCalls.length");
+await sleep(140);
+ok("모드 하향 60초가 끝나기 전에는 PUT이 나가지 않음", modePutsBeforeWait === 0
+  && ev("window.__modeCalls.length") === 1
+  && ev("window.__modeCalls[0].reason") === "검사 5 — 기다린 뒤 전송",
+  `${modePutsBeforeWait} → ${ev("window.__modeCalls.length")}`);
+
+await loadModeFixture("coach", "400");
+$("#mode-list [data-mode-key='secretary']").click();
+$("#mode-reason").value = "서버가 거부할 사유";
+$("#mode-confirm").click(); await sleep(140);
+ok("모드 하향 400은 서버 문구를 남기고 사유 칸으로 복귀", $("#mode-reason-wrap").style.display !== "none"
+  && $("#mode-reason").value === "서버가 거부할 사유"
+  && txt("#mode-error") === "왜 내리는지 적어주세요 — 서버 원문");
+
+await ev(`(async()=>{
+  cancelModeChange();
+  Api.guardModes = window.__modeOriginalModes;
+  Api.guardSetMode = window.__modeOriginalSetMode;
+  window.setTimeout = window.__modeOriginalSetTimeout;
+  S.guardModes = await Api.guardModes();
+  renderGuardModes();
+})()`);
 w.toggleSet(true); await sleep(200);
 const rows = [...$("#set-list").querySelectorAll(".srow")].map((r) => r.textContent);
 ok("설정 11행 (AI 연결 통합)", rows.length === 11, String(rows.length));

@@ -193,6 +193,11 @@
       <div class="sec-h"><span class="sec-t">변경 이력</span><span class="cnt">이력 자체가 분석 입력</span></div>
       <div class="card" style="padding:8px 14px" id="me-history"></div>
     </div>
+    <div class="sec mode-section">
+      <div class="sec-h"><span class="sec-t">Guard 모드</span><span class="cnt" id="mode-current"></span></div>
+      <div class="card mode-list" id="mode-list"></div>
+      <p class="mode-protecting" id="mode-protecting" style="display:none"></p>
+    </div>
     <div class="sec">
       <div class="sec-h"><span class="sec-t">Guard 메모리</span><span class="cnt">개입 이력 · 읽기 전용</span></div>
       <div class="card gmem-list" id="guard-memory"></div>
@@ -321,6 +326,27 @@
   <textarea rows="4" id="me-value" style="margin-top:10px"></textarea>
   <div class="actrow"><button class="btn" style="flex:1" id="me-save">저장</button></div>
   <p class="cap" style="margin-top:9px">저장하면 변경 이력에 남아요 — 이력 자체가 분석 입력이에요.</p>
+</div>
+
+<!-- Guard 모드 하향 — 사유를 남기고 60초를 기다린 뒤에만 요청한다 -->
+<div class="sheet" id="sh-mode">
+  <div class="grip"></div>
+  <div class="sh-t" id="mode-head">Guard 모드 변경</div>
+  <p class="mode-copy" id="mode-copy"></p>
+  <div class="mode-reason" id="mode-reason-wrap">
+    <label class="mode-reason-label" for="mode-reason">왜 내리려 하나요</label>
+    <textarea class="mode-reason-input" id="mode-reason" rows="3" placeholder="지금 강도를 낮추려는 이유"></textarea>
+  </div>
+  <div class="mode-wait" id="mode-wait" style="display:none">
+    <strong class="mode-count" id="mode-count">60초</strong>
+    <span class="mode-wait-copy">마찰이 끝나면 변경 요청을 보냅니다.</span>
+  </div>
+  <p class="mode-error" id="mode-error" style="display:none"></p>
+  <p class="mode-context" id="mode-context" style="display:none"></p>
+  <div class="actrow mode-actions">
+    <button class="btn ghost mode-cancel" style="flex:1" id="mode-cancel">취소</button>
+    <button class="btn mode-confirm" style="flex:1.2" id="mode-confirm">60초 대기 시작</button>
+  </div>
 </div>
 
 <!-- Goals 항목 편집 — data 필드는 활성 스키마로 조립한다 -->

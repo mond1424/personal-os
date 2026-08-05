@@ -182,6 +182,7 @@ const S = {
   goalsSchema: null,
   education: [],
   educationSchema: null,
+  guardModes: null,
   pick: null,           // {mode:'defer'|'schedule', id, title, from?, origin}
   sheetTask: null,
   staleShown: false,
@@ -279,6 +280,7 @@ function syncOverlay() {
 function openSheet(id) { $("#" + id).classList.add("on"); syncOverlay(); }
 function closeSheet(id) { $("#" + id).classList.remove("on"); syncOverlay(); }   // 겹쳐 뜬 시트 하나만
 function closeAll() {
+  cancelModeChange(false);
   $$(".sheet").forEach((s) => s.classList.remove("on"));
   evxCtx = null; dfxCtx = null;   // 배경 탭으로 닫아도 진행 중인 입력은 버린다
   syncOverlay();
@@ -1468,17 +1470,190 @@ function renderGuardMemory(events) {
     </div>`).join("");
 }
 
+const MODE_WAIT_MS = 60_000;
+let modeCtx = null;
+let modeWaitTimer = null;
+let modeTickTimer = null;
+
+function modeUntilLabel(value) {
+  const raw = String(value ?? "");
+  // protecting.until은 서버가 이미 로컬 오프셋으로 정규화했다. 자리만 줄이고 다시 계산하지 않는다.
+  if (raw.length < 16 || raw[10] !== "T") return raw || "—";
+  const month = Number(raw.slice(5, 7));
+  const day = Number(raw.slice(8, 10));
+  return `${month}/${day} ${raw.slice(11, 16)}`;
+}
+
+function modeProtectionText(protecting) {
+  if (!protecting) return "";
+  return `“${protecting.title}” 보호 중 · ${modeUntilLabel(protecting.until)} 이후 해제`;
+}
+
+function renderGuardModes(data = S.guardModes) {
+  const box = $("#mode-list");
+  if (!box) return;
+  const modes = data?.modes || [];
+  const activeKey = data?.active?.key;
+  $("#mode-current").textContent = data?.active?.label || activeKey || "";
+  box.innerHTML = modes.map((mode) => {
+    const active = mode.key === activeKey;
+    return `<button class="mode-row${active ? " mode-active" : ""}" data-mode-key="${esc(mode.key)}">
+      <span class="mode-copy-block"><span class="mode-label">${esc(mode.label || mode.key)}</span>
+      <span class="mode-meta">최대 Level ${esc(mode.max_level)}</span></span>
+      ${active ? '<span class="mode-badge">사용 중</span>' : ""}</button>`;
+  }).join("");
+  box.querySelectorAll("[data-mode-key]").forEach((button) => {
+    button.onclick = () => chooseGuardMode(button.dataset.modeKey);
+  });
+  const protecting = $("#mode-protecting");
+  protecting.textContent = modeProtectionText(data?.protecting);
+  protecting.style.display = data?.protecting ? "" : "none";
+}
+
+async function refreshGuardModes() {
+  S.guardModes = await Api.guardModes();
+  renderGuardModes();
+  return S.guardModes;
+}
+
+function clearModeWait() {
+  clearTimeout(modeWaitTimer);
+  clearInterval(modeTickTimer);
+  modeWaitTimer = null;
+  modeTickTimer = null;
+}
+
+function cancelModeChange(close = true) {
+  clearModeWait();
+  modeCtx = null;
+  if (close && $("#sh-mode")) closeSheet("sh-mode");
+}
+
+function setModeError(message = "") {
+  const box = $("#mode-error");
+  box.textContent = message;
+  box.style.display = message ? "" : "none";
+}
+
+function showModeReason(ctx, error = "") {
+  modeCtx = ctx;
+  clearModeWait();
+  $("#mode-head").textContent = `${ctx.label}로 내리기`;
+  $("#mode-copy").textContent = "강도를 낮추는 이유를 남기고 60초를 기다립니다.";
+  $("#mode-reason-wrap").style.display = "";
+  $("#mode-reason").value = ctx.reason || "";
+  $("#mode-wait").style.display = "none";
+  $("#mode-context").style.display = "none";
+  setModeError(error);
+  $("#mode-confirm").style.display = "";
+  $("#mode-confirm").disabled = false;
+  $("#mode-confirm").textContent = "60초 대기 시작";
+  $("#mode-cancel").textContent = "취소";
+  openSheet("sh-mode");
+}
+
+function showModeProtected(protecting, serverMessage = "") {
+  clearModeWait();
+  modeCtx = null;
+  $("#mode-head").textContent = "지금은 모드를 내릴 수 없어요";
+  $("#mode-copy").textContent = "사용자가 정한 보호 구간이 끝난 뒤 다시 시도할 수 있어요.";
+  $("#mode-reason-wrap").style.display = "none";
+  $("#mode-wait").style.display = "none";
+  setModeError(serverMessage);
+  const context = $("#mode-context");
+  context.textContent = modeProtectionText(protecting);
+  context.style.display = protecting ? "" : "none";
+  $("#mode-confirm").style.display = "none";
+  $("#mode-cancel").textContent = "닫기";
+  openSheet("sh-mode");
+}
+
+async function submitModeChange(ctx) {
+  if (modeCtx !== ctx) return;
+  $("#mode-confirm").disabled = true;
+  $("#mode-count").textContent = "변경 중…";
+  try {
+    await Api.guardSetMode(ctx.key, ctx.reason);
+    cancelModeChange();
+    await refreshGuardModes();
+    toast(`${ctx.label} 모드로 바꿨어요`, "ok");
+  } catch (e) {
+    if (modeCtx !== ctx) return;
+    if (e.status === 409) {
+      let data = S.guardModes;
+      try { data = await refreshGuardModes(); } catch { /* 서버 오류 문구는 아래에 그대로 남긴다 */ }
+      showModeProtected(data?.protecting, e.message);
+      return;
+    }
+    showModeReason(ctx, e.message);
+  }
+}
+
+function beginModeWait() {
+  if (!modeCtx) return;
+  const reason = $("#mode-reason").value.trim();
+  if (!reason) {
+    setModeError("왜 내리는지 적어주세요");
+    $("#mode-reason").focus();
+    return;
+  }
+  const ctx = { ...modeCtx, reason };
+  modeCtx = ctx;
+  setModeError();
+  $("#mode-reason-wrap").style.display = "none";
+  $("#mode-wait").style.display = "";
+  $("#mode-confirm").disabled = true;
+  $("#mode-confirm").textContent = "기다리는 중";
+  const started = Date.now();
+  const paint = () => {
+    const left = Math.max(0, Math.ceil((MODE_WAIT_MS - (Date.now() - started)) / 1000));
+    $("#mode-count").textContent = `${left}초`;
+  };
+  paint();
+  modeTickTimer = setInterval(paint, 250);
+  // PUT은 반드시 이 완료 콜백 안에서만 보낸다. 타이머는 표시가 아니라 마찰 자체다.
+  modeWaitTimer = setTimeout(() => {
+    clearModeWait();
+    void submitModeChange(ctx);
+  }, MODE_WAIT_MS);
+}
+
+function chooseGuardMode(key) {
+  const target = S.guardModes?.modes?.find((mode) => mode.key === key);
+  if (!target || key === S.guardModes?.active?.key) return Promise.resolve();
+  // 방향 판정은 modes[].downgrade 그대로다. 파라미터를 프런트에서 다시 비교하지 않는다.
+  if (!target.downgrade) {
+    return run(async () => {
+      await Api.guardSetMode(key);
+      await refreshGuardModes();
+      toast(`${target.label || key} 모드로 바꿨어요`, "ok");
+    });
+  }
+  if (S.guardModes.protecting) {
+    showModeProtected(S.guardModes.protecting);
+    return Promise.resolve();
+  }
+  showModeReason({ key, label: target.label || key, reason: "" });
+  return Promise.resolve();
+}
+
+function bindModeSheet() {
+  $("#mode-cancel").onclick = () => cancelModeChange();
+  $("#mode-confirm").onclick = beginModeWait;
+}
+
 async function renderMe() {
   // Life Model 섹션은 덧붙은 화면이다 — 하나가 실패해도 Me 본문을 인질로 잡지 않는다.
   // lmSchema는 활성 행이 없으면 404를 던진다(lifemodel.ts). v2 전환·비활성화 중에
   // Promise.all이 그대로 거절되면 Me 탭이 통째로 안 그려진다.
-  const [me, hist, guard, goalsSchema, goals, educationSchema, education, periods] = await Promise.all([
-    Api.me(), Api.meHistory(), Api.guardEvents(),
+  const [me, hist, guard, guardModes, goalsSchema, goals, educationSchema, education, periods] = await Promise.all([
+    Api.me(), Api.meHistory(), Api.guardEvents(), Api.guardModes(),
     Api.lmSchema("goals").catch(() => null), Api.lmItems("goals").catch(() => []),
     Api.lmSchema("education").catch(() => null), Api.lmItems("education").catch(() => []),
     Api.periods().catch(() => S.periods),
   ]);
   S.me = me;
+  S.guardModes = guardModes;
   S.goalsSchema = goalsSchema;
   S.goals = goals;
   S.educationSchema = educationSchema;
@@ -1501,6 +1676,7 @@ async function renderMe() {
   $("#me-fields").innerHTML = h;
 
   renderMeHistory(hist);
+  renderGuardModes();
   renderGuardMemory(guard);
 
   renderGoals();
@@ -2588,6 +2764,7 @@ async function boot() {
   bindFieldsSheet();
   bindAiSheet();
   bindMeSheet();
+  bindModeSheet();
   bindGoalsSheet();
   bindEducationSheet();
   bindSettingSheet();
