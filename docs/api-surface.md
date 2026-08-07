@@ -171,8 +171,9 @@
   **길이 하한(20자)은 S3.2에서 폐기했다**(마찰이 아니라 강제로 읽혔다. §6.3은 "비용을 치르게 한다"이지 "분량을 채우게 한다"가 아니다)
 - `setOutcome(env, t, id, outcome)` → 사후 확정 한 번만(409). **Guard가 판단하지 않는다**(§6.5)
 - `pendingOutcome(env)` → outcome 미확정 목록(Today 확정 카드용)
-- `modes(env)` / `setMode(env, t, key, reason?)` → 파라미터 프로파일(ADR-019). active는 부분 유니크 인덱스라 **해제 → 설정 batch**
-  - `modes(env)`는 **판정을 응답에 싣는다**(T-19 — 화면이 PUT *전에* 알아야 대기를 걸지 말지 정한다):
+- `modes(env, t)` / `setMode(env, t, key, reason?)` → 파라미터 프로파일(ADR-019). active는 부분 유니크 인덱스라 **해제 → 설정 batch**
+  - **`t`는 라우트가 넘긴다**(T-23) — 서비스가 `loadTime`을 다시 부르면 05:00 경계에서 미들웨어와 갈라진다
+  - `modes(env, t)`는 **판정을 응답에 싣는다**(T-19 — 화면이 PUT *전에* 알아야 대기를 걸지 말지 정한다):
     `modes[].downgrade`(활성 모드 기준 `isDowngrade`) · `protecting`(보호 중이면 `{title, start, until}`, 아니면 `null`).
     `start`=`protect_from`(진입) · `until`=`start`(차단 종료). 둘 다 `normalizeIso`로 **로컬 표기**(`5687455`)
   - **파생을 저장하지 않는다**(원칙 4) — `guard_modes`에 컬럼이 늘지 않았고 전부 조회 시 계산이다.
@@ -198,8 +199,10 @@
 - 소비처는 지금 `guard.verifyLevel4` 하나. §6.3 관리인 chat(Phase 4)까지 **범용 확장을 미리 하지 않는다**
 
 ### scheduled.ts — Cron
-- `autoClose(env)` → `{closed, orphaned, as_of}` · 열린 과거 마감 + 고아 예정일 처리
-- `scheduled(event, env)` → void · Cron 엔트리(autoClose 호출)
+- `autoClose(env, t)` → `{closed, orphaned, guard_ignored, as_of}` · 열린 과거 마감 + 고아 예정일 처리 + `finalizeIgnored`
+  - **`t`를 받는다**(T-23). `t.now`가 `daily`·`summaries.mech`에 **저장**되므로 경계에서 갈라지면
+    마감 기록이 잘못된 날에 남고 트리거가 그것을 동결한다. `/api/admin/auto-close`는 미들웨어의 `t`를 넘긴다
+- `scheduled(event, env)` → void · Cron 엔트리. **cron에는 요청이 없으므로 여기가 `loadTime`의 경계다**
 
 ---
 
@@ -240,6 +243,8 @@
 
 ## 부록. lib/ (유틸)
 
-- **`lib/time.ts`** — `loadTime(env)` → `TimeCtx` · `attributionDate` · `attributionOfIso` · `isoNow` · `addDays` · `diffDays` · `mondayOf` · `isDate`. 귀속일(경계 05:00)·주(월요일)의 단일 구현.
+- **`lib/time.ts`** — `loadTime(env)` → `TimeCtx` · `attributionDate` · `attributionOfIso` · `isoNow` · `normalizeIso` · `addDays` · `diffDays` · `mondayOf` · `isDate`. 귀속일(경계 05:00)·주(월요일)의 단일 구현.
+  - **`loadTime`을 부르는 곳은 진입 계층 둘뿐이다**(T-23): `index.ts`의 `/api/*` 미들웨어와 `scheduled()`.
+    서비스는 `t`를 **인자로 받는다** — smoke `[11]`이 그 0건을 양성 대조와 함께 지킨다
 - **`lib/id.ts`** — `nextId(env, table, compact)` → `'YYYYMMDD-NNN'`. 테이블 화이트리스트.
 - **`lib/ai.ts`** — `PROVIDERS` · `aiConfig(env)` · `callModel(env, call)`(=`callClaude`) · `testConnection(env, which)` · `splitModel` · `parseModelJson`. 제공자별 요청 형식 흡수.
