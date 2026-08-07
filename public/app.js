@@ -1050,7 +1050,6 @@ async function renderCalendar(rotateDir = 0) {
     const target = months[targetIndex];
     pane.dataset.ym = calendarMonthKey(target);
     pane.innerHTML = paneBody(target, grids[targetIndex]);
-    [...track.children].forEach((p, i) => p.classList.toggle("cur", i === CAL_CENTER));
   } else if (!panesAlreadyCurrent) {
     track.innerHTML = months.map((o, k) =>
       `<div class="calpane${k === CAL_CENTER ? " cur" : ""}" data-ym="${calendarMonthKey(o)}">` +
@@ -1600,7 +1599,7 @@ function renderGuardMemory(events) {
       `${guardReactionLabel({ reaction: reaction || null })} ${count}`).join(" · ");
     return `<section class="gday-section" data-gday-date="${esc(onDate)}"${index >= 7 ? " hidden" : ""}>
       <button type="button" class="gday-summary" aria-expanded="false">
-        <span class="gday-date">${esc(md(onDate))}</span>
+        <span class="gday-date">${esc(dlabel(onDate))}</span>
         <span class="gday-stats">개입 ${rows.length} · ${esc(reactionText)}</span>
       </button>
       <div class="gday-events" hidden>${rows.map(guardMemoryRow).join("")}</div>
@@ -2586,6 +2585,14 @@ let dragBlockUntil = 0;
  * 놓을 때 방향을 판정해 opt.commit(dir)에 넘긴다. */
 // ms — 속도를 믿기 시작하는 최소 간격 · 측정 창 · 멈춘 뒤 놓으면 속도는 0
 const VEL_MIN_DT = 16, VEL_WIN = 90, VEL_STALE = 130;
+const SWIPE_EDGE_RATIO = 0.1;
+
+function isSwipeEdge(e, host) {
+  const width = host.clientWidth || 380;
+  const left = host.getBoundingClientRect().left;
+  const x = e.clientX - left;
+  return x <= width * SWIPE_EDGE_RATIO || x >= width * (1 - SWIPE_EDGE_RATIO);
+}
 
 function bindCarousel(host, opt) {
   let x0 = 0, y0 = 0, axis = "", tracking = false;
@@ -2636,10 +2643,15 @@ function bindSwipe() {
   const scr = $(".screens");
   const track = () => $("#tab-track");
   const idx = () => Math.max(0, TAB_ORDER.indexOf($("#phone").dataset.tab));
-  const noSwipe = (el) => !!(el.closest && el.closest("#cal-rows, .bchart, .wsegs, .seg, .seg-mini, .likert, .dcol, .sheet, .board, .modal, .tut, input, textarea"));
+  const noSwipe = (e) => {
+    const el = e.target;
+    if (!el.closest) return false;
+    if (el.closest(".bchart, .wsegs, .seg, .seg-mini, .likert, .dcol, .sheet, .board, .modal, .tut, input, textarea")) return true;
+    return !!el.closest("#cal-rows") && !isSwipeEdge(e, scr);
+  };
 
   bindCarousel(scr, {
-    blocked: (e) => noSwipe(e.target) || !!S.pick,
+    blocked: (e) => noSwipe(e) || !!S.pick,
     drag: (dx) => {
       const i = idx(), w = scr.clientWidth || 380;
       // 양 끝에서는 저항 — 더 갈 데가 없다는 걸 손으로 알려 준다
@@ -2684,8 +2696,9 @@ function calGo(dir) {
 
 function bindCalendarDrag() {
   const host = $("#cal-rows");
+  const scr = $(".screens");
   bindCarousel(host, {
-    blocked: () => !!S.pick || calBusy,   // 날짜 선택 중엔 탭만 받는다
+    blocked: (e) => !!S.pick || calBusy || isSwipeEdge(e, scr),   // 가장자리는 바깥 탭 캐러셀이 받는다
     drag: (dx) => trackDrag($("#cal-track"), CAL_CENTER, dx, CAL_GAP, CAL_TRACK_STEP),
     commit: (dir) => calGo(dir),
   });
