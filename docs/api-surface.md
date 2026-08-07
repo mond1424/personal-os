@@ -171,6 +171,10 @@
   **길이 하한(20자)은 S3.2에서 폐기했다**(마찰이 아니라 강제로 읽혔다. §6.3은 "비용을 치르게 한다"이지 "분량을 채우게 한다"가 아니다)
 - `setOutcome(env, t, id, outcome)` → 사후 확정 한 번만(409). **Guard가 판단하지 않는다**(§6.5)
 - `pendingOutcome(env)` → outcome 미확정 목록(Today 확정 카드용)
+- `finalizeIgnored(env, t)` → `{ignored, cutoff}` · **루프의 닫는 쪽**(ADR-025). 반응 없이 `GRACE_H`(36시간)를
+  넘긴 발동을 `ignored`로 확정한다. 유예가 긴 이유는 오프라인 큐다 — 기기가 발동과 반응을 **함께** 나중에
+  올리므로(ADR-023) 서버가 먼저 박으면 트리거가 진짜 반응을 막고 소급 복구가 안 된다.
+  `autoClose`가 부르고, 거기서 던지면 자동 마감이 통째로 멈추므로 `.catch`로 격리돼 있다
 - `modes(env, t)` / `setMode(env, t, key, reason?)` → 파라미터 프로파일(ADR-019). active는 부분 유니크 인덱스라 **해제 → 설정 batch**
   - **`t`는 라우트가 넘긴다**(T-23) — 서비스가 `loadTime`을 다시 부르면 05:00 경계에서 미들웨어와 갈라진다
   - `modes(env, t)`는 **판정을 응답에 싣는다**(T-19 — 화면이 PUT *전에* 알아야 대기를 걸지 말지 정한다):
@@ -243,7 +247,8 @@
 
 ## 부록. lib/ (유틸)
 
-- **`lib/time.ts`** — `loadTime(env)` → `TimeCtx` · `attributionDate` · `attributionOfIso` · `isoNow` · `normalizeIso` · `addDays` · `diffDays` · `mondayOf` · `isDate`. 귀속일(경계 05:00)·주(월요일)의 단일 구현.
+- **`lib/time.ts`** — `loadTime(env, utcMs?)` → `TimeCtx` · `attributionDate` · `attributionOfIso` · `isoNow` · `normalizeIso` · `addDays` · `diffDays` · `mondayOf` · `isDate`. 귀속일(경계 05:00)·주(월요일)의 단일 구현.
+  (`utcMs`는 기본값 `Date.now()`인 검사용 이음매다 — 순수 함수 검사가 시각을 고정한다)
   - **`loadTime`을 부르는 곳은 진입 계층 둘뿐이다**(T-23): `index.ts`의 `/api/*` 미들웨어와 `scheduled()`.
     서비스는 `t`를 **인자로 받는다** — smoke `[11]`이 그 0건을 양성 대조와 함께 지킨다
 - **`lib/id.ts`** — `nextId(env, table, compact)` → `'YYYYMMDD-NNN'`. 테이블 화이트리스트.
