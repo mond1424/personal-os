@@ -4,11 +4,12 @@ import * as db from "./db";
 import { closeDay } from "./services/daily";
 import { finalizeIgnored } from "./services/guard";
 import { loadTime } from "./lib/time";
-import type { Env } from "./types";
+import type { Env, TimeCtx } from "./types";
 
-export async function autoClose(env: Env) {
-  const t = await loadTime(env);
-
+// 시간 맥락은 **받는다.** 부르는 자리는 진입 계층 둘뿐이다 —
+// HTTP는 `index.ts`의 미들웨어, cron은 아래 `scheduled`. `/api/admin/auto-close`로
+// 들어오면 미들웨어가 만든 것을 그대로 쓴다(요청당 한 번 — `TimeCtx` 주석 1.2).
+export async function autoClose(env: Env, t: TimeCtx) {
   // H-1) 열린 채 남은 지난 날 → auto 마감 (기록 → 물화 → close 순서는 closeDay가 보장)
   const open = await db.openDatesBefore(env, t.d);
   for (const { date } of open.results) {
@@ -43,5 +44,5 @@ export async function autoClose(env: Env) {
 }
 
 export async function scheduled(_event: ScheduledController, env: Env): Promise<void> {
-  await autoClose(env);
+  await autoClose(env, await loadTime(env));   // cron에는 요청이 없다 — 여기가 그 경계다
 }

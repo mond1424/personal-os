@@ -3,12 +3,13 @@
  * 시나리오는 목업의 플로우: 생성 → 기록 → 미루기 → 마감 → memo →
  * 재배정 → 자동 마감(Cron 경로) → 대기 연장.
  */
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import worker from "../src/index";
 import * as db from "../src/db";
 import { autoClose } from "../src/scheduled";
+import * as guard from "../src/services/guard";
 import { attributionDate, isoNow, addDays, mondayOf, diffDays, loadTime } from "../src/lib/time";
 import { buildCoreContext } from "../src/lib/context";
 import type { Env } from "../src/types";
@@ -573,6 +574,17 @@ ok("모드 판정 응답 — 사람용 시각만 로컬 오프셋 · schedule UT
   nowPlan?.protect_from.endsWith("Z") && nowPlan?.start.endsWith("Z") &&
     protectedVerdict?.start.endsWith("+09:00") && protectedVerdict?.until.endsWith("+09:00"),
   JSON.stringify({ schedule: nowPlan, protecting: protectedVerdict }));
+// ★ T-23 — 판정의 근거는 **라우트가 넘긴 `t`**여야 한다. 서비스가 자기 시계를 다시 읽으면
+//   05:00 경계를 넘는 순간 미들웨어와 귀속일이 갈라지는데 **응답 모양은 똑같다** — 위 검사들은
+//   전부 그대로 초록이다. 그래서 t를 갈아 끼워 판정이 따라 움직이는지 본다:
+//   일정 시각 1분 뒤를 가리키는 t면 보호 구간 밖이므로 protecting은 null이어야 한다.
+//   서비스가 loadTime을 다시 부르면 주입한 t를 무시하고 '보호 중'을 그대로 돌려준다 → 빨간불.
+const tAfterStart = { ...t0, now: isoNow(Date.parse(nowPlan.start) + 60_000, t0.offsetMin) };
+const injected = await guard.modes(env, tAfterStart);
+const passedThrough = await guard.modes(env, t0);
+ok("모드 판정 — 넘겨받은 t를 따른다 (서비스가 시계를 다시 읽지 않는다)",
+  injected.protecting === null && passedThrough.protecting?.title === "지금 보호 중인 시험",
+  JSON.stringify({ t_주입: tAfterStart.now, 주입: injected.protecting, 실시각: passedThrough.protecting }));
 // 4번 — **상향은 보호 구간 중에도 자유롭다**(부수 규칙 1). 사유도 대기도 없다.
 ok("보호 구간 중 상향은 사유 없이 200 (secretary → coach)",
   (await api("PUT", "/api/guard/modes/active", { key: "coach" })).status === 200);
@@ -908,6 +920,40 @@ const authed = async (h: Record<string, string>) =>
   (await worker.fetch(new Request("http://local/api/health", { headers: h }), envAuth, {} as ExecutionContext)).status;
 ok("토큰 없이 401", (await authed({})) === 401);
 ok("Bearer로 200", (await authed({ Authorization: "Bearer secret" })) === 200);
+
+// ── 11. 시간 맥락은 요청당 한 번 (T-23) ──────────────────────
+// 응답으로는 확인되지 않는 종류다 — 서비스가 `loadTime`을 다시 부르든 라우트가 `t`를 넘기든
+// **응답은 글자 하나까지 같다.** 갈라지는 것은 05:00 경계를 넘는 그 창뿐이고, 그때조차
+// 아무 오류도 나지 않는다(T-07의 UTC 귀속일이 그랬다). 그래서 **부르는 자리를 직접 센다.**
+console.log("\n[11] 시간 맥락 — loadTime을 부르는 자리");
+
+const srcDir = join(here, "../src");
+const srcFiles = (readdirSync(srcDir, { recursive: true, encoding: "utf8" }) as string[])
+  .filter((f) => f.endsWith(".ts")).map((f) => f.replaceAll("\\", "/"));
+// 언급이 아니라 **호출**을 센다: 선언(`function loadTime(`)과 주석 줄을 뺀 나머지.
+// 판정은 **줄 단위**다 — 파일 전체에서 `/* … */`를 걷어내려 했더니 `app.use("/api/*")`의
+// `/*`가 열려 `\s*/`(정규식 리터럴)까지 18줄을 먹고 index.ts의 진짜 호출을 지웠다.
+// 아래 양성 대조가 그걸 잡았다. 줄을 넘지 않으면 그 사고가 안 난다.
+const loadTimeCalls = (rel: string) =>
+  readFileSync(join(srcDir, rel), "utf8").split("\n").filter((line) => {
+    const m = /(?<!function\s)\bloadTime\s*\(/.exec(line);
+    if (!m) return false;
+    const head = line.slice(0, m.index).trimStart();          // 호출 앞자리
+    return !head.startsWith("*") && !head.startsWith("/*") && !head.includes("//");
+  }).length;
+const callSites = srcFiles.map((f) => [f, loadTimeCalls(f)] as const).filter(([, n]) => n > 0);
+
+ok("서비스 계층에 loadTime 호출이 0이다 (T-23 검사 2)",
+  callSites.every(([f]) => !f.startsWith("services/")), JSON.stringify(callSites));
+// ↑ 하나만으로는 정규식이 죽어도 초록이다. 진입 계층 둘을 **양성 대조**로 함께 못 박는다 —
+//   이 줄이 초록이어야 위의 0이 '못 찾았다'가 아니라 '없다'는 뜻이 된다.
+//   lib/·db/로 옮겨 부르는 우회도 여기서 걸린다: 자리는 둘이고 각각 한 번이다.
+ok("부르는 자리는 진입 계층 둘뿐 — index.ts 미들웨어 1 · scheduled.ts cron 1",
+  callSites.length === 2 && loadTimeCalls("index.ts") === 1 && loadTimeCalls("scheduled.ts") === 1,
+  JSON.stringify(callSites));
+ok("훑은 범위가 src 전체다 (파일 수 · 서비스 포함)",
+  srcFiles.length >= 15 && srcFiles.some((f) => f.startsWith("services/")) && srcFiles.includes("lib/time.ts"),
+  `${srcFiles.length}개 — ${srcFiles.join(" ")}`);
 
 // ── 결과 ─────────────────────────────────────────────────────
 console.log(`\n${"=".repeat(46)}\n통과 ${passN} · 실패 ${fails.length}`);

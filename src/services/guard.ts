@@ -10,7 +10,7 @@ import * as db from "../db";
 import { aiConfig, callModel, parseModelJson, splitModel } from "../lib/ai";
 import { buildCoreContext } from "../lib/context";
 import { nextId } from "../lib/id";
-import { attributionOfIso, isoNow, loadTime, normalizeIso } from "../lib/time";
+import { attributionOfIso, isoNow, normalizeIso } from "../lib/time";
 import { ApiError, type Env, type TimeCtx } from "../types";
 
 /** 설정 기본값 — event별 값이 없을 때. 초기값의 정확도보다 조정 가능한 구조가 중요하다. */
@@ -31,10 +31,10 @@ const REACTIONS = ["accepted", "override", "ignored"];
 export const events = async (env: Env, limit = 100) =>
   (await db.guardEventsList(env, limit)).results;
 
-export async function modes(env: Env) {
+/** 시간 맥락은 **받는다** — 요청당 한 번이고 그 자리는 미들웨어다(`TimeCtx` 주석 1.2). */
+export async function modes(env: Env, t: TimeCtx) {
   const rows = (await db.guardModes(env)).results;
   const active = rows.find((m) => m.active === 1) ?? null;
-  const t = await loadTime(env);
   const protecting = await protectingNow(env, t);
 
   return {

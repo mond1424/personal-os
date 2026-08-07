@@ -270,7 +270,7 @@ app.post("/api/guard/events/:id/outcome", async (c) => {
 app.get("/api/guard/pending-outcome", async (c) => c.json(await guard.pendingOutcome(c.env)));
 
 // 모드 — 규칙이 아니라 파라미터 프로파일 (ADR-019)
-app.get("/api/guard/modes", async (c) => c.json(await guard.modes(c.env)));
+app.get("/api/guard/modes", async (c) => c.json(await guard.modes(c.env, c.get("t"))));
 /** 하향에는 사유가 필요하다 — 보호 구간 중이면 사유가 있어도 409 (ADR-019 부수 규칙 1·2 · ADR-027). */
 app.put("/api/guard/modes/active", async (c) => {
   const b = await body<{ key: string; reason?: string }>(c);
@@ -287,6 +287,6 @@ app.delete("/api/guard/watch-apps/:source/:identifier", async (c) =>
 
 // ── 운영 ────────────────────────────────────────────────────
 app.get("/api/health", (c) => c.json({ ok: true, date: c.get("t").d, now: c.get("t").now }));
-app.post("/api/admin/auto-close", async (c) => c.json(await autoClose(c.env))); // Cron 수동 트리거(개발용)
+app.post("/api/admin/auto-close", async (c) => c.json(await autoClose(c.env, c.get("t")))); // Cron 수동 트리거(개발용)
 
 export default { fetch: app.fetch, scheduled };
