@@ -1051,8 +1051,13 @@ const oldVerifyBlock =
 ok("옛 문구는 잡는다 (양성 대조 · 스캐너가 살아 있다)",
   verifySystemOf(oldVerifyBlock).includes("차단"), verifySystemOf(oldVerifyBlock));
 
-ok("VERIFY_SYSTEM에 '차단'이 없다 — 없는 강제력을 말하지 않는다 (T-28 검사 1)",
+ok("VERIFY_SYSTEM에 '차단'이 없다 — 막지 않으므로 그렇게 쓰지 않는다 (T-28 검사 1)",
   !vs.includes("차단"), vs);
+
+// T-29 — 이제 강제력이 **있다.** 거짓을 지운 자리에 사실을 적었다.
+// 빈칸으로 두면 모델이 대가를 0으로 놓고 판정한다 — 그것도 §6.5의 전례를 비뚤게 한다.
+ok("VERIFY_SYSTEM이 실제 대가를 말한다 — 180초 대기 · 30분간 오늘 날짜 안 붙음 (T-29)",
+  vs.includes("180초") && vs.includes("30분") && vs.includes("오늘 날짜가 붙지 않는다"), vs);
 
 // ── 결과 ─────────────────────────────────────────────────────
 console.log(`\n${"=".repeat(46)}\n통과 ${passN} · 실패 ${fails.length}`);

@@ -187,6 +187,7 @@ const S = {
   pick: null,           // {mode:'defer'|'schedule', id, title, from?, origin}
   sheetTask: null,
   staleShown: false,
+  level4: false,        // 피커 **안내**용 (ADR-035) — 판정은 붙는 자리가 다시 묻는다
 };
 const periodInfo = (id) => S.periods.find((p) => p.id === id) || null;
 const feelingsFields = () => {
@@ -211,6 +212,36 @@ function toast(msg, kind = "info") {
   toastTimer = setTimeout(() => (el.style.display = "none"), kind === "err" ? 4200 : 3000);
 }
 const run = (fn) => Promise.resolve().then(fn).catch((e) => toast(e.message, "err"));
+
+/* ── Level 4 게이트 (ADR-035) ──────────────────────────────
+ *
+ * Level 4 구간에는 **오늘 날짜가 붙지 않는다.** 막는 것이 아니다 — 적는 것도,
+ * 대기에 담는 것도, 내일 이후 아무 날짜나 고르는 것도 전부 그대로다.
+ * 바뀌는 것은 **그것이 어느 날에 놓이는가** 하나다.
+ *
+ * **판정은 기기가 한다**(ADR-035 ②). 여기서 창 길이를 다시 계산하지 않는다 —
+ * 30분이 두 곳에 생기면 그 둘은 갈라진다. 받은 불리언을 그대로 쓴다.
+ *
+ * **모르면 걸지 않는다.** 플러그인이 없으면(브라우저 PWA · 구버전 APK) false다.
+ * ADR-024의 fail-closed와 방향이 같다 — **모르면 덜 개입한다.**
+ * 발동하지도 않은 기기에서 날짜가 튀면 그것이 §6.3의 도구 이탈이다.
+ */
+async function askLevel4() {
+  const G = globalThis.Capacitor?.Plugins?.Guard;
+  if (!G?.level4State) return false;
+  try {
+    const r = await G.level4State();
+    return !!r?.level4;
+  } catch {
+    return false;   // 물어보다 실패한 것도 '모른다'다
+  }
+}
+
+/** 옮겨졌으면 말한다 — 이유 없이 날짜가 바뀌면 고장으로 읽힌다(ADR-035 ⑤).
+ *  **남은 시간을 시각으로 보여주지 않는다**: 카운트다운은 기다리라는 초대이고,
+ *  발동이 이어지면 창이 갱신되므로 그 시각은 애초에 약속이 아니다. */
+const LEVEL4_MOVED = (date) => `Guard 개입 중이라 ${md(date)}로 넣었어요`;
+const LEVEL4_BLOCKED = "Guard 개입 중이에요 — 내일 이후로 골라주세요";
 
 /* 확인 모달 — 되돌릴 수 없는 동작 앞에 한 번 물어본다 */
 function confirmAsk(title, text, okLabel = "확인", altLabel = null) {
@@ -625,10 +656,14 @@ function addTaskOn(k) {
   const v = $("#day-add").value.trim();
   if (!v) return;
   run(async () => {
-    await Api.createTask({ title: v, date: k });
-    toast(`${md(k)}에 추가했어요`);
+    // 여기는 날짜가 **생성과 함께** 붙는 자리라 되돌릴 것이 없다 — 내일로 돌린다.
+    // 오늘이 아니면 묻지 않는다: 앞날에 넣는 것은 Level 4와 무관하다.
+    const moved = k === S.today.date && await askLevel4();
+    const date = moved ? addDaysStr(k, 1) : k;
+    await Api.createTask({ title: v, date });
+    toast(moved ? LEVEL4_MOVED(date) : `${md(date)}에 추가했어요`);
     await Promise.all([refreshToday(), renderCalendar()]);
-    openDay(k);
+    openDay(date);
   });
 }
 
@@ -867,9 +902,17 @@ function bindDeferSheet() {
     const c = dfxCtx;
     if (!c) return;
     const reason = $("#dfx-reason").value;
-    closeSheet("sh-defer");
-    dfxCtx = null;
     run(async () => {
+      // **여기가 붙는 자리다.** `assignDate`의 defer 분기는 이 시트를 열 뿐이고,
+      // 시트가 떠 있는 동안 구간이 시작될 수 있다 — 그래서 확인 버튼에서 묻는다.
+      // 시트를 먼저 닫지 않는다: 막혔을 때 닫아 버리면 사유를 다시 쓰게 된다.
+      if (c.to === S.today.date && await askLevel4()) {
+        S.level4 = true;
+        applyPickDim();
+        return toast(LEVEL4_BLOCKED, "warn");
+      }
+      closeSheet("sh-defer");
+      dfxCtx = null;
       await Api.defer(c.id, c.from, c.to, reason);
       invalidateCalendarCache();
       exitPick();
@@ -1099,11 +1142,15 @@ async function renderDiaryList() {
  * 신규 일정(대기 확정·빠른 추가)은 상한 없이 앞날 아무 날짜나 고를 수 있다. */
 function pickMinMax() {
   const D = S.today.date;
+  // Level 4 구간에는 오늘이 하한에서 빠진다 → `pickable`·`applyPickDim`이 따라와
+  // 오늘 칸이 흐려지고 눌리지 않는다. **이건 안내다** — 판정은 붙는 자리 셋이 다시 묻는다.
+  // 동기 함수라 여기서 플러그인을 부를 수 없어 `S.level4`(startPick이 담는다)를 읽는다.
+  const floor = S.level4 ? addDaysStr(D, 1) : D;
   if (S.pick.mode === "defer") {
     const min = S.pick.from >= D ? addDaysStr(D, 1) : D;
-    return { min, max: addDaysStr(D, 14) };
+    return { min: min > floor ? min : floor, max: addDaysStr(D, 14) };
   }
-  return { min: D, max: null };
+  return { min: floor, max: null };
 }
 const pickable = (k) => {
   const { min, max } = pickMinMax();
@@ -1112,6 +1159,14 @@ const pickable = (k) => {
 
 function startPick(p) {
   S.pick = { ...p, origin: $("#phone").dataset.tab };
+  // 관대한 값으로 먼저 그리고, 답이 오면 좁힌다 — **안내가 관대하고 판정이 엄하다.**
+  // 반대로 만들면(안내가 엄하고 판정이 관대) 조용히 새는 구멍이 된다.
+  S.level4 = false;
+  askLevel4().then((on) => {
+    if (!S.pick || !on) return;
+    S.level4 = true;
+    applyPickDim();
+  });
   closeAll();
   switchTab("cal");
   $$("[data-cv]").forEach((b) => b.classList.toggle("on", b.dataset.cv === "grid"));
@@ -1140,6 +1195,14 @@ function assignDate(k) {
   const p = S.pick;
   if (p.mode !== "defer") {
     return run(async () => {
+      // 사용자가 고른 날이므로 말없이 옮기지 않는다 — 오늘이면 안 붙이고 다시 고르게 한다.
+      // 03:29에 열고 03:31에 격상되면 dim이 낡는다. 그 경우가 여기로 들어오고,
+      // **안내를 그 자리에서 좁힌다** — 다음 탭부터는 오늘 칸이 흐려져 있다.
+      if (k === S.today.date && await askLevel4()) {
+        S.level4 = true;
+        applyPickDim();
+        return toast(LEVEL4_BLOCKED, "warn");
+      }
       await Api.schedule(p.id, k);
       exitPick();
       await Promise.all([refreshToday(), renderCalendar()]);

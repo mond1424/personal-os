@@ -1234,6 +1234,130 @@ ok("AI 연결 — 제공자 3곳 목록", $("#conn-list").querySelectorAll(".con
 ok("연결 테스트 버튼", !!$("#conn-test"));
 ok("키 입력칸 자동완성 차단", $("#conn-key").getAttribute("autocomplete") === "new-password");
 w.closeAll();
+/* ── Level 4 게이트 — 오늘이 아니라 내일로 (T-29 · ADR-035) ────
+ *
+ * 붙는 자리 셋에 각각 걸리는지, 그리고 **막지는 않는지**를 함께 본다.
+ * "Level 4면 안 붙는다"만 검사하면 **게이트가 항상 켜져 있어도 초록**이다 —
+ * 그래서 자리마다 켠 쪽·끈 쪽을 둘 다 보고, 대기가 그대로인 것도 센다(§5).
+ *
+ * 플러그인 유무를 **둘 다** 만든다. 지금 폰에는 T-28 APK가 아직 없고,
+ * 그 상태가 곧 fail-open이라 가짜 상황이 아니라 **현재 상태**다. */
+console.log("\n[Level 4 게이트 — 오늘이 아니라 내일로]");
+
+// 기기가 판정하고 웹은 그 불리언을 그대로 쓴다(ADR-035 ②) — 스텁도 그 계약대로만 답한다.
+const guardStub = (level4) => {
+  w.Capacitor = { Plugins: { Guard: {
+    level4State: async () => ({ level4, until: level4 ? 9e12 : undefined }),
+    startService: async () => {}, configure: async () => {}, sync: async () => ({ ok: true }),
+  } } };
+};
+const noGuardPlugin = () => { delete w.Capacitor; };
+
+const L4D = ev("S.today.date");
+const L4N = ev("addDaysStr(S.today.date, 1)");
+const tasksOn = async (k) => (await ev(`Api.day("${k}")`)).tasks.map((t) => t.title);
+
+// 게이트가 지는 계약은 **"어느 날짜로 붙였나 · 붙이긴 했나"** 하나다. 그래서 그 자리를 직접 본다 —
+// 목록으로 확인하면 분류·갱신 타이밍이 섞여 무엇이 빨간불인지 흐려진다.
+// `createTask`·`schedule`은 **그대로 통과시켜** 서버까지 실제로 간다.
+// `defer`만 기록에서 끊는다: 오늘로 당기려면 **지난 날 entry**가 있어야 하는데
+// 과거 날짜 task는 서버가 만들지 못하게 한다(400). 실제 defer 왕복은 위 [할 일 시트]가 이미 태운다.
+ev(`window.__l4 = [];
+    (() => {
+      const c = Api.createTask, s = Api.schedule, d = Api.defer;
+      Api.createTask = (b) => { window.__l4.push(["create", b.date ?? null]); return c(b); };
+      Api.schedule   = (id, k) => { window.__l4.push(["schedule", k]); return s(id, k); };
+      Api.defer      = (id, f, t) => { window.__l4.push(["defer", t]); return Promise.resolve({}); };
+    })();`);
+const l4calls = () => ev("JSON.stringify(window.__l4)");
+const l4reset = () => ev("window.__l4 = []");
+
+const addOnToday = async (title) => {
+  await w.openDay(L4D);
+  await sleep(900);                       // 팝업 재렌더가 끝난 뒤에 값을 넣는다 —
+  $("#day-add").value = title;            // 먼저 넣으면 다시 그려지면서 지워진다
+  w.addTaskOn(L4D);
+  await sleep(1200);
+};
+
+// ① addTaskOn — 날짜가 **생성과 함께** 붙는 자리라 되돌릴 것이 없다 → 내일로 돌린다.
+guardStub(true);
+l4reset();
+await addOnToday("L4 켠 채 오늘에 추가");
+ok("Level 4 — 오늘 칸에 넣어도 내일 날짜로 생성된다 (addTaskOn)",
+  l4calls() === JSON.stringify([["create", L4N]]), l4calls());
+ok("실제로 내일에 붙어 있다 (서버까지 확인)",
+  (await tasksOn(L4N)).includes("L4 켠 채 오늘에 추가")
+    && !(await tasksOn(L4D)).includes("L4 켠 채 오늘에 추가"),
+  `내일=${JSON.stringify(await tasksOn(L4N))}`);
+ok("옮겼으면 이유를 말한다 (ADR-035 ⑤ · 남은 시각은 안 보여준다)",
+  txt("#toast").includes("Guard") && !/\d+:\d\d/.test(txt("#toast")), txt("#toast"));
+
+// ★ 짝 — 끈 쪽. 이게 없으면 게이트가 **항상 켜져 있어도** 위 줄이 초록이다.
+guardStub(false);
+l4reset();
+await addOnToday("L4 끈 채 오늘에 추가");
+ok("Level 4가 아니면 오늘 날짜 그대로 생성된다 (addTaskOn 짝)",
+  l4calls() === JSON.stringify([["create", L4D]]), l4calls());
+
+// ② assignDate 비-defer — 사용자가 고른 날이므로 말없이 옮기지 않는다. 안 붙이고 다시 고르게 한다.
+const l4Wait = (await ev(`Api.createTask({title:"L4 대기에서 확정"})`)).id;
+guardStub(true);
+ev(`startPick({mode:"schedule", id:"${l4Wait}", title:"L4 대기에서 확정"})`);
+await sleep(900);
+ok("Level 4 — 피커에서 오늘 칸이 흐려진다 (안내)", dim(L4D) === true, String(dim(L4D)));
+ok("Level 4 — 내일은 그대로 고를 수 있다 (막지 않는다)", dim(L4N) === false, String(dim(L4N)));
+l4reset();
+w.assignDate(L4D); await sleep(900);
+ok("Level 4 — 오늘로는 확정하지 않는다 (assignDate)",
+  l4calls() === "[]" && txt("#toast").includes("Guard"), `${l4calls()} / ${txt("#toast")}`);
+guardStub(false);
+ev(`startPick({mode:"schedule", id:"${l4Wait}", title:"L4 대기에서 확정"})`);
+await sleep(900);
+l4reset();
+w.assignDate(L4D); await sleep(900);
+ok("Level 4가 아니면 오늘로 확정된다 (assignDate 짝)",
+  l4calls() === JSON.stringify([["schedule", L4D]])
+    && (await tasksOn(L4D)).includes("L4 대기에서 확정"), l4calls());
+
+// ③ dfx-ok — **붙는 자리는 확인 버튼이다.** `assignDate`의 defer 분기는 시트를 **열 뿐**이고,
+//    시트가 떠 있는 동안 구간이 시작될 수 있다. 그래서 게이트가 여기 걸렸는지 본다.
+guardStub(true);
+ev(`openDeferSheet({id:"${l4Wait}", title:"L4 미루기", from:"${ev('addDaysStr(S.today.date,-2)')}", to:"${L4D}", frozen:false})`);
+await sleep(400);
+l4reset();
+$("#dfx-ok").dispatchEvent(new w.Event("click"));
+await sleep(900);
+ok("Level 4 — 미루기도 오늘로는 안 붙는다 (dfx-ok)",
+  l4calls() === "[]" && txt("#toast").includes("Guard"), `${l4calls()} / ${txt("#toast")}`);
+ok("막힌 미루기는 시트가 남는다 — 사유를 다시 쓰게 하지 않는다",
+  $("#sh-defer").classList.contains("on"));
+guardStub(false);
+l4reset();
+$("#dfx-ok").dispatchEvent(new w.Event("click"));
+await sleep(900);
+ok("Level 4가 아니면 미루기가 오늘로 간다 (dfx-ok 짝)",
+  l4calls() === JSON.stringify([["defer", L4D]]), l4calls());
+
+// ④ 대기는 손대지 않는다 — **막지 않았음을 세는 검사**다(ADR-035 ①).
+//    날짜가 없으니 오늘의 부담이 아니고, "적어두고 자자"가 이 ADR이 원하는 형태다.
+guardStub(true);
+l4reset();
+const l4Memo = await ev(`Api.createTask({title:"L4 중에 대기로 담기"})`);
+ok("Level 4에도 대기 담기는 그대로 통과한다 (날짜 없음 · 막지 않는다)",
+  !!l4Memo?.id && l4calls() === JSON.stringify([["create", null]]), l4calls());
+
+// ⑤ 모르면 걸지 않는다 — 플러그인이 없으면 오늘이 붙는다.
+//    **지금 폰의 실제 상태다**(T-28 APK 미설치). fail-closed로 "고치지" 않는다:
+//    발동하지도 않은 기기에서 날짜가 튀면 그것이 §6.3의 도구 이탈이다.
+noGuardPlugin();
+l4reset();
+await addOnToday("플러그인 없는 기기");
+ok("플러그인이 없으면 게이트가 안 걸린다 (fail-open)",
+  l4calls() === JSON.stringify([["create", L4D]]), l4calls());
+ok("웹은 판정을 다시 하지 않는다 — 창 길이가 app.js에 없다 (ADR-035 ②)",
+  !appJs.includes("30 * 60") && !appJs.includes("1800000") && appJs.includes("level4State"));
+
 
 // 마감은 뒤의 쓰기 검사를 막으므로 모든 쓰기 왕복을 끝낸 다음 실제 경로를 태운다.
 w.switchTab("today"); await sleep(900);
