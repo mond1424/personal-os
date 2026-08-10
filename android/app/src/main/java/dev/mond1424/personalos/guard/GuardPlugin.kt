@@ -57,6 +57,24 @@ class GuardPlugin : Plugin() {
         )
     }
 
+    /**
+     * 지금 Level 4 구간인가 — 화면이 **오늘 날짜를 붙이기 전에** 묻는다 (ADR-035 ②·③).
+     *
+     * `{ level4: Boolean, until?: Long }` — `until`은 epoch ms이고 **표시용**이다.
+     * 왜 내일이 됐는지 말해야 하기 때문에 함께 준다(ADR-035 ⑤).
+     *
+     * **묻는 방식(pull)인 이유**: 이벤트로 밀면 Level 4 중에 앱을 **새로 여는** 경우를
+     * 놓친다 — 그때 필요한 것은 "방금 바뀐 순간"이 아니라 "지금 상태"다.
+     * 판정은 기기가 끝낸다 — 웹에 시각을 주고 계산시키지 않는다.
+     */
+    @PluginMethod
+    fun level4State(call: PluginCall) {
+        val until = GuardLevel4.activeUntil(context)
+        val res = JSObject().put("level4", until != null)
+        if (until != null) res.put("until", until)
+        call.resolve(res)
+    }
+
     @PluginMethod
     fun requestNotifications(call: PluginCall) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !GuardNotifications.canPost(context)) {

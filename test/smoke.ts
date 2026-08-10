@@ -1022,6 +1022,38 @@ const after26 = await planAt(dl26 + 60_000);
 ok("데드라인 1분 후 — 데드라인 발동은 빠지고, 30분 뒤 Level 4는 남는다",
   !fireAt(after26, dl26) && fireAt(after26, dl26 + 30 * 60_000), firesOf(after26));
 
+// ── 13. 프롬프트는 없는 강제력을 말하지 않는다 (T-28) ─────────
+// `VERIFY_SYSTEM`이 Level 4를 "신규 작업 차단까지"라고 적어 뒀는데 **차단은 구현이 없었다.**
+// 모델이 존재하지 않는 대가를 저울에 올려 판정했고, 그렇게 쌓인 `guard_events`가
+// §6.5가 읽을 전례다. T-28은 **거짓을 지우기만** 한다 — 사실은 강제력이 생긴 뒤에 적는다(T-29).
+//
+// 응답으로는 확인되지 않는다: 프롬프트가 뭐라 쓰였든 `/api/guard/verify`의 모양은 같다.
+// 그래서 **보내는 문자열을 직접 본다.**
+console.log("\n[13] Level 4 프롬프트 — 없는 강제력을 말하지 않는다");
+
+const guardSrc = readFileSync(join(srcDir, "services/guard.ts"), "utf8");
+// 배열 **안**만 본다 — 위쪽 설명 주석은 이 결정을 기록하느라 '막는다'를 쓴다.
+// 주석을 걷어내는 정규식으로 가르려다 T-23이 18줄을 먹었다. 경계를 좁히면 그 사고가 안 난다.
+const verifySystemOf = (text: string) =>
+  /const VERIFY_SYSTEM = \[([\s\S]*?)\]\.join/.exec(text)?.[1] ?? "";
+const vs = verifySystemOf(guardSrc);
+
+// 양성 대조 ① — **추출이 실제로 됐다.** 정규식이 죽으면 `vs`가 ""가 되고 아래 '차단 없음'이
+//   *못 찾아서* 초록이 된다(AGENT-CHAIN §5). 아는 문구가 담겨 있어야 그 0이 뜻을 갖는다.
+ok("VERIFY_SYSTEM을 실제로 읽었다 (양성 대조 · T-28 검사 2)",
+  vs.includes("개입 수위 검증기") && vs.includes("Level 3(화면 점유 + 알람)")
+    && vs.includes('{"approve": true|false') && vs.length > 150,
+  `${vs.length}자`);
+// 양성 대조 ② — 같은 스캐너에 **옛 문구를 그대로 먹인다.** 잡아야 한다.
+//   이 줄이 초록이어야 아래 '없다'가 '못 찾았다'가 아니라 '지웠다'는 뜻이 된다.
+const oldVerifyBlock =
+  'const VERIFY_SYSTEM = [\n  "Level 4(신규 작업 차단까지)로 격상할 근거가 있는지만 판정한다.",\n].join';
+ok("옛 문구는 잡는다 (양성 대조 · 스캐너가 살아 있다)",
+  verifySystemOf(oldVerifyBlock).includes("차단"), verifySystemOf(oldVerifyBlock));
+
+ok("VERIFY_SYSTEM에 '차단'이 없다 — 없는 강제력을 말하지 않는다 (T-28 검사 1)",
+  !vs.includes("차단"), vs);
+
 // ── 결과 ─────────────────────────────────────────────────────
 console.log(`\n${"=".repeat(46)}\n통과 ${passN} · 실패 ${fails.length}`);
 if (fails.length) { console.log("실패:\n  - " + fails.join("\n  - ")); process.exit(1); }

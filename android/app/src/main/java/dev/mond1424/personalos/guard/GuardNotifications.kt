@@ -246,8 +246,17 @@ object GuardNotifications {
                         aiVerdict = v?.aiVerdict ?: "unavailable",
                     )
                 }
-                // 화면이 안 떴으면 no-op다 — 배경에서 액티비티를 새로 띄우지 않는다.
-                if (v?.upgrades == true) runCatching { GuardAlertActivity.upgradeToLevel4() }
+                if (v?.upgrades == true) {
+                    // 격상 승인을 **화면과 무관하게** 먼저 남긴다 (ADR-035 ③).
+                    // 아래 `upgradeToLevel4()`는 살아 있는 화면이 없으면 조용히 지나가고
+                    // 마찰에 들어간 뒤면 `applyUpgrade`가 되돌아간다 — 그 성패로 구간을 정하면
+                    // 차단이 영원히 안 걸린다. 기준은 **격상이 승인됐다**는 사실이다.
+                    // 킬 스위치(`guard_ai_verify=off`)도 여기를 지난다: 서버가 결정론 복귀로
+                    // `approved=true · level=4`를 답하므로 `upgrades`가 참이다(ADR-024 ⑤).
+                    GuardLevel4.note(app)
+                    // 화면이 안 떴으면 no-op다 — 배경에서 액티비티를 새로 띄우지 않는다.
+                    runCatching { GuardAlertActivity.upgradeToLevel4() }
+                }
             }.start()
         }
 
