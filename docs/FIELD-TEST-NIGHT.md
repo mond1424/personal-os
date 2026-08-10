@@ -8,6 +8,18 @@
 
 **Doze 상태에서 `setAlarmClock`이 실제로 기기를 깨우는가.**
 
+그리고 이제 **하룻밤에 셋이 걸린다** — T-28·T-29가 붙었다:
+
+```
+01:30  Level 3 이 떴는가              Doze 통과          ← 이 밤의 과녁
+02:00~ 격상이 기록됐는가              T-28 · level4State
+       오늘 칸이 흐려지는가           T-29 · 날짜 게이트
+```
+
+**01:30 첫 발동이 Doze 질문의 답 전부다.** 거기까지가 자는 동안이고,
+그 뒤로는 깨어 있으니 Doze가 아니다 — 그래서 **02:00부터는 게이트를 봐도 된다.**
+둘이 충돌하지 않는다.
+
 Guard의 발동 경로 둘 중 A(시각·보호 규칙)가 그것에 전부 걸려 있다.
 낮에는 화면이 켜져 있어 확인이 안 된다 — **Doze는 화면이 꺼지고 움직임이 없어야 들어간다.**
 
@@ -32,26 +44,54 @@ Guard의 발동 경로 둘 중 A(시각·보호 규칙)가 그것에 전부 걸�
 데드라인 = 09:00 − 준비 90분 − 수면 360분 = 01:30
 
 01:30      Level 3   "지금 자야 합니다"
-02:00~     Level 4   30분 간격 6회 (05:00까지)
+02:00~     Level 4   30분 간격 6회 → 마지막이 04:30
 ```
+
+**04:30은 하루 경계가 아니라 `deadline + 30분 × 6`이다**(`services/guard.ts`의 `push` 루프).
+경계는 설정값이라 여기 적지 않는다 — 궁금하면 ②의 응답에 `boundary`가 함께 온다.
 
 **03:00 언저리에 Level 4가 두세 번 온다** — 그것이 이 실측의 과녁이다.
 
+> **아래 콘솔 명령은 `chrome://inspect`의 DevTools 콘솔에 붙여 넣는다**
+> (`GUARD-DEV-LOOP.md` §3과 같은 자리 — 릴리스 빌드도 붙는다).
+> **USB가 연결돼 있어야 한다.** ①~③은 자기 전에 하고, ④에서 뽑는다.
+
 ### ② 서버가 예약을 만들었는지 본다
 
-```cmd
-node test/device.mjs "JSON.stringify((await Api.guardSchedule()).plans[0].fires.map(f=>f.at))"
+**`Api`에는 `guardSchedule`이 없다** — `/api/guard/schedule`은 프런트가 안 쓰는 유일한 Guard
+엔드포인트라 래퍼가 없다(기기가 직접 부른다). 그래서 raw fetch이고, **토큰을 직접 실어야 한다:**
+
+```js
+const r = await fetch("/api/guard/schedule", {
+  headers: { Authorization: "Bearer " + localStorage.getItem("api_token") },
+}).then((x) => x.json());
+r.events[0].fires.map((f) => `L${f.level} ${f.at}`);
 ```
 
-01:30·02:00·02:30… 이 나와야 한다. **안 나오면 여기서 멈춘다** — 밤을 기다릴 필요가 없다.
+01:30(L3)·02:00~(L4 여섯)이 나와야 한다. **안 나오면 여기서 멈춘다** — 밤을 기다릴 필요가 없다.
+`r.events`가 비었으면 보호 규칙이 안 붙은 것이고, `fires`만 비었으면 이미 지난 시각이다.
 
 ### ③ 기기가 알람을 걸었는지 본다
 
-```cmd
-node test/device.mjs "await Capacitor.Plugins.Guard.state()"
+```js
+const G = Capacitor.Plugins.Guard;
+await G.state();
 ```
 
-권한 넷이 `true`인지 먼저 본다. 하나라도 `false`면 그것부터다.
+권한 넷(`notifications`·`fullScreenIntent`·`overlay`·`batteryUnrestricted`)이 `true`인지
+먼저 본다. 하나라도 `false`면 그것부터다(`GUARD-DEV-LOOP.md` §3).
+
+**그다음이 이 절의 핵심이다 — 서버 예약이 기기 알람으로 넘어왔는지 본다:**
+
+```js
+await G.sync();          // 하루 1회 자동이지만, 오늘 규칙을 방금 만들었으면 직접 당긴다
+await G.listAlarms();    // { alarms: [{level, atLocal, inSeconds, title}], count, canScheduleExact }
+```
+
+`count`가 ②의 `fires` 개수와 같아야 하고 `atLocal`이 01:30·02:00…이어야 한다.
+**여기가 sync 누락을 잡는 유일한 자리다** — ②가 초록이어도 `sync()`가 안 돌았으면
+서버에는 예약이 있고 폰에는 없다. 그 상태로 자면 **아무 일도 안 일어나고, 아무 오류도 안 난다.**
+`canScheduleExact`가 `false`면 정확 알람 권한이 없어 Doze가 미룬다.
 
 ```cmd
 adb shell dumpsys alarm | findstr /i "personalos"
@@ -70,15 +110,50 @@ adb shell dumpsys alarm | findstr /i "personalos"
 
 ---
 
+## 밤에 깼다면 — 02:00 이후에만
+
+**01:30에 깼으면 그냥 반응하고 다시 잔다.** 그때 앱을 열면 게이트는 볼 수 있지만
+Level 3이라 아직 안 걸린다 — 볼 것이 없다.
+
+**02:00 이후 Level 4가 뜬 뒤**라면 30분 안에 앱을 연다.
+
+```
+□ 캘린더에서 오늘 칸이 흐려져 있다
+□ 오늘 칸에 일정을 추가하면 내일로 가고, 왜 그런지 뜬다
+□ 대기에 담는 것은 그대로 된다        ← 막지 않았음을 확인하는 짝
+```
+
+**이 시각에는 콘솔을 쓸 수 없다.** ④에서 USB를 뽑았고, `chrome://inspect`도 `device.mjs`도
+adb 연결이 있어야 붙는다. 다시 꽂으면 **충전이 시작돼 Doze가 풀리고 그 밤이 끝난다** —
+Doze가 이 실측의 과녁이므로 그걸 깨면서 게이트를 보는 것은 맞바꿈이 아니다.
+
+**그러니 눈으로 보는 것이 전부다.** 위 세 줄이면 충분하다 — 흐려짐·내일로 이동·이유 문구는
+전부 화면에 나온다. 기록은 폰 안에 남으므로 **확인은 아침으로 미룬다.**
+
+**안 깼으면 그냥 잔다.** 게이트는 다음 밤으로 넘긴다 — 급하지 않고, 아침에 `guard_events`로
+격상이 났는지는 어차피 확인된다.
+
 ## 아침에
 
 ### 무엇이 남았나
 
-```cmd
-node test/device.mjs "JSON.stringify((await Api.guardEvents()).slice(0,8).map(e=>[e.fired_at,e.level,e.cause,e.reaction]))"
+**USB를 다시 꽂고** `chrome://inspect` 콘솔에서:
+
+```js
+(await Api.guardEvents()).slice(0, 8)
+  .map((e) => [e.fired_at, e.level, e.cause, e.reaction, e.ai_verdict]);
 ```
 
-01:30~05:00 사이 `protect:` 계열이 몇 건 있는지 본다.
+`Api.guardEvents`는 **있다**(`api.js`). 데드라인~그 뒤 세 시간 사이 `protect:` 계열이
+몇 건 있는지 본다. `level`이 4인 행이 있으면 **T-28의 격상 기록도 함께 확인된 것**이고,
+그때 `ai_verdict`가 `approve`(또는 킬 스위치면 비어 있음)다.
+
+밀린 큐가 있으면 아직 서버에 안 올라갔을 수 있다:
+
+```js
+await Capacitor.Plugins.Guard.syncStatus();   // queued > 0 이면 아래를 부른다
+await Capacitor.Plugins.Guard.flushEvents();
+```
 
 ### 가르는 표
 
