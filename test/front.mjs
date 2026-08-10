@@ -115,6 +115,12 @@ ok("5-pane 조립 (좌우 두 달 · 현재 달 가운데)", w.document.querySel
 ok("밴드 path 생성", $$cur("svg.band path").length >= 1);
 ok("기간 카드", $("#p-list").querySelectorAll(".prow").length >= 1);
 const t17Css = await (await fetch(BASE + "/style.css")).text();
+const calRowRule = t17Css.match(/\.cal-row\s*\{([^}]*)\}/)?.[1] || "";
+const firstCalRowRule = t17Css.match(/\.calpane \.wkdays \+ \.cal-row\s*\{([^}]*)\}/)?.[1] || "";
+ok("주 사이는 총높이를 유지하는 내부 구분선", $$cur(".cal-row").length === 6
+  && calRowRule.includes("height:99px")
+  && calRowRule.includes("border-top:1px solid var(--line)")
+  && firstCalRowRule.includes("border-top:none"), `${calRowRule} / ${firstCalRowRule}`);
 const dimCells = $$cur(".c.cal-dim-cell");
 const dimRule = t17Css.match(/\.c\.cal-dim-cell::after\s*\{([^}]*)\}/)?.[1] || "";
 ok("침범 셀에만 전체 덮는 레이어", dimCells.length > 0
@@ -897,7 +903,7 @@ await swipe([-14, -40, -70], [0, 2, 4], 120);
 ok("짧고 느린 가로 이동은 무시(임계값)", tab() === "today", tab());
 w.switchTab("today"); await sleep(200);
 
-// T-25 — 캘린더 가운데는 달 캐러셀, 화면 양끝 10%는 탭 캐러셀이 받는다.
+// T-25 — 캘린더 가운데는 달 캐러셀, 화면 양끝 SWIPE_EDGE_RATIO는 탭 캐러셀이 받는다.
 // target에서 이벤트를 시작해 #cal-rows → .screens 버블 경로를 실제로 태운다.
 const swipeOn = async (target, x0, dxs, dys, gapMs = 0) => {
   const mk = (type, x, y) => new w.MouseEvent(type, { bubbles: true, clientX: x, clientY: y });
@@ -911,19 +917,27 @@ const swipeOn = async (target, x0, dxs, dys, gapMs = 0) => {
 };
 const gestureScreen = $(".screens");
 const gestureLeft = gestureScreen.getBoundingClientRect().left;
+const gestureWidth = gestureScreen.clientWidth || 380;
+const gestureEdgeWidth = gestureWidth * ev("SWIPE_EDGE_RATIO");
+const gestureProbe = 1;
+const centerGestureX = gestureLeft + gestureWidth / 2;
+const leftEdgeGestureX = gestureLeft + gestureEdgeWidth - gestureProbe;
+const rightEdgeGestureX = gestureLeft + gestureWidth - gestureEdgeWidth + gestureProbe;
 const calendarGestureTarget = () => $cur(".c:not(.mut)");
 const gestureOrigin = { y: ev("S.cal.y"), m: ev("S.cal.m") };
 
 w.switchTab("cal"); await sleep(900);
 const centerGestureStart = testAddMonth(ev("S.cal.y"), ev("S.cal.m"), 1);
-await swipeOn(calendarGestureTarget(), gestureLeft + 190, [-14, -60, -150], [0, 3, 6]);
+await swipeOn(calendarGestureTarget(), centerGestureX, [-14, -60, -150], [0, 3, 6]);
 await sleep(1600);
 ok("캘린더 가운데 가로 끌기는 달을 넘긴다", tab() === "cal"
+  && centerGestureX - gestureLeft > gestureEdgeWidth
+  && centerGestureX - gestureLeft < gestureWidth - gestureEdgeWidth
   && ev("S.cal.y") === centerGestureStart.y && ev("S.cal.m") === centerGestureStart.m,
-  `${tab()} / ${ev("S.cal.y")}-${ev("S.cal.m")}`);
+  `${tab()} / x=${centerGestureX - gestureLeft} / ${ev("S.cal.y")}-${ev("S.cal.m")}`);
 
 const leftEdgeMonth = `${ev("S.cal.y")}-${ev("S.cal.m")}`;
-await swipeOn(calendarGestureTarget(), gestureLeft + 10, [14, 60, 150], [0, 3, 6]);
+await swipeOn(calendarGestureTarget(), leftEdgeGestureX, [14, 60, 150], [0, 3, 6]);
 await sleep(500);
 ok("캘린더 왼쪽 가장자리 가로 끌기는 달을 두고 이전 탭", tab() === "today"
   && `${ev("S.cal.y")}-${ev("S.cal.m")}` === leftEdgeMonth,
@@ -931,7 +945,7 @@ ok("캘린더 왼쪽 가장자리 가로 끌기는 달을 두고 이전 탭", ta
 
 w.switchTab("cal"); await sleep(500);
 const rightEdgeMonth = `${ev("S.cal.y")}-${ev("S.cal.m")}`;
-await swipeOn(calendarGestureTarget(), gestureLeft + 370, [-14, -60, -150], [0, 3, 6]);
+await swipeOn(calendarGestureTarget(), rightEdgeGestureX, [-14, -60, -150], [0, 3, 6]);
 await sleep(500);
 ok("캘린더 오른쪽 가장자리 가로 끌기는 달을 두고 다음 탭", tab() === "works"
   && `${ev("S.cal.y")}-${ev("S.cal.m")}` === rightEdgeMonth,
@@ -939,7 +953,7 @@ ok("캘린더 오른쪽 가장자리 가로 끌기는 달을 두고 다음 탭",
 
 w.switchTab("cal"); await sleep(500);
 const verticalGestureMonth = `${ev("S.cal.y")}-${ev("S.cal.m")}`;
-await swipeOn(calendarGestureTarget(), gestureLeft + 10, [1, 4, 6], [30, 80, 150]);
+await swipeOn(calendarGestureTarget(), leftEdgeGestureX, [1, 4, 6], [30, 80, 150]);
 await sleep(300);
 ok("캘린더 가장자리 세로 끌기는 가로 캐러셀을 잡지 않는다", tab() === "cal"
   && `${ev("S.cal.y")}-${ev("S.cal.m")}` === verticalGestureMonth,
@@ -947,7 +961,7 @@ ok("캘린더 가장자리 세로 끌기는 가로 캐러셀을 잡지 않는다
 
 const edgeInput = w.document.createElement("input");
 $("#scr-cal").appendChild(edgeInput);
-await swipeOn(edgeInput, gestureLeft + 10, [14, 60, 150], [0, 3, 6]);
+await swipeOn(edgeInput, leftEdgeGestureX, [14, 60, 150], [0, 3, 6]);
 await sleep(300);
 ok("input은 가장자리에서도 스와이프를 막는다", tab() === "cal"
   && `${ev("S.cal.y")}-${ev("S.cal.m")}` === verticalGestureMonth, tab());
@@ -955,13 +969,14 @@ edgeInput.remove();
 
 const zeroWidthFallback = ev(`(()=>{
   const scr = $(".screens"), left = scr.getBoundingClientRect().left;
+  const width = scr.clientWidth || 380, edge = width * SWIPE_EDGE_RATIO, probe = 1;
   return scr.clientWidth === 0
-    && isSwipeEdge({clientX:left + 37}, scr)
-    && !isSwipeEdge({clientX:left + 39}, scr)
-    && !isSwipeEdge({clientX:left + 341}, scr)
-    && isSwipeEdge({clientX:left + 343}, scr);
+    && isSwipeEdge({clientX:left + edge - probe}, scr)
+    && !isSwipeEdge({clientX:left + edge + probe}, scr)
+    && !isSwipeEdge({clientX:left + width - edge - probe}, scr)
+    && isSwipeEdge({clientX:left + width - edge + probe}, scr);
 })()`);
-ok("폭 0에서는 380 폴백으로 가장자리 10%를 계산", zeroWidthFallback,
+ok("폭 0에서는 380 폴백과 SWIPE_EDGE_RATIO로 가장자리를 계산", zeroWidthFallback,
   `clientWidth=${gestureScreen.clientWidth}`);
 await ev(`(async()=>{ S.cal={y:${gestureOrigin.y},m:${gestureOrigin.m}}; calGen++; await renderCalendar(); })()`);
 

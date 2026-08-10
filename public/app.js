@@ -2585,7 +2585,7 @@ let dragBlockUntil = 0;
  * 놓을 때 방향을 판정해 opt.commit(dir)에 넘긴다. */
 // ms — 속도를 믿기 시작하는 최소 간격 · 측정 창 · 멈춘 뒤 놓으면 속도는 0
 const VEL_MIN_DT = 16, VEL_WIN = 90, VEL_STALE = 130;
-const SWIPE_EDGE_RATIO = 0.1;
+const SWIPE_EDGE_RATIO = 0.4;
 
 function isSwipeEdge(e, host) {
   const width = host.clientWidth || 380;
