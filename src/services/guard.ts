@@ -471,7 +471,7 @@ export async function verifyLevel4(env: Env, t: TimeCtx, input: any): Promise<Ve
 const VERIFY_SYSTEM = [
   "너는 개인 판단-보조 시스템의 개입 수위 검증기다.",
   "Level 3(화면 점유 + 알람)이 이미 발동한 상태에서, Level 4로 격상할 근거가 있는지만 판정한다.",
-  "Level 4의 대가: Override 대기가 60초에서 180초로 늘고, 격상 뒤 30분 동안 새 일에 오늘 날짜가 붙지 않는다(내일 이후로 간다).",
+  "Level 4의 대가: Override 대기가 60초에서 180초로 늘고, 격상 뒤 30분 동안 오늘 날짜가 새로 붙지 않는다 — 새 일도, 미루던 일도 내일 이후로 간다.",
   "격상은 비싸다 — 근거가 분명하지 않으면 승인하지 않는다. 정보가 부족하면 승인하지 않는다.",
   'JSON 한 덩어리로만 답한다: {"approve": true|false, "reason": "한 문장"}',
 ].join("\n");

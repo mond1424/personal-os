@@ -1330,7 +1330,9 @@ $("#dfx-ok").dispatchEvent(new w.Event("click"));
 await sleep(900);
 ok("Level 4 — 미루기도 오늘로는 안 붙는다 (dfx-ok)",
   l4calls() === "[]" && txt("#toast").includes("Guard"), `${l4calls()} / ${txt("#toast")}`);
-ok("막힌 미루기는 시트가 남는다 — 사유를 다시 쓰게 하지 않는다",
+// 시트가 남는 이유는 **맥락**이다 — 무엇을 어디로 옮기려 했는지가 토스트 한 줄만 남기고
+// 사라지지 않는다. (사유는 `openDeferSheet`가 비우므로 다시 열면 어차피 다시 쓴다.)
+ok("막힌 미루기는 시트가 남는다 — 맥락이 갑자기 사라지지 않는다",
   $("#sh-defer").classList.contains("on"));
 guardStub(false);
 l4reset();
