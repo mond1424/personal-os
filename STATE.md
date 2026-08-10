@@ -766,6 +766,13 @@ T-25 검토가 "스타일을 보는 검사가 없다"고 적은 자리를 처음
 **목표: 8/31까지 Guard 탑재 Android 앱, 9/1 실사용 시작.**
 계획은 `APP-PLAN.md`, 결정 근거는 `APP-ADR.md`, 진행 상태는 `APP-BUILD.md`, 개발 절차는 `GUARD-DEV-LOOP.md`.
 
+> **(2026-08-10) 계획 문서 갱신 — 주체성 축소 편입.** `BRIEF-AGENCY-0810` 근거로 APP-PLAN에
+> **Phase 7 입력 이관**(캘린더 양방향 동기화 — 창=열린 날 · W5 읽기, 진입 조건 "Guard 루프 닫힘"은 이미 충족)과
+> **Phase 8 감각 계층**(HC → 공지 → 메신저, 9월 1주 착수)을 신설, 9~11월 병렬 우선순위 교체(감각 계층 > 위젯 —
+> 위젯·FCM·인증은 10월). APP-ADR에 **ADR-028~034** 추가(+목록 표에 누락됐던 027 행 보충).
+> 캘린더 마이그레이션은 **0016_cal_sync 예약**. **코드 무변경.**
+> ※ 이 갱신은 사용자 직접 지시로 Cowork 층이 문서 편집·git까지 처리했다(에이전트 체인 예외 1회).
+
 > **S2.6 반영 절차 (2026-07-30)** — 마이그레이션 **없음**. 순서: `npm run verify` → `npm run deploy`(cron의 `ignored` 확정) → **APK 재빌드·설치**(네이티브 변경: `GuardWatch.kt`·`GuardService`·`GuardPlugin`) → GUARD-DEV-LOOP §6으로 감지 발동 확인.
 
 완성의 정의 — 시험 일정 하나를 등록하면 전날 00:00에 보호 모드가 걸리고, 01:30(=일정시각−준비−수면 역산)에
@@ -911,6 +918,7 @@ Guard v1이 1순위라는 건 안 바뀐다. Phase 1을 셋으로 쪼개 **UI를
 - 사용설명서0722 https://raw.githubusercontent.com/mond1424/personal-os/main/사용설명서0722.md
 - REFACTOR-PLAN  https://raw.githubusercontent.com/mond1424/personal-os/main/REFACTOR-PLAN.md
 - WORK-PLAN-0726 https://raw.githubusercontent.com/mond1424/personal-os/main/WORK-PLAN-0726.md
+- BRIEF-AGENCY-0810 https://raw.githubusercontent.com/mond1424/personal-os/main/BRIEF-AGENCY-0810.md
 - STATE.md       https://raw.githubusercontent.com/mond1424/personal-os/main/STATE.md
 - api-surface    https://raw.githubusercontent.com/mond1424/personal-os/main/docs/api-surface.md
 - schema         https://raw.githubusercontent.com/mond1424/personal-os/main/docs/schema-current.sql
