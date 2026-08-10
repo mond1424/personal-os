@@ -140,7 +140,7 @@ export async function schedule(env: Env, t: TimeCtx, days = 30) {
   const rows = (await db.protectedEvents(env, t.d, days)).results;
   const mode = await db.guardActiveMode(env);
   const maxLevel = mode?.max_level ?? 4;
-  const nowMs = Date.now();
+  const nowMs = Date.parse(t.now);   // 요청당 한 번 읽은 시계를 그대로 쓴다 (T-23 · T-26)
 
   const plans = rows.map((e) => {
     const sleep = e.protect_sleep_min ?? DEFAULT_SLEEP_MIN;

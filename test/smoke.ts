@@ -955,6 +955,73 @@ ok("훑은 범위가 src 전체다 (파일 수 · 서비스 포함)",
   srcFiles.length >= 15 && srcFiles.some((f) => f.startsWith("services/")) && srcFiles.includes("lib/time.ts"),
   `${srcFiles.length}개 — ${srcFiles.join(" ")}`);
 
+// ── 12. schedule()도 넘겨받은 시계를 쓴다 (T-26) ───────────────
+// `schedule()`은 `t`를 받아 놓고 `Date.now()`로 시계를 다시 읽었다. 같은 함수의 `protectingNow`는
+// 이미 `Date.parse(t.now)`를 쓴다 — 한 함수 안에 시계가 두 벌인 채로 두면 다음에 또 "여기도 있었네"가 된다.
+console.log("\n[12] Guard schedule — 지난 발동을 거르는 시계도 주입된 t다");
+
+// (1) 자리 검사. **먼저 스캐너가 살아 있음을 보인다** — T-23에서 주석 제거 정규식이 죽었는데도
+//     '0건'이 그대로 초록이던 자리다. 옛 코드 줄을 그대로 먹여 잡히는지, 주석·`Date.parse`는
+//     안 잡는지 양쪽에서 확인한다. 이 줄이 초록이어야 아래 대장이 '못 찾았다'가 아닌 뜻을 갖는다.
+const clockLines = (text: string) =>
+  text.split("\n").filter((line) => {
+    const m = /\bDate\.now\s*\(/.exec(line);
+    if (!m) return false;
+    const head = line.slice(0, m.index).trimStart();          // 호출 앞자리 — 줄을 넘지 않는다(T-23)
+    return !head.startsWith("*") && !head.startsWith("/*") && !head.includes("//");
+  });
+ok("검사가 살아 있다 (양성 대조) — 옛 `Date.now()` 줄은 잡고 주석·`Date.parse`는 안 잡는다",
+  clockLines("  const nowMs = Date.now();").length === 1 &&
+  clockLines("  const started = Date.now();").length === 1 &&
+  clockLines("  // const nowMs = Date.now();").length === 0 &&
+  clockLines("   * Date.now()를 쓰지 않는다").length === 0 &&
+  clockLines("  const nowMs = Date.parse(t.now);").length === 0);
+
+// 남은 자리를 **전부 못 박는다.** "src에 0"이라고 쓸 수 없다 — `Date.now()`는 더 있고 성격이 다르다:
+// `loadTime`의 기본값(진입 계층이 요청당 한 번 읽는 그 자리)과 경과(ms) 측정이다. 대장으로 두면
+// 새 `Date.now()`가 어디에 생기든, 그리고 **스캐너가 죽어 대장이 비어도** 이 줄이 빨간불이 된다.
+const clockLedger = srcFiles
+  .map((f) => [f, clockLines(readFileSync(join(srcDir, f), "utf8")).length] as const)
+  .filter(([, n]) => n > 0)
+  .sort((a, b) => a[0].localeCompare(b[0]));
+ok("src의 Date.now()는 여섯 줄뿐 — lib/ai.ts 3 · lib/time.ts 1 · services/guard.ts 2 (T-26 검사 1)",
+  JSON.stringify(clockLedger) ===
+    JSON.stringify([["lib/ai.ts", 3], ["lib/time.ts", 1], ["services/guard.ts", 2]]),
+  JSON.stringify(clockLedger));
+const guardClock = clockLines(readFileSync(join(srcDir, "services/guard.ts"), "utf8"));
+ok("services/guard.ts에 남은 둘은 경과(ms) 측정이다 — '지금'으로 읽는 자리가 0이다",
+  guardClock.length === 2 && guardClock.every((l) => /started/.test(l)),
+  JSON.stringify(guardClock));
+
+// (2) 경계를 **양쪽에서** 누른다. 한쪽만 보면 부등호가 뒤집혀도 통과한다.
+//     날짜는 오늘 기준 상대로 만든다 — 고정 날짜는 그날이 지나면 조용히 낡는다(T-12).
+const ev26 = (await api("POST", "/api/events",
+  { title: "T-26 보호 일정", date: addDays(D, 10), time: "09:00" })).json.id as string;
+ok("T-26 검사용 보호 규칙 부착 200 (검사의 전제)",
+  (await api("PUT", `/api/events/${ev26}/protect`, { protect_from: "-1d 00:00", protect_level: 4 })).status === 200);
+
+const planAt = async (utcMs: number) =>
+  ((await guard.schedule(env, { ...t0, now: isoNow(utcMs, t0.offsetMin) })).events as any[])
+    .find((e) => e.event_id === ev26);
+const fireAt = (plan: any, ms: number) => plan.fires.some((f: any) => Date.parse(f.at) === ms);
+const firesOf = (plan: any) => JSON.stringify(plan.fires.map((f: any) => `L${f.level}@${f.at}`));
+
+// 기준점은 **응답이 준 데드라인**이다 — 역산식을 검사가 다시 구현하면 두 벌이 갈라진다(T-05).
+const base26 = await planAt(Date.parse(t0.now));
+const dl26 = Date.parse(base26.deadline);
+ok("실시각에서는 열 건 전부 미래다 (경계 검사의 전제)",
+  base26.fires.length === 10 && fireAt(base26, Date.parse(base26.protect_from)) && fireAt(base26, dl26),
+  firesOf(base26));
+
+// ↓ 여기가 T-26이다. `Date.now()`면 주입한 t를 무시하므로 실시각(열 건 전부 미래)이 그대로 나온다
+//   → '1분 후'가 빨간불. 부등호가 뒤집히면 '1분 전'이 빨간불. 두 줄이 서로 다른 것을 막는다.
+const before26 = await planAt(dl26 - 60_000);
+ok("데드라인 1분 전 — 데드라인 발동은 남고, 이미 지난 보호 시작(L1)은 빠진다",
+  fireAt(before26, dl26) && !fireAt(before26, Date.parse(base26.protect_from)), firesOf(before26));
+const after26 = await planAt(dl26 + 60_000);
+ok("데드라인 1분 후 — 데드라인 발동은 빠지고, 30분 뒤 Level 4는 남는다",
+  !fireAt(after26, dl26) && fireAt(after26, dl26 + 30 * 60_000), firesOf(after26));
+
 // ── 결과 ─────────────────────────────────────────────────────
 console.log(`\n${"=".repeat(46)}\n통과 ${passN} · 실패 ${fails.length}`);
 if (fails.length) { console.log("실패:\n  - " + fails.join("\n  - ")); process.exit(1); }
