@@ -69,7 +69,7 @@
 | PUT `/api/events/:id/protect` | `{protect_from?, protect_level?, protect_sleep_min?, protect_prep_min?}` 또는 `{protect:false}` | `{id, protected, ...}` · **본문 수정과 분리**(마감된 날에도 부착 가능) | `events.setProtect` |
 | GET `/api/guard/events?limit` | — | 발동 이력 rows | `guard.events` |
 | GET `/api/guard/schedule?days` | — | `{d, mode, friction_mult, events:[{event_id, start, deadline, fires[]}]}` · **기기가 하루 1회 pull** | `guard.schedule` |
-| POST `/api/guard/events` | `{cause, level, client_id?, fired_at?, event_id?, risk_score?, risk_snapshot?, foreground_app?, source?, reaction?, reason?}` | `{id, on_date, level, mode, duplicate?}` (201) · **upsert** — `client_id`로 재전송 멱등, 반응 후행 채움 | `guard.record` |
+| POST `/api/guard/events` | `{cause, level, client_id?, fired_at?, event_id?, risk_score?, risk_snapshot?, foreground_app?, source?, reaction?, reason?, ai_used?, ai_verdict?, ai_unavailable_reason?}` | `{id, on_date, level, mode, duplicate?}` (201) · **upsert** — `client_id`로 재전송 멱등, 반응 후행 채움. `ai_unavailable_reason`(0016)은 `ai_verdict='unavailable'`일 때만 남고 **닫힌 목록 밖이면 조용히 비운다** — 400을 던지면 기기 `flush()`가 발동 행을 버린다 | `guard.record` |
 | POST `/api/guard/verify` | `{client_id, cause, level_candidate:4, event_id?, risk_snapshot?, foreground_app?}` | `{level:3\|4, approved, reason, ai_used, cached, source}` · **어떤 경우에도 200** — 판정 불가는 `level:3`. `source` = `ai\|cache\|cap\|timeout\|error\|off`. `level_candidate≠4`는 400(격상 전용) | `guard.verifyLevel4` |
 | POST `/api/guard/events/:id/react` | `{reaction, reason?, reacted_at?}` | `{id, reaction, reacted_at}` · 두 번째는 409 | `guard.react` |
 | POST `/api/guard/events/:id/outcome` | `{outcome}` | `{id, outcome, outcome_at}` · 재확정 409 | `guard.setOutcome` |

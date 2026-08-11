@@ -16,7 +16,7 @@ import type { Env } from "../src/types";
 import { makeD1, rawOf } from "./d1shim";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const schema = ["0001_init.sql", "0002_models.sql", "0003_ai_provider.sql", "0004_events.sql", "0005_delete_scope.sql", "0006_fix_model_high.sql", "0007_defer_reason.sql", "0008_cancel_task.sql", "0009_cancel_reason.sql", "0010_guard.sql", "0011_guard_sync.sql", "0012_life_model.sql", "0013_analysis_backfill.sql", "0014_schema_titles.sql", "0015_me_history_reason.sql"]
+const schema = ["0001_init.sql", "0002_models.sql", "0003_ai_provider.sql", "0004_events.sql", "0005_delete_scope.sql", "0006_fix_model_high.sql", "0007_defer_reason.sql", "0008_cancel_task.sql", "0009_cancel_reason.sql", "0010_guard.sql", "0011_guard_sync.sql", "0012_life_model.sql", "0013_analysis_backfill.sql", "0014_schema_titles.sql", "0015_me_history_reason.sql", "0016_guard_unavailable_reason.sql"]
   .map((f) => readFileSync(join(here, "../migrations/" + f), "utf8")).join("\n");
 const env: Env = { DB: makeD1(schema) };
 const raw = rawOf(env.DB);
@@ -796,6 +796,99 @@ await api("POST", "/api/guard/events", {
 });
 const vDeny = await verify(VBASE);
 ok("캐시된 deny → level 3", vDeny.json.source === "cache" && vDeny.json.level === 3 && vDeny.json.approved === false);
+
+// ── T-31 · `unavailable`이 이유를 말한다 (0016) ────────────────
+// **값의 모양은 안 바뀐다.** `ai_verdict`는 계속 'unavailable'이고 이유만 옆 칼럼에 붙는다.
+// 티켓 초안대로 'unavailable:timeout'을 값에 넣으면 0010의 CHECK에 걸려 400이 되고,
+// 기기의 `flush()`가 400을 '재시도 무의미'로 보고 **그 발동 행을 통째로 버린다** —
+// 관측을 늘리려던 티켓이 네트워크가 나쁜 밤의 기록을 지우게 된다.
+// ★ 음성과 양성이 **한 쌍이라야 문다.** 바로 앞의 캐시 값은 `deny`(level 3)인데,
+//   `unavailable`을 집어도 `guard.ts`의 `hit.ai_verdict === "approve"`가 거짓이라
+//   **결과가 deny와 글자 그대로 같다** — 그래서 `IN`을 지워도 초록이다(실제로 확인했다).
+//   그래서 여기서는 **approve를 먼저 깔고** 그 위에 unavailable을 얹는다:
+//   `IN`이 살아 있으면 approve가 나와 level 4, 지우면 최신 unavailable이 나와 level 3이다.
+await api("POST", "/api/guard/events", {
+  cause: "watch:bedtime", level: 4, client_id: "unavail-uuid-0", ai_used: 1, ai_verdict: "approve",
+});
+await api("POST", "/api/guard/events", {
+  cause: "watch:bedtime", level: 3, client_id: "unavail-uuid-1", ai_used: 1,
+  ai_verdict: "unavailable", ai_unavailable_reason: "timeout",
+});
+ok("이유가 그대로 남는다 (0016 · 닫힌 목록 안)",
+  raw.prepare("SELECT ai_verdict AS v FROM guard_events WHERE client_id='unavail-uuid-1'").get()?.v === "unavailable"
+  && raw.prepare("SELECT ai_unavailable_reason AS r FROM guard_events WHERE client_id='unavail-uuid-1'").get()?.r === "timeout");
+
+const vUnavail = await verify(VBASE);
+// 음성 — `unavailable`은 **가장 최근 행인데도** 안 잡힌다. 판정이 아니라 "부를 수 없었다"는
+// 기록이고, 재사용하면 네트워크가 돌아온 뒤에도 그 밤 내내 Level 3에 묶인다(ADR-024 ②).
+ok("unavailable은 캐시에 안 잡힌다 — 최신 행인데도 그 앞의 approve가 나온다",
+  vUnavail.json.source === "cache" && vUnavail.json.level === 4 && vUnavail.json.approved === true,
+  JSON.stringify(vUnavail.json));
+// 양성 대조 — 캐시가 통째로 죽으면 상한(cap)이 잡힌다. 음성만 보면 그 경우도 초록이다(AGENT-CHAIN §5).
+ok("양성 대조 — 캐시가 살아 있다 (죽었으면 source가 cap이 된다)",
+  vUnavail.json.cached === true && vUnavail.json.ai_used === 0, JSON.stringify(vUnavail.json));
+
+// 목록 밖 이유는 **버리되 행은 살린다.** 여기서 400을 던지면 CHECK에 걸리는 것과 결과가
+// 같아진다 — `flush()`가 발동 행을 버린다. 이유 하나 때문에 기록을 잃지 않는다.
+// (구버전 서버 + 신버전 APK로 값이 갈리는 경우가 실제로 그 자리다.)
+const vJunk = await api("POST", "/api/guard/events", {
+  cause: "watch:bedtime", level: 3, client_id: "unavail-uuid-2", ai_used: 0,
+  ai_verdict: "unavailable", ai_unavailable_reason: "돌연변이",
+});
+ok("목록 밖 이유여도 발동 행은 산다 (201 · 이유만 비워진다)",
+  vJunk.status === 201
+  && raw.prepare("SELECT ai_unavailable_reason AS r FROM guard_events WHERE client_id='unavail-uuid-2'").get()?.r === null,
+  JSON.stringify(vJunk.json));
+
+// http_NNN 은 코드까지 남긴다 — 401(토큰 만료)과 503(과부하)의 대응이 다르다.
+// 모양이 닫혀 있다는 것까지 본다: `http_503`은 통과, `http_50`은 목록 밖이다.
+await api("POST", "/api/guard/events", {
+  cause: "watch:bedtime", level: 3, client_id: "unavail-uuid-3", ai_used: 1,
+  ai_verdict: "unavailable", ai_unavailable_reason: "http_503",
+});
+await api("POST", "/api/guard/events", {
+  cause: "watch:bedtime", level: 3, client_id: "unavail-uuid-4", ai_used: 1,
+  ai_verdict: "unavailable", ai_unavailable_reason: "http_50",
+});
+ok("http_503은 남고 http_50은 목록 밖이다 (세 자리로 닫혀 있다)",
+  raw.prepare("SELECT ai_unavailable_reason AS r FROM guard_events WHERE client_id='unavail-uuid-3'").get()?.r === "http_503"
+  && raw.prepare("SELECT ai_unavailable_reason AS r FROM guard_events WHERE client_id='unavail-uuid-4'").get()?.r === null);
+
+// 판정이 있으면 이유는 없다 — `approve`인데 "왜 못 불렀는가"가 붙으면 그 자체가 거짓이다.
+await api("POST", "/api/guard/events", {
+  cause: "watch:bedtime", level: 4, client_id: "unavail-uuid-5", ai_used: 1,
+  ai_verdict: "approve", ai_unavailable_reason: "timeout",
+});
+ok("approve에는 이유가 안 붙는다 (판정이 있으면 못 부른 게 아니다)",
+  raw.prepare("SELECT ai_unavailable_reason AS r FROM guard_events WHERE client_id='unavail-uuid-5'").get()?.r === null);
+
+// ★ 대장이 셋이다 — TS · 0016의 CHECK · GuardVerify.kt. **두 곳에 두면 갈라진다.**
+//   기대값이 비어 있지 않으므로 **스캐너가 죽어 목록이 `[]`가 되면 그 자체로 빨간불**이다
+//   (T-26의 교훈 — '0건'은 못 찾을 때도 초록이다).
+const sql0016 = readFileSync(join(here, "../migrations/0016_guard_unavailable_reason.sql"), "utf8")
+  .replace(/--[^\n]*/g, "");                       // 주석 안의 괄호가 IN 블록을 잘라먹는다
+const inBlock = sql0016.slice(sql0016.indexOf("ai_unavailable_reason IN ("));
+const sqlReasons = [...inBlock.slice(0, inBlock.indexOf(")")).matchAll(/'([a-z_0-9]+)'/g)].map((m) => m[1]);
+const ktSrc = readFileSync(
+  join(here, "../android/app/src/main/java/dev/mond1424/personalos/guard/GuardVerify.kt"), "utf8");
+const ktBlock = ktSrc.slice(ktSrc.indexOf("object Reason {"), ktSrc.indexOf("fun http("));
+const ktReasons = [...ktBlock.matchAll(/const val [A-Z_]+ = "([a-z_]+)"/g)].map((m) => m[1]);
+const ledger = [...guard.UNAVAILABLE_REASONS].sort().join(",");
+ok(`이유의 닫힌 목록이 TS·0016·Kotlin 셋 다 같다 (${guard.UNAVAILABLE_REASONS.length}개)`,
+  ledger.length > 0 && sqlReasons.sort().join(",") === ledger && ktReasons.sort().join(",") === ledger,
+  `ts=${ledger} sql=${sqlReasons.join(",")} kt=${ktReasons.join(",")}`);
+ok("http_NNN 모양도 셋이 같다 (0016 GLOB · Kotlin http())",
+  /GLOB 'http_\[0-9\]\[0-9\]\[0-9\]'/.test(sql0016) && /fun http\(code: Int\) = "http_\$code"/.test(ktSrc));
+
+// snapshot()의 **짝** — 새 항만 보면 기존 항을 지워도 통과한다(티켓 §확인 절차 2번).
+// `screen_on_sec`은 개입 몫을 **포함한 채** 남아야 한다: 미리 빼서 저장하면 파생을
+// 물화하는 것이고(원칙 1) 이름과 뜻이 갈라진다. 읽는 쪽이 뺀다.
+const logSrc = readFileSync(
+  join(here, "../android/app/src/main/java/dev/mond1424/personalos/guard/GuardActivityLog.kt"), "utf8");
+ok("snapshot()에 intervene_sec이 더해졌고 screen_on_sec은 그대로다",
+  /\.put\("intervene_sec"/.test(logSrc) && /\.put\("screen_on_sec"/.test(logSrc));
+ok("빼서 저장하지 않는다 — screen_on_sec에 개입 몫을 감산한 자리가 없다",
+  !/screenOnMs\s*-=|screenOnMs\s*-\s*interveneMs/.test(logSrc));
 
 // ⑤ 킬 스위치 — 끄면 **결정론 복귀 = 항상 격상**. Level 3으로 떨구면 끄기가 벌이 된다.
 await api("PUT", "/api/settings/guard_ai_verify", { value: "off" });

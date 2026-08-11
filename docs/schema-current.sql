@@ -1,9 +1,12 @@
 -- docs/schema-current.sql — 스키마 스냅샷 (자동 생성)
 -- migrations/ 전체를 인메모리 sqlite에 적용한 뒤 sqlite_master를 덤프한 것.
--- 최신 마이그레이션: 0015_me_history_reason.sql  ·  갱신 2026-08-05
+-- 최신 마이그레이션: 0016_guard_unavailable_reason.sql  ·  갱신 2026-08-11
 -- 0013·0014는 DDL을 바꾸지 않는다: 0013 = analyses backfill(트리거를 원문 그대로 복원) ·
 --   0014 = lm_schema.body에 title 얹기(UPDATE만).
 -- 0015 = me_history에 reason TEXT 추가(ADR-027 — 모드 하향 사유). ALTER라 컬럼이 표 끝에 붙는다.
+-- 0016 = guard_events에 ai_unavailable_reason TEXT 추가(T-31 — 왜 못 불렀는가). 같은 이유로 표 끝.
+--   ai_verdict의 CHECK는 건드리지 않았다 — 값을 넓히면 과거 행과 모양이 갈라지고,
+--   CHECK 위반이 400이 되어 기기의 flush()가 발동 행을 버린다.
 -- 손으로 고치지 않는다 — 마이그레이션을 추가하고 다시 덤프한다 (CLAUDE.md 세션 종료 규칙).
 
 
@@ -80,7 +83,23 @@ CREATE TABLE "guard_events" (
   event_id        TEXT REFERENCES events(id),       -- 보호 규칙이 붙은 일정
   outcome         TEXT CHECK (outcome IN ('success','failure')),
   outcome_at      TEXT,
-  created_at      TEXT NOT NULL, client_id TEXT,
+  created_at      TEXT NOT NULL, client_id TEXT, ai_unavailable_reason TEXT
+  CHECK (
+    ai_unavailable_reason IN (
+      -- 기기가 서버에 못 닿았다
+      'timeout',        -- 6초 안에 응답이 없다 (SocketTimeoutException)
+      'dns',            -- 호스트 이름을 못 풀었다 (UnknownHostException)
+      'network',        -- 연결 자체가 안 됐다 (ConnectException·SSL·소켓 끊김)
+      'bad_response',   -- 2xx인데 본문이 판정이 아니다
+      'no_base',        -- 서버 주소가 설정에 없다
+      -- 서버는 답했는데 판정이 아니었다 (`source`가 그대로 온다)
+      'server_timeout', -- 모델이 8초를 넘겼다
+      'server_error',   -- 서버가 오류를 만났다
+      'cap'             -- 일일 상한 (ADR-024 ③) — 못 부른 게 아니라 안 부른 것이다
+    )
+    -- 2xx가 아닌 응답. 코드까지 남긴다 — 401(토큰 만료)과 503(과부하)의 대응이 다르다.
+    OR ai_unavailable_reason GLOB 'http_[0-9][0-9][0-9]'
+  ),
 
   CHECK (reaction != 'override' OR override_reason IS NOT NULL)   -- Override엔 사유 필수 (§6.3)
 );

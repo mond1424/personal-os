@@ -113,6 +113,13 @@ object GuardActivityLog {
      * **점수를 내지 않는다.** 항 값만 남긴다 —
      * 위험도는 기록하되 발동 게이트로 쓰지 않는다(ADR-021).
      * 가중치는 10월에 실제 스냅샷에서 유도한다.
+     *
+     * **`intervene_sec`은 `screen_on_sec`에서 빼지 않는다** (T-31). 화면은 개입 중에도
+     * 실제로 켜져 있었으므로 `screen_on_sec`은 이름 그대로가 맞다 — **더하고, 빼지 않는다.**
+     * 미리 뺀 값을 저장하면 파생을 물화하는 것이고(원칙 1) 이름과 뜻이 갈라진다.
+     * 12월에 §6.5가 *"개입 뒤에도 화면을 오래 켜 둔다"*를 읽을 때 **그게 사용자인지
+     * `FLAG_KEEP_SCREEN_ON`인지** 읽는 쪽이 빼서 가른다. 과거 스냅샷엔 이 키가 없어
+     * `undefined`가 *"모른다"*로 읽힌다 — 그게 사실이다.
      */
     fun snapshot(ctx: Context, minutes: Int = 60): JSONObject {
         val now = System.currentTimeMillis()
@@ -123,12 +130,27 @@ object GuardActivityLog {
         var unlocks = 0
         val appMs = mutableMapOf<String, Long>()
         var lastScreenOnAt = 0L
+        var interveneMs = 0L
+        var lastInterveneAt = 0L
 
         for (i in 0 until arr.length()) {
             val o = arr.getJSONObject(i)
             val at = o.optLong("at"); val until = o.optLong("until")
+            val kind = o.optString("kind")
+
+            // 개입 구간만 **창 필터보다 앞에서** 읽는다. 개입은 창 밖에서 시작해 창 안까지
+            // 이어질 수 있고 — 알림음은 3분에 멎지만 화면은 `KEEP_SCREEN_ON`으로 남는다 —
+            // 그게 바로 T-30이 잡은 그 밤이다. 뒤에 두면 그 구간이 통째로 0으로 읽혀
+            // **가장 필요한 경우에만 못 가른다.**
+            when (kind) {
+                "intervene_on" -> if (lastInterveneAt == 0L) lastInterveneAt = maxOf(at, since)
+                "intervene_off" -> if (lastInterveneAt > 0) {
+                    interveneMs += maxOf(0, at - lastInterveneAt); lastInterveneAt = 0
+                }
+            }
+
             if (until < since) continue
-            when (o.optString("kind")) {
+            when (kind) {
                 "screen_on" -> lastScreenOnAt = maxOf(at, since)
                 "screen_off" -> if (lastScreenOnAt > 0) { screenOnMs += at - lastScreenOnAt; lastScreenOnAt = 0 }
                 "unlock" -> unlocks++
@@ -139,6 +161,8 @@ object GuardActivityLog {
             }
         }
         if (lastScreenOnAt > 0) screenOnMs += now - lastScreenOnAt
+        // 아직 안 닫힌 개입은 지금까지가 구간이다 — 발동 시점에 부르므로 실제로 열려 있을 수 있다.
+        if (lastInterveneAt > 0) interveneMs += now - lastInterveneAt
 
         // 초 단위로 남긴다. 분으로 자르면 1분 미만이 전부 0이 되어
         // 10월 가중치 유도(ADR-021) 때 이 항이 통째로 쓸모없어진다 — 소급 보정이 불가능하다.
@@ -152,6 +176,8 @@ object GuardActivityLog {
             .put("window_min", minutes)
             .put("hour", cal.get(java.util.Calendar.HOUR_OF_DAY) + cal.get(java.util.Calendar.MINUTE) / 60.0)
             .put("screen_on_sec", screenOnMs / 1000)
+            // 위 초 중 **Guard 자신의 개입 화면**이 켜 둔 몫 (T-31). screen_on_sec의 부분집합이다.
+            .put("intervene_sec", interveneMs / 1000)
             .put("unlocks", unlocks)
             .put("top_apps", top)
             .put("samples", arr.length())

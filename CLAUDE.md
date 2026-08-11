@@ -73,7 +73,9 @@ npm run deploy
 - **불변성은 API가 아니라 DB 트리거가 최종 강제**하고, Worker는 그 거부를 `409/400`으로 번역만 한다(`translateDbError`).
 - **`public/` 하위엔 실제 자산만 둔다.** `[assets] directory="public"`이라 소스·마이그레이션을 넣으면 그대로 외부에 노출된다.
 - 화면은 전부 원본의 조인 뷰. SQL은 `db/index.ts`에만. 도메인 규칙·트랜잭션 순서는 `services/`.
-- id = `YYYYMMDD-NNN`(불변) / title 자유 변경. 하루 경계 05:00, 귀속일은 기록 시점에 확정(경계 바꿔도 과거 불변).
+- id = `YYYYMMDD-NNN`(불변) / title 자유 변경. 귀속일은 기록 시점에 확정(경계 바꿔도 과거 불변).
+  **하루 경계는 설정값이다 — 여기에 시각을 적지 않는다.** 실제 값은 `GET /api/guard/schedule`의
+  `boundary`가 준다(여기 `05:00`이라 적혀 있었는데 실제로는 `06:00`이었다 — 기준선과 같은 사고다).
 
 ## 함정 — 실제로 물렸던 것들 (README0722.md 요약)
 

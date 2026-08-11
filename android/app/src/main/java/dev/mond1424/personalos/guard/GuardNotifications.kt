@@ -233,17 +233,23 @@ object GuardNotifications {
         if (candidate4 && clientId != null) {
             val app = ctx.applicationContext
             Thread {
-                val v = runCatching {
-                    GuardVerify.verify(app, clientId, cause, eventId, fgApp, snap)
-                }.getOrNull()
+                // `attempt`는 못 받았을 때 **왜인지도** 들고 나온다 (T-31). 판정은 그대로다 —
+                // 늘어나는 것은 기록뿐이다. 밖이 던지면 이유를 모르는 것이 사실이므로 비운다.
+                val a = runCatching {
+                    GuardVerify.attempt(app, clientId, cause, eventId, fgApp, snap)
+                }.getOrNull() ?: GuardVerify.Attempt(null, null)
+                val v = a.verdict
                 // 판정을 아예 못 받았으면(오프라인·서버 무응답) 'unavailable' — 판정이 아니라
                 // "부를 수 없었다"는 기록이다. 그래도 남겨야 그 밤을 나중에 읽을 수 있다.
+                // **값의 모양은 그대로 두고 이유를 옆에 싣는다**(0016) — `ai_verdict`를 넓히면
+                // 0010의 CHECK에 걸려 400이 되고, `flush()`가 그 발동 행을 통째로 버린다.
                 runCatching {
                     GuardEventQueue.amendFire(
                         app, clientId,
                         level = if (v?.upgrades == true) 4 else null,
                         aiUsed = v?.aiUsed ?: 0,
                         aiVerdict = v?.aiVerdict ?: "unavailable",
+                        unavailableReason = a.reason,
                     )
                 }
                 if (v?.upgrades == true) {

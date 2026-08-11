@@ -20,6 +20,38 @@ const DEFAULT_PREP_MIN = 90;     // 기상~출발
 const LEVELS = [1, 2, 3, 4];
 const REACTIONS = ["accepted", "override", "ignored"];
 
+/**
+ * `ai_verdict='unavailable'`의 **이유** — 닫힌 목록 (T-31 · 0016).
+ *
+ * **여기가 대장이다.** `migrations/0016`의 CHECK와 `GuardVerify.kt`의 상수는 이것의 메아리이고,
+ * 셋이 갈라지면 smoke가 빨간불이 된다 — 두 곳에 두면 갈라진다는 것을 이 리포가 두 번 물렸다.
+ *
+ * 닫아 두는 이유는 **12월에 세어야 하기 때문**이다. 자유 문자열이면 같은 원인이
+ * 여러 철자로 흩어져 집계가 안 되고, 그러면 ADR-024를 재검토할 재료가 없다.
+ */
+export const UNAVAILABLE_REASONS = [
+  "timeout", "dns", "network", "bad_response", "no_base",
+  "server_timeout", "server_error", "cap",
+] as const;
+
+/** 2xx가 아닌 응답은 코드까지 — 401(토큰 만료)과 503(과부하)의 대응이 다르다. */
+const HTTP_REASON = /^http_[0-9]{3}$/;
+
+/**
+ * 목록 밖은 **버리되 행은 살린다.** 여기서 400을 던지면 0016의 CHECK에 걸리는 것과
+ * 결과가 같아진다 — 기기의 `flush()`가 400을 '재시도 무의미'로 보고 **발동 행을 버린다.**
+ * 이 티켓이 늘리려는 것이 그 행이므로, **이유 하나 때문에 기록을 잃지 않는다.**
+ * (구버전 서버 + 신버전 APK로 값이 갈리는 경우가 실제로 그 자리다.)
+ *
+ * 판정이 있으면 이유는 없다 — `approve`인데 "왜 못 불렀는가"가 붙으면 그 자체가 거짓이다.
+ */
+const unavailableReason = (verdict: string | null, raw: unknown): string | null => {
+  if (verdict !== "unavailable") return null;
+  const s = typeof raw === "string" ? raw.trim() : "";
+  if (!s) return null;
+  return (UNAVAILABLE_REASONS as readonly string[]).includes(s) || HTTP_REASON.test(s) ? s : null;
+};
+
 // Override 사유에 **길이 하한을 두지 않는다.**
 // 20자 규칙을 뒀다가 실사용에서 마찰이 아니라 강제로 읽혀 걷어냈다 —
 // §6.3이 원하는 것은 "비용을 치르게 한다"이지 "분량을 채우게 한다"가 아니다.
@@ -245,6 +277,8 @@ export async function record(env: Env, t: TimeCtx, input: any) {
     risk_snapshot: input.risk_snapshot ? JSON.stringify(input.risk_snapshot) : null,
     ai_used: input.ai_used ? 1 : 0,
     ai_verdict: input.ai_verdict ?? null,
+    // 왜 못 불렀는가 (0016). 목록 밖이면 조용히 비운다 — 위 주석 참조.
+    ai_unavailable_reason: unavailableReason(input.ai_verdict ?? null, input.ai_unavailable_reason),
     task_id: input.task_id ?? null,
     period_id: input.period_id ?? null,
     event_id: input.event_id ?? null,

@@ -565,6 +565,9 @@ export interface GuardEventRow {
   mode: string | null; source: "android" | "pc"; foreground_app: string | null;
   risk_score: number | null; risk_snapshot: string | null;
   ai_used: 0 | 1; ai_verdict: "approve" | "deny" | "unavailable" | null;
+  // 왜 못 불렀는가 (0016). `ai_verdict='unavailable'`일 때만 값이 있고, 그 값은 **닫힌 목록**이다.
+  // 과거 행은 NULL — "모른다"가 사실이다. `ai_verdict`의 모양은 이것 때문에 바뀌지 않는다.
+  ai_unavailable_reason: string | null;
   reaction: "accepted" | "override" | "ignored" | null; reacted_at: string | null;
   override_reason: string | null; override_class: "avoidant" | "legitimate" | null;
   task_id: string | null; period_id: string | null; event_id: string | null;
@@ -589,17 +592,17 @@ export const stInsertGuardEvent = (
     id: string; fired_at: string; on_date: string; cause: string; level: number;
     mode: string | null; source: string; foreground_app: string | null;
     risk_score: number | null; risk_snapshot: string | null;
-    ai_used: 0 | 1; ai_verdict: string | null;
+    ai_used: 0 | 1; ai_verdict: string | null; ai_unavailable_reason: string | null;
     task_id: string | null; period_id: string | null; event_id: string | null;
     client_id: string | null; created_at: string;
   },
 ) => q(env, `INSERT INTO guard_events
     (id, fired_at, on_date, cause, level, mode, source, foreground_app,
-     risk_score, risk_snapshot, ai_used, ai_verdict,
+     risk_score, risk_snapshot, ai_used, ai_verdict, ai_unavailable_reason,
      task_id, period_id, event_id, client_id, created_at)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
   .bind(e.id, e.fired_at, e.on_date, e.cause, e.level, e.mode, e.source, e.foreground_app,
-    e.risk_score, e.risk_snapshot, e.ai_used, e.ai_verdict,
+    e.risk_score, e.risk_snapshot, e.ai_used, e.ai_verdict, e.ai_unavailable_reason,
     e.task_id, e.period_id, e.event_id, e.client_id, e.created_at);
 
 /** 반응 — 한 번만. `AND reaction IS NULL`이 트리거보다 먼저 걸러 409를 덜 나게 한다. */

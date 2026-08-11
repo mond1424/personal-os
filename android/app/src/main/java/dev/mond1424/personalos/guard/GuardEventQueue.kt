@@ -90,12 +90,23 @@ object GuardEventQueue {
      * 이미 밀어 올려 큐에서 빠졌으면 조용히 지나간다 — 서버의 upsert는 반응만 채우므로
      * level·ai_*를 뒤늦게 고칠 수 없다. 발동 직후 6초 안이라 실제로는 거의 로컬에 있다.
      */
-    fun amendFire(ctx: Context, clientId: String, level: Int?, aiUsed: Int, aiVerdict: String?) {
+    fun amendFire(
+        ctx: Context,
+        clientId: String,
+        level: Int?,
+        aiUsed: Int,
+        aiVerdict: String?,
+        // 왜 못 불렀는가 (T-31 · 0016). `ai_verdict`는 'unavailable' 그대로이고 **이유만 옆에 붙는다** —
+        // 값을 넓히면 0010의 CHECK에 걸려 400이 되고, 아래 `flush()`가 그 행을 버린다.
+        // 옛 서버는 이 키를 그냥 무시한다(모르는 필드다) — APK를 먼저 깔아도 안전하다.
+        unavailableReason: String? = null,
+    ) {
         val list = read(ctx)
         val hit = list.firstOrNull { it.optString("client_id") == clientId } ?: return
         if (level != null) hit.put("level", level)
         hit.put("ai_used", aiUsed)
         hit.put("ai_verdict", aiVerdict ?: JSONObject.NULL)
+        hit.put("ai_unavailable_reason", unavailableReason ?: JSONObject.NULL)
         write(ctx, list)
     }
 
