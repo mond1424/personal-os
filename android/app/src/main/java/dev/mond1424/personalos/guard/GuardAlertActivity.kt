@@ -87,6 +87,11 @@ class GuardAlertActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         live = java.lang.ref.WeakReference(this)
+        // 표본에 **자기 수명을 남긴다** (T-30). 여기부터 화면이 켜져 있어도 그건 Guard가 켠 것이다.
+        // `showOverLockScreen()`보다 **먼저** 남긴다 — 그쪽의 `FLAG_TURN_SCREEN_ON`이
+        // `ACTION_SCREEN_ON`을 부르고, 그 표본이 이것보다 앞서면 개입 중에도 연속이 쌓인다.
+        // (`continuousScreenOnMin`이 순서와 무관하게 읽지만, 순서까지 맞춰 두면 표본 자체가 사실이다.)
+        GuardActivityLog.note(this, "intervene_on", null)
         showOverLockScreen()
         blockBackGesture()
         setContentView(R.layout.activity_guard_alert)
@@ -273,6 +278,10 @@ class GuardAlertActivity : Activity() {
         // 격상 대상에서 뺀다 — 죽은 화면에 올려 봐야 아무 일도 안 일어나지만,
         // 다음 발동이 이 참조를 덮기 전까지 남아 있을 이유가 없다.
         if (live?.get() === this) live = null
+        // 짝의 뒤쪽 (T-30). **화면은 여전히 켜져 있고, 여기서부터가 사용자다.**
+        // 이걸 빼면 `KEEP_SCREEN_ON`으로 켜진 화면에는 `ACTION_SCREEN_ON`이 다시 오지 않으므로
+        // 연속이 0에 붙박여 **진짜 사용을 영영 못 센다** — 앞만 고치면 반대로 샌다.
+        GuardActivityLog.note(this, "intervene_off", null)
         GuardAlarmPlayer.stop()   // 화면이 죽으면 소리도 죽는다 — 누수 방지
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             (blockBack as? OnBackInvokedCallback)?.let {

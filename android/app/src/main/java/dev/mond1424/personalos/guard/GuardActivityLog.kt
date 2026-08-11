@@ -63,15 +63,32 @@ object GuardActivityLog {
      * 누적이 아니라 연속이어야 한다 — 잠깐 시간을 확인하는 것과
      * 붙잡고 있는 것을 가르는 것이 이 규칙의 전부다.
      * 마지막 screen_off 이후로 흐른 시간을 센다. 켜진 적이 없으면 0.
+     *
+     * **Guard가 켠 화면은 사용자 연속이 아니다** (T-30). 개입 화면은 `FLAG_TURN_SCREEN_ON`으로
+     * 화면을 켜고 `FLAG_KEEP_SCREEN_ON`으로 꺼지지 않게 유지한다 — 그래서 `screen_off`가
+     * 영영 오지 않고, 20분 뒤 감지가 **스스로를 다시 발동시켰다**(8/11 밤 넷, 8/8·8/9에도).
+     *
+     * **원본에는 사실을 적고 여기서 가른다.** `screen_off`를 대신 남기지 않는다 —
+     * 화면은 실제로 켜져 있으므로 그건 표본에 거짓을 적는 것이고, 이 규칙이 고치려는 잘못 그 자체다.
      */
     fun continuousScreenOnMin(ctx: Context): Int {
         val arr = read(ctx)
         var onAt = 0L
+        // 개입 화면이 떠 있는 구간. **순서 경합을 이 플래그가 흡수한다** —
+        // `FLAG_TURN_SCREEN_ON`이 부르는 `ACTION_SCREEN_ON`은 `onCreate`보다 **뒤에** 올 수 있고,
+        // 그 `screen_on`을 그냥 받으면 개입 중인데도 연속이 다시 세어진다.
+        var intervening = false
         for (i in 0 until arr.length()) {
             val o = arr.getJSONObject(i)
             when (o.optString("kind")) {
-                "screen_on" -> if (onAt == 0L) onAt = o.optLong("at")
+                "screen_on" -> if (!intervening && onAt == 0L) onAt = o.optLong("at")
                 "screen_off" -> onAt = 0L        // 껐으면 연속이 끊긴다
+                // 여기부터는 Guard가 켠 화면이다.
+                "intervene_on" -> { intervening = true; onAt = 0L }
+                // 화면은 여전히 켜져 있다 — **여기서부터가 사용자다.** 0에서 다시 센다.
+                // (개입 중에 전원 버튼을 눌렀다면 위에서 `screen_on`을 무시했으므로,
+                //  닫는 시점엔 사용자가 다시 켜서 반응한 것이 맞다.)
+                "intervene_off" -> { intervening = false; onAt = o.optLong("at") }
             }
         }
         if (onAt == 0L) return 0
