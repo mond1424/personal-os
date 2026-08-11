@@ -309,6 +309,33 @@ function syncOverlay() {
   if (ph) ph.dataset.depth = Math.min(open.length, 3);   // 셸이 없어도 던지지 않는다(검사 하네스)
 }
 
+/* 하드웨어 뒤로가기 — **맨 위 하나만** 닫는다 (T-34).
+ *
+ * **판단과 리스너를 나눈다.** jsdom엔 Capacitor가 없으므로 판단을 리스너 안에 넣으면
+ * 검사가 0이 된다 — T-33이 고친 그 자리와 같은 종류다. 이 함수는 순수하고
+ * `front.mjs`가 직접 부른다.
+ *
+ * ★ **개입 화면의 뒤로가기 차단과 무관하다.** `GuardAlertActivity`는 `OnBackInvokedDispatcher`로
+ *   뒤로가기를 **의도적으로 막는다** — 그게 ADR-026의 Override 마찰이고, 뒤로가기로 빠져나갈 수
+ *   있으면 60초·180초 대기가 통째로 무의미해진다. **다른 액티비티이고 여기는 메인의 웹 화면만 본다.**
+ *
+ * @returns 무엇을 닫았는지. **`null`이면 아무것도 안 닫았다 — 앱이 나간다.**
+ *   ④를 반드시 남긴다: 뒤로가기로 앱을 못 나가면 사용자가 갇히고, 그건 이 티켓이
+ *   고치려는 것보다 나쁘다. "두 번 누르면 종료" 같은 것도 두지 않는다 —
+ *   마찰은 Guard가 쓰는 도구이지 앱 전체가 쓰는 것이 아니다.
+ */
+function handleBack() {
+  // ① 겹쳐 있으면 하나씩. '위' 판정은 DOM 순서다(syncOverlay와 같은 기준) —
+  //    시트끼리 z-index가 같아 나중 것이 위에 그려진다.
+  const open = $$(".sheet.on");
+  if (open.length) { closeSheet(open[open.length - 1].id); return "sheet"; }
+  // ② 날짜 선택 모드 — 원래 탭으로 되돌린다. 새 경로를 만들지 않고 cancelPick을 그대로 쓴다.
+  if (S.pick) { cancelPick(); return "pick"; }
+  // ③ Today가 아니면 Today로.
+  if ($("#phone").dataset.tab !== "today") { switchTab("today"); return "tab"; }
+  return null;   // ④ Today에서 아무것도 안 열려 있다 — 막지 않는다.
+}
+
 function openSheet(id) { $("#" + id).classList.add("on"); syncOverlay(); }
 function closeSheet(id) { $("#" + id).classList.remove("on"); syncOverlay(); }   // 겹쳐 뜬 시트 하나만
 function closeAll() {
@@ -478,7 +505,10 @@ async function loadGuardOutcome() {
 
     const send = (outcome) => run(async () => {
       await Api.guardOutcome(r.id, outcome);
-      bar.style.display = "none";
+      // **여기도 `set()`을 지난다.** 직접 `display`만 끄면 `data-state`가 `ask`에 남아
+      // 상태와 화면이 갈린다 — 두 곳에 두면 갈라진다는 그 모양이 한 함수 안에서 생긴다.
+      // 방금 하나를 답했으니 그 순간은 '물어볼 게 없다'가 맞고, 곧 아래가 다시 정한다.
+      set("none");
       toast(outcome === "success" ? "기록했어요" : "기록했어요 — 다음 판단에 쓰여요");
       return loadGuardOutcome();   // 남은 게 또 있으면 이어서 묻는다
     });
@@ -2916,6 +2946,16 @@ async function boot() {
   // 두 번 걸리면 스와이프 한 번에 탭이 두 칸 넘어가는 식으로 조용히 어긋난다.
   if (booted) return;
   booted = true;
+
+  // 하드웨어 뒤로가기 (T-34). 판단은 `handleBack()`이 하고 여기는 잇기만 한다.
+  // 브라우저(PWA)엔 Capacitor가 없으므로 조용히 지나간다 — 그 환경엔 하드웨어 키도 없다.
+  // ⚠️ 리스너를 달면 Capacitor의 기본 동작이 꺼진다 → **나가는 것도 우리가 해야 한다.**
+  //    `handleBack()`이 `null`을 주면 `exitApp()`이다. 이걸 빼면 사용자가 앱에 갇힌다.
+  const capApp = globalThis.Capacitor?.Plugins?.App;
+  capApp?.addListener?.("backButton", () => {
+    if (!handleBack()) capApp.exitApp?.();
+  });
+
   // 목업 인터랙션 바인딩 (구조 동일)
   $$("nav button").forEach((b) => (b.onclick = () => switchTab(b.dataset.go)));
   $$("[data-f]").forEach((b) => (b.onclick = () => {

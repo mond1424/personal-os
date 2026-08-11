@@ -1372,6 +1372,58 @@ ok("마감 뒤 캐시 무효화 · 다음 렌더 재요청",
   ev("window.__calendarCalls.length") === closeCalendarCalls + 1,
   `${closeCalendarCalls}→${ev("window.__calendarCalls.length")}`);
 
+console.log("\n[뒤로가기 — 맨 위 하나만 닫는다]");
+// jsdom엔 Capacitor가 없다. 그래서 판단(`handleBack`)이 리스너 밖에 있어야 검사가 붙는다.
+// 리스너 안에 넣었으면 여기가 통째로 0이 된다 — T-33이 고친 그 자리와 같은 종류다.
+const t34Back = () => ev(`handleBack()`);
+const t34Reset = () => ev(`(()=>{ closeAll(); S.pick = null; switchTab("today", false); })()`);
+const t34Open = (id) => ev(`openSheet(${JSON.stringify(id)})`);
+const t34Tab = () => $("#phone").dataset.tab;
+const t34OpenN = () => w.document.querySelectorAll(".sheet.on").length;
+
+// ① 시트 하나 — 그 시트만 닫히고 탭은 그대로다.
+t34Reset();
+t34Open("sh-log");
+ok("① 시트가 열려 있으면 그 시트만 닫는다 · 탭은 그대로",
+  t34Back() === "sheet" && !$("#sh-log").classList.contains("on") && t34Tab() === "today",
+  `${t34Tab()} / ${$("#sh-log").className}`);
+
+// ② 겹치면 **한 번에 하나만.** 사용자가 어디까지 닫았는지 알아야 한다.
+//    '위'는 **DOM 순서**다(`syncOverlay`와 같은 기준 — z-index가 같아 나중 것이 위에 그려진다).
+//    그래서 **연 순서를 일부러 뒤집어** 연다: sh-log(442줄)를 먼저 열고 sh-day(241줄)를 나중에.
+//    닫히는 것이 sh-log면 DOM 순서를 따른 것이고, sh-day면 '마지막에 연 것'을 따른 것이다.
+t34Reset();
+t34Open("sh-log"); t34Open("sh-day");
+const t34First = t34Back();
+const t34On = (id) => $("#" + id).classList.contains("on");
+ok("② 겹치면 한 번에 하나만 — 맨 위(DOM 나중)부터다, 연 순서가 아니다",
+  t34First === "sheet" && !t34On("sh-log") && t34On("sh-day"),
+  `${t34First} / log=${t34On("sh-log")} day=${t34On("sh-day")}`);
+ok("겹친 둘째도 다음 뒤로가기에 닫힌다",
+  t34Back() === "sheet" && !t34On("sh-day") && t34OpenN() === 0);
+
+// ③ 피커 모드 — 원래 탭으로. 시트는 열려 있지 않았다(①보다 뒤 순서라는 것까지 본다).
+t34Reset();
+ev(`(()=>{ switchTab("cal", false); S.pick = { mode:"assign", origin:"works" }; })()`);
+const t34Pick = t34Back();
+ok("③ 날짜 선택 모드면 원래 탭으로 돌아온다 · 시트는 안 건드린다",
+  t34Pick === "pick" && ev(`S.pick`) === null && t34Tab() === "works"
+  && t34OpenN() === 0, `${t34Pick} / ${t34Tab()}`);
+
+// ④ Today가 아닌 탭 → Today.
+t34Reset();
+ev(`switchTab("me", false)`);
+ok("④ Today가 아닌 탭이면 Today로", t34Back() === "tab" && t34Tab() === "today", t34Tab());
+
+// ⑤ ★ 짝 — 아무것도 안 닫았다고 **말해야** 앱이 나갈 수 있다.
+//    ①~④만 보면 "항상 무언가를 닫는 구현"(= 앱을 영영 못 나감)도 전부 통과한다.
+t34Reset();
+const t34Exit = t34Back();
+ok("⑤ ★ Today에서 아무것도 안 열려 있으면 null — 앱이 나갈 수 있다",
+  t34Exit === null && t34Tab() === "today" && t34OpenN() === 0, String(t34Exit));
+// 개입 화면의 차단은 안드로이드 쪽이고 여기서 볼 수 없다 — §확인 절차가 본다(감추지 않는다).
+t34Reset();
+
 console.log("\n[outcome 확정 카드 — 루프의 시작점]");
 // 개입은 저절로 기록되지만 `outcome`은 사람이 붙여야만 생긴다. 카드가 안 뜨면 9~11월 내내
 // outcome이 전부 NULL이고, 12월에 §6.5가 읽을 것이 절반만 남는다 — "개입했다"는 있고
