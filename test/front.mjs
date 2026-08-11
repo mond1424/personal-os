@@ -1372,6 +1372,72 @@ ok("마감 뒤 캐시 무효화 · 다음 렌더 재요청",
   ev("window.__calendarCalls.length") === closeCalendarCalls + 1,
   `${closeCalendarCalls}→${ev("window.__calendarCalls.length")}`);
 
+console.log("\n[outcome 확정 카드 — 루프의 시작점]");
+// 개입은 저절로 기록되지만 `outcome`은 사람이 붙여야만 생긴다. 카드가 안 뜨면 9~11월 내내
+// outcome이 전부 NULL이고, 12월에 §6.5가 읽을 것이 절반만 남는다 — "개입했다"는 있고
+// "그래서 어떻게 됐다"가 없다. **그리고 그 실패는 아무 소리도 내지 않는다.**
+const t33Bar = $("#td-guard");
+const t33Rows = [
+  { id: "t33-a", on_date: "2026-08-05", reaction: "override", event_title: "확률론 시험", event_date: "2026-08-06" },
+  { id: "t33-b", on_date: "2026-08-05", reaction: "accepted", event_title: null, event_date: null },
+];
+const t33Load = (body) => ev(`(async()=>{
+  const oldPending = Api.guardPending, oldOutcome = Api.guardOutcome;
+  try { ${body} } finally { Api.guardPending = oldPending; Api.guardOutcome = oldOutcome; }
+})()`);
+// 스텁을 남겨 둔 채 클릭까지 가야 하므로 복원은 마지막에 한 번 한다.
+await ev(`(async()=>{
+  window.__t33 = { pending: ${JSON.stringify(t33Rows)}, sent: [], old: [Api.guardPending, Api.guardOutcome] };
+  Api.guardPending = async () => window.__t33.pending;
+  Api.guardOutcome = async (id, outcome) => {
+    window.__t33.sent.push(id + ":" + outcome);
+    window.__t33.pending = window.__t33.pending.filter((r) => r.id !== id);
+    return {};
+  };
+  await loadGuardOutcome();
+})()`);
+const t33Md = ev(`md("2026-08-06")`);
+ok("① 대기가 있으면 카드가 뜬다 — 날짜와 제목이 문구에 든다",
+  t33Bar.dataset.state === "ask" && t33Bar.style.display === "flex"
+  && txt("#td-guard-text").includes("확률론 시험") && txt("#td-guard-text").includes(t33Md),
+  `${t33Bar.dataset.state} / ${txt("#td-guard-text")}`);
+
+// ② 계약은 "한 번에 하나만 묻고, 확정하면 이어서 묻는다"(app.js:452·:471)이다.
+//    둘을 만들고 하나를 확정해 **다음 것이 뜨는지**까지 본다 — 버튼이 안 먹으면 여기서 죽는다.
+$("#td-guard-ok").click();
+await sleep(150);
+ok("② 확정하면 다음 것을 이어 묻는다 — 한 번에 하나만",
+  ev(`window.__t33.sent.join("|")`) === "t33-a:success"
+  && t33Bar.dataset.state === "ask"
+  && !txt("#td-guard-text").includes("확률론 시험")
+  && txt("#td-guard-text").includes("그 일"),
+  `${ev(`window.__t33.sent.join("|")`)} / ${txt("#td-guard-text")}`);
+// 버튼 둘이 **서로 다른 값**을 보내는지. 한쪽만 보면 둘이 같은 값을 보내도 초록이다.
+$("#td-guard-no").click();
+await sleep(150);
+ok("버튼 둘이 각각 success·failure로 간다",
+  ev(`window.__t33.sent.join("|")`) === "t33-a:success|t33-b:failure", ev(`window.__t33.sent.join("|")`));
+
+// ③ 대기가 없다 — **정상이다.** 안 뜨는 것이 맞다.
+const t33None = { state: t33Bar.dataset.state, display: t33Bar.style.display };
+ok("③ 대기가 없으면 안 뜬다 · 상태는 none (이어 묻기가 멈춘다)",
+  t33None.state === "none" && t33None.display === "none", JSON.stringify(t33None));
+
+// ④ 조회가 실패했다 — **회귀다.** 안 뜨는 것은 같지만 뜻이 다르다.
+await t33Load(`
+  Api.guardPending = async () => { throw new Error("t33 boom"); };
+  await loadGuardOutcome();
+`);
+const t33Err = { state: t33Bar.dataset.state, display: t33Bar.style.display };
+ok("④ 조회가 실패해도 화면을 막지 않는다 · 상태는 error",
+  t33Err.state === "error" && t33Err.display === "none", JSON.stringify(t33Err));
+// ★ ③과 ④의 짝. 화면에서 같고 기록에서 다르다 — 그래서 검사가 가를 수 있다.
+//   "안 뜬다"만 검사하면 조회가 항상 실패해도 초록이다(AGENT-CHAIN §5).
+ok("★ none과 error는 화면에서 같고 기록에서만 다르다",
+  t33None.display === t33Err.display && t33None.state !== t33Err.state,
+  `${t33None.state}/${t33None.display} vs ${t33Err.state}/${t33Err.display}`);
+await ev(`(async()=>{ Api.guardPending = window.__t33.old[0]; Api.guardOutcome = window.__t33.old[1]; })()`);
+
 console.log("\n[부팅 · 연결 실패 복구]");
 ok("로드 후 부팅 오버레이 닫힘", !$("#boot").classList.contains("on"));
 

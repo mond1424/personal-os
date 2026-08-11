@@ -105,7 +105,7 @@ WIP: (없음)
 | 단계 | 내용 | 상태 |
 |---|---|---|
 | **S4.1** | `risk_snapshot` 수집 | ✅ **T-32로 항이 다 찼다** — 그전까지는 절반이었다(아래) |
-| **S4.2** | outcome 확정 카드 | ✅ **루프가 닫혔다** — 서버 검사 3건. ⚠️ 프런트 검사 0(아래) |
+| **S4.2** | outcome 확정 카드 | ✅ **루프가 닫혔다** — 서버 3건 + **T-33으로 프런트 6건**(아래) |
 | **S4.4** | PC 스키마 자리 (`watch_apps`) | ✅ |
 | **S4.3** | 알림함 | ⬜ **한 줄도 없다** (2026-08-11 전수 확인) |
 
@@ -122,11 +122,11 @@ ADR-021이 발동을 기기로 옮기면서 스냅샷 생산도 같이 기기로
 없어 서버 항이 사라졌다 — **그 누락이 어디에도 안 적혔다.** `T-32`가 `record()`에서 메웠다
 (기기 항은 최상위 그대로, 서버 항은 `server` 아래, 전부 `firedAt` 기준).
 
-**S4.2 — 동작은 서 있고 검사에 구멍이 있다.** `app.js:455 loadGuardOutcome()`부터
-`POST /api/guard/events/:id/outcome`까지 사슬이 끊긴 데 없고 서버 검사 3건(200·재확정 409·400)이 있다.
-그러나 **`#td-guard`·`loadGuardOutcome`·`guardPending`이 `test/` 전체에 0건**이다.
-`front.mjs`의 `outcome` 언급은 전부 Guard 메모리(`.gmem-outcome-value`)로 **다른 화면**이다.
-게다가 이 카드는 실패 시 `catch`가 통째로 `display:none`이라 **조용히 사라진다** — `BACKLOG-0806`에 올렸다.
+**S4.2 — 검사 구멍은 `T-33`으로 닫혔다.** 전수 당시 `#td-guard`·`loadGuardOutcome`·`guardPending`이
+`test/` 전체에 **0건**이었고(`front.mjs`의 `outcome`은 전부 Guard 메모리 — 다른 화면),
+실패 시 `catch`가 `display:none`이라 **조용히 사라졌다** — 카드가 안 떠도 271/0이었다.
+`T-33`이 `data-state`로 `ask`·`none`·`error`를 갈라 프런트 검사 6건을 붙였다(front 271 → 277).
+**화면 동작은 무변경** — `catch`가 화면을 안 막는 판단은 옳았고, 그 실패가 이름을 갖게 됐을 뿐이다.
 
 **S4.3 — 없다.** `src/`·`public/`·`migrations/`·`test/` 전체에서 `notif`를 대소문자 무시로 훑어
 **파일 0개**. 테이블·라우트 셋·`api.js` 메서드·Today 배지·Me 규칙 토글·검사 전부 없다.

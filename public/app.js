@@ -454,10 +454,22 @@ function renderLogs() {
  */
 async function loadGuardOutcome() {
   const bar = $("#td-guard");
+  /* 세 상태를 남긴다 (T-33). **화면 동작은 하나도 안 바뀐다** — 여전히 `ask`만 뜬다.
+   *
+   * `display:none`이 두 가지를 뜻하고 있었다: *"물어볼 게 없다"*(정상)와
+   * *"못 물어봤다"*(회귀). 화면에서 둘이 똑같이 보이고 **검사도 가를 수 없어서**,
+   * 조회가 항상 실패해도 "안 뜬다"는 그대로 초록이었다(AGENT-CHAIN §5).
+   *
+   * 상태는 **DOM에만** 둔다 — 검사가 DOM으로 보고, 두 곳에 두면 갈라진다.
+   * 사용자에게 보이는 것은 늘리지 않는다. 늘어나는 것은 기록뿐이다. */
+  const set = (state) => {
+    bar.dataset.state = state;
+    bar.style.display = state === "ask" ? "flex" : "none";
+  };
   try {
     const rows = await Api.guardPending();
     const r = rows?.[0];
-    if (!r) return void (bar.style.display = "none");
+    if (!r) return void set("none");
 
     const what = r.event_title || "그 일";
     const when = r.event_date ? md(r.event_date) : md(r.on_date);
@@ -468,13 +480,15 @@ async function loadGuardOutcome() {
       await Api.guardOutcome(r.id, outcome);
       bar.style.display = "none";
       toast(outcome === "success" ? "기록했어요" : "기록했어요 — 다음 판단에 쓰여요");
-      loadGuardOutcome();          // 남은 게 또 있으면 이어서 묻는다
+      return loadGuardOutcome();   // 남은 게 또 있으면 이어서 묻는다
     });
     $("#td-guard-ok").onclick = () => send("success");
     $("#td-guard-no").onclick = () => send("failure");
-    bar.style.display = "flex";
+    set("ask");
   } catch {
-    bar.style.display = "none";    // Guard가 아직 없거나 조회 실패 — 화면을 막지 않는다
+    // 화면은 막지 않는다 — Guard가 아직 없는 기기에서도 Today는 떠야 한다.
+    // 그 판단은 옳았고, 바뀐 것은 **이 실패가 이제 이름을 갖는다**는 것뿐이다.
+    set("error");
   }
 }
 
