@@ -10,7 +10,7 @@ import * as db from "../db";
 import { aiConfig, callModel, parseModelJson, splitModel } from "../lib/ai";
 import { buildCoreContext } from "../lib/context";
 import { nextId } from "../lib/id";
-import { attributionOfIso, isoNow, normalizeIso } from "../lib/time";
+import { addDays, attributionOfIso, isoNow, normalizeIso } from "../lib/time";
 import { ApiError, type Env, type TimeCtx } from "../types";
 
 /** 설정 기본값 — event별 값이 없을 때. 초기값의 정확도보다 조정 가능한 구조가 중요하다. */
@@ -168,6 +168,26 @@ export async function setMode(env: Env, t: TimeCtx, key: string, reason?: unknow
  * 설계 §6.1 Level 3의 "현재 01:30"이 여기서 나온다:
  *   시험 09:00 − 준비 90분 − 수면 360분 = 01:30
  */
+/**
+ * 보호 일정 하나의 시각 축 — `start` · `deadline` · 보호 진입(`from`).
+ *
+ * **역산은 이 함수 하나뿐이다.** 두 벌 두면 반드시 갈라지고, 갈라지면 UI는 "01:30"이라 쓰고
+ * 알람은 다른 시각에 울린다 — 새벽 실패다(`protectingNow`의 주석과 같은 이유).
+ * T-32가 `record()`에서도 데드라인이 필요해지자 `schedule()` 안에 있던 것을 여기로 꺼냈다.
+ */
+function protectAxis(e: db.EventRow, offsetMin: number) {
+  const sleep = e.protect_sleep_min ?? DEFAULT_SLEEP_MIN;
+  const prep = e.protect_prep_min ?? DEFAULT_PREP_MIN;
+  // 시각이 없는 종일 일정은 09:00으로 본다 — 시험·약속의 통상 시작
+  const hhmm = e.time ?? "09:00";
+  const start = new Date(`${e.date}T${hhmm}:00${offsetSuffix(offsetMin)}`);
+  const deadline = new Date(start.getTime() - (prep + sleep) * 60_000);
+  // 보호 모드 진입 — '-1d 00:00' 형식. 파싱 실패 시 데드라인 24시간 전으로 폴백.
+  const from = parseRelative(e.protect_from ?? null, start, offsetMin)
+    ?? new Date(deadline.getTime() - 24 * 3600_000);
+  return { start, deadline, from, sleep, prep };
+}
+
 export async function schedule(env: Env, t: TimeCtx, days = 30) {
   const rows = (await db.protectedEvents(env, t.d, days)).results;
   const mode = await db.guardActiveMode(env);
@@ -175,18 +195,8 @@ export async function schedule(env: Env, t: TimeCtx, days = 30) {
   const nowMs = Date.parse(t.now);   // 요청당 한 번 읽은 시계를 그대로 쓴다 (T-23 · T-26)
 
   const plans = rows.map((e) => {
-    const sleep = e.protect_sleep_min ?? DEFAULT_SLEEP_MIN;
-    const prep = e.protect_prep_min ?? DEFAULT_PREP_MIN;
+    const { start, deadline, from, sleep, prep } = protectAxis(e, t.offsetMin);
     const cap = Math.min(e.protect_level ?? 4, maxLevel);
-
-    // 시각이 없는 종일 일정은 09:00으로 본다 — 시험·약속의 통상 시작
-    const hhmm = e.time ?? "09:00";
-    const start = new Date(`${e.date}T${hhmm}:00${offsetSuffix(t.offsetMin)}`);
-    const deadline = new Date(start.getTime() - (prep + sleep) * 60_000);
-
-    // 보호 모드 진입 — '-1d 00:00' 형식. 파싱 실패 시 데드라인 24시간 전으로 폴백.
-    const from = parseRelative(e.protect_from ?? null, start, t.offsetMin)
-      ?? new Date(deadline.getTime() - 24 * 3600_000);
 
     // 전부 시각으로 예측 가능하므로 기기가 한꺼번에 예약한다.
     const fires: { at: string; level: number; title: string; body: string }[] = [];
@@ -230,6 +240,114 @@ export async function schedule(env: Env, t: TimeCtx, days = 30) {
 
 // ── 기록 ──────────────────────────────────────────────────────
 
+/** §6.6 서버 항을 볼 창(일). Score 추세·Feelings가 이 폭으로 잡힌다. */
+const RISK_WINDOW_DAYS = 7;
+
+/**
+ * §6.6의 **서버 출처 항** — `risk_snapshot`에 얹힌다 (T-32).
+ *
+ * 계획(APP-PLAN §위험도)은 Log 활동·수면 추정·Feelings·Score 추세·데드라인까지의 시간을
+ * 요구하는데 **기기엔 그 데이터가 없다.** ADR-021이 발동을 기기로 옮기면서 스냅샷 생산도
+ * 같이 기기로 갔고, 서버 출처 항이 통째로 사라진 채 아무 데도 안 적혔다 — 그걸 여기서 메운다.
+ *
+ * ★ **전부 `firedAt` 기준이다. `t.now`가 아니다.**
+ * `record()`는 오프라인에서 쌓였다가 나중에 올라오는 경로도 탄다(ADR-023).
+ * "지금"으로 조회하면 **새벽 발동의 스냅샷이 아침 값으로 채워지고**, 그 오염은
+ * **네트워크가 나쁜 밤에만** 일어난다 — 즉 가장 읽고 싶은 밤에만.
+ *
+ * ★ **발동 이후에 생긴 기록은 쓰지 않는다.** 큐가 늦게 올라오면 그 사이의 Log가 DB에 있는데,
+ * 그것까지 담으면 스냅샷이 **판단 시점에 없던 것을 안다.** `ts <= firedAt`으로 자른다.
+ * (Feelings·Score는 날짜 단위라 보장도 날짜 단위다 — 아래 각 항에 적어 둔다.)
+ */
+async function riskServerTerms(
+  env: Env, t: TimeCtx, firedAt: string, onDate: string, eventId: string | null,
+) {
+  const firedMs = Date.parse(firedAt);
+  const from = addDays(onDate, -RISK_WINDOW_DAYS);
+  const prev = addDays(onDate, -1);
+
+  // ── 최근 Log 활동 (각성 신호) · 수면 추정 (§1.2) ──
+  // 같은 조회로 둘을 낸다 — 원본이 하나이므로 두 번 물을 이유가 없다.
+  const logs = (await db.logsRange(env, from, onDate)).results
+    .filter((l) => Date.parse(l.ts) <= firedMs);          // ★ 발동 이후는 없던 일이다
+  const dayLast = logs.at(-1) ?? null;
+  const logs24h = logs.filter((l) => Date.parse(l.ts) > firedMs - 24 * 3600_000).length;
+  const hm = (iso: string) => {
+    const m = /T(\d{2}:\d{2})/.exec(iso);
+    return m ? m[1] : null;
+  };
+  const prevLogs = logs.filter((l) => l.date === prev);
+
+  // ── 최근 Feelings — 가장 최근에 기록된 날의 값 ──
+  // 날짜 단위라 '발동 이후 작성'을 초 단위로 가를 수 없다. 귀속일 경계(기본 06:00) 덕에
+  // 새벽 발동의 onDate는 전날이고 그 날 Feelings는 낮에 쓰인 것이라 실무상 과거다.
+  const feels = (await db.feelingsRange(env, from, onDate)).results;
+  const feelDate = feels.at(-1)?.date ?? null;
+  const feelings = feelDate
+    ? Object.fromEntries(feels.filter((f) => f.date === feelDate).map((f) => [f.field, f.value]))
+    : null;
+
+  // ── Score 추세 ──
+  // 마감 때 매겨지므로 발동 시점의 onDate는 보통 아직 비어 있다 — 그게 사실이다.
+  const scores = (await db.dailyRange(env, from, onDate)).results
+    .filter((d) => d.score !== null) as { date: string; score: number }[];
+  const last = scores.at(-1)?.score ?? null;
+  const avg = scores.length
+    ? Math.round(scores.reduce((s, d) => s + d.score, 0) / scores.length) : null;
+
+  // ── 데드라인까지 남은 시간 · 보호 구간이었나 ──
+  // 역산은 `protectAxis` 하나뿐이다(위). 여기서 다시 쓰지 않는다.
+  let deadlineMin: number | null = null;
+  let protecting: boolean | null = null;
+  if (eventId) {
+    const ev = await db.eventGet(env, eventId);
+    if (ev?.protect_from != null) {
+      const ax = protectAxis(ev, t.offsetMin);
+      deadlineMin = Math.round((ax.deadline.getTime() - firedMs) / 60_000);  // 음수 = 지났다
+      protecting = ax.from.getTime() <= firedMs && firedMs <= ax.start.getTime();
+    }
+  }
+
+  return {
+    at: firedAt, on_date: onDate, window_days: RISK_WINDOW_DAYS,
+    deadline_min: deadlineMin,          // 데드라인까지 남은 분 (음수 = 이미 지났다)
+    protecting,                         // 보호 구간 안이었나 (event 없으면 null)
+    logs_24h: logs24h,                  // 각성 신호 — 발동 직전 24시간의 기록 수
+    log_last_min: dayLast ? Math.round((firedMs - Date.parse(dayLast.ts)) / 60_000) : null,
+    sleep_prev_last: prevLogs.at(-1) ? hm(prevLogs.at(-1)!.ts) : null,   // 전날 마지막 기록
+    sleep_prev_first: prevLogs[0] ? hm(prevLogs[0].ts) : null,           // 전날 첫 기록
+    feelings, feelings_date: feelDate,
+    score_last: last, score_avg: avg,
+    score_trend: last !== null && avg !== null ? last - avg : null,
+  };
+}
+
+/**
+ * 위험도 점수 — **기록 전용. 게이트가 아니다** (ADR-021 · T-32 ②).
+ *
+ * 발동이 **이미 끝난 뒤**에 계산하므로 구조적으로 게이트가 될 수 없다.
+ * 그것이 ADR-021이 요구한 형태다 — *"위험도는 기록하되 발동 게이트로 쓰지 않는다."*
+ *
+ * ⚠️ **가중치는 전부 임시값이다.** 10월에 실제 스냅샷에서 유도한다(APP-PLAN §위험도).
+ * 지금 정교하게 만들 이유가 없다 — 목적은 *"그 순간의 값들로 낸 숫자가 남아 있다"*까지다.
+ * 항이 넷뿐인 것도 의도다. 늘리면 유도할 때 무엇이 기여했는지 가리기만 어려워진다.
+ */
+function riskScore(device: Record<string, unknown>, s: Awaited<ReturnType<typeof riskServerTerms>>): number {
+  const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+  let n = 0;
+  // ① 심야일수록. 0~6시가 §6.1이 겨냥한 구간이다.
+  const hour = num(device.hour);
+  if (hour >= 0 && hour < 6) n += 25; else if (hour >= 22) n += 15;
+  // ② 사용자가 실제로 붙잡고 있던 시간. **개입이 켜 둔 몫은 뺀다** — T-30·T-31이 가른 그 자리다.
+  const userSec = Math.max(0, num(device.screen_on_sec) - num(device.intervene_sec));
+  if (userSec >= 3600) n += 30; else if (userSec >= 1800) n += 20;
+  // ③ 데드라인을 이미 지났는가. 지난 뒤가 §6.1의 Level 4 구간이다.
+  if (s.deadline_min !== null) n += s.deadline_min < 0 ? 25 : s.deadline_min <= 120 ? 15 : 0;
+  // ④ 각성 신호 — 발동 직전까지 기록하고 있었다면 깨어 있던 것이 확실하다(§1.2).
+  if (s.log_last_min !== null && s.log_last_min <= 60) n += 10;
+  return Math.min(100, n);
+}
+
 /**
  * 발동 기록. 기기가 발동한 뒤 밀어 올린다 — 오프라인이면 로컬에 쌓였다가 나중에 온다(ADR-023).
  * 그래서 `fired_at`은 서버 시각이 아니라 **기기가 보낸 시각**이고, 귀속일도 그걸로 계산한다.
@@ -267,14 +385,29 @@ export async function record(env: Env, t: TimeCtx, input: any) {
   const id = await nextId(env, "guard_events", onDate.replace(/-/g, ""));
   const mode = input.mode ?? (await db.guardActiveMode(env))?.key ?? null;
 
+  // ── §6.6 서버 항을 얹는다 (T-32) ──
+  // **기기가 스냅샷을 안 보냈으면 만들지 않는다.** "기기가 안 보낸 것"과 "서버가 못 찾은 것"은
+  // 다른 사실이고, 서버 항만으로 행을 만들면 12월에 그 둘이 같은 모양으로 보인다.
+  const deviceSnap = input.risk_snapshot && typeof input.risk_snapshot === "object"
+    ? input.risk_snapshot as Record<string, unknown> : null;
+  // **출처를 평면에 섞지 않는다.** 기기 항은 최상위 그대로 두고 서버 항은 `server` 아래 —
+  // 섞으면 12월에 "이 항은 누가 잰 것인가"를 물을 수 없다. 기기 키의 이름도 바꾸지 않는다
+  // (8월 표본과 갈라진다). **더하고, 바꾸지 않는다.**
+  const server = deviceSnap ? await riskServerTerms(env, t, firedAt, onDate, input.event_id ?? null) : null;
+  const snapshot = deviceSnap && server ? { ...deviceSnap, server } : null;
+
   await db.stInsertGuardEvent(env, {
     id, fired_at: firedAt, on_date: onDate, cause: input.cause.trim(), level,
     mode,
     source: input.source === "pc" ? "pc" : "android",
     foreground_app: input.foreground_app ?? null,
-    risk_score: Number.isFinite(Number(input.risk_score)) ? Number(input.risk_score) : null,
+    // 점수는 **서버가 낸다** (T-32 ②). 기기는 항 값만 뜨고 점수를 내지 않는다 —
+    // 발동이 끝난 뒤에 계산하므로 게이트가 될 수 없고, 그것이 ADR-021이 요구한 형태다.
+    // 기기가 굳이 보내면 그것을 존중한다(9월 PC 에이전트 자리).
+    risk_score: Number.isFinite(Number(input.risk_score)) ? Number(input.risk_score)
+      : (deviceSnap && server ? riskScore(deviceSnap, server) : null),
     // 판단 시점의 항 값 전부. 자기 보정의 원재료 — 소급해서 만들 수 없다.
-    risk_snapshot: input.risk_snapshot ? JSON.stringify(input.risk_snapshot) : null,
+    risk_snapshot: snapshot ? JSON.stringify(snapshot) : null,
     ai_used: input.ai_used ? 1 : 0,
     ai_verdict: input.ai_verdict ?? null,
     // 왜 못 불렀는가 (0016). 목록 밖이면 조용히 비운다 — 위 주석 참조.

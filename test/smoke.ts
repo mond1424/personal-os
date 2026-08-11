@@ -898,6 +898,89 @@ ok("킬 스위치 off → level 4 · source off · ai_used 0",
 ok("킬 스위치는 상한·캐시보다 먼저다", vOff.json.cached === false);
 await api("PUT", "/api/settings/guard_ai_verify", { value: "on" });
 
+// ── T-32 · risk_snapshot에 서버 항을 얹는다 (§6.6) ─────────────
+// 기기엔 logs·feelings·daily가 없다. ADR-021이 발동을 기기로 옮기면서 서버 출처 항이
+// 통째로 사라졌고, 그 누락이 어디에도 안 적혔다. record()가 firedAt 기준으로 메운다.
+const OFF = t0.now.slice(-6);                       // 이 리포의 오프셋 표기를 그대로 쓴다
+const P3 = addDays(D, -9);   // smoke가 마감하지 않는 날 — 마감된 날엔 트리거가 Log를 막는다
+raw.prepare("INSERT INTO daily (date, created_at) VALUES (?, ?) ON CONFLICT (date) DO NOTHING").run(P3, t0.now);
+raw.prepare("INSERT INTO logs (date, ts, text, created_at) VALUES (?, ?, ?, ?)")
+  .run(P3, `${P3}T21:00:00${OFF}`, "사흘 전 저녁", t0.now);
+raw.prepare("INSERT INTO logs (date, ts, text, created_at) VALUES (?, ?, ?, ?)")
+  .run(P3, `${P3}T23:30:00${OFF}`, "사흘 전 밤", t0.now);
+
+const DEV_SNAP = {
+  window_min: 60, hour: 23.75, screen_on_sec: 4200, intervene_sec: 600,
+  unlocks: 9, top_apps: [{ app: "com.example.x", sec: 3000 }], samples: 42, usage_permission: true,
+};
+const snapOf = (cid: string) => {
+  const s = raw.prepare("SELECT risk_snapshot AS s, risk_score AS n FROM guard_events WHERE client_id=?").get(cid);
+  return { snap: s?.s ? JSON.parse(String(s.s)) : null, score: s?.n ?? null };
+};
+
+// ① 과거 발동 — **오프라인 큐가 나중에 올라온 경로다**(ADR-023).
+//    서버 항이 firedAt이 아니라 '지금'으로 조회되면 새벽 스냅샷이 아침 값으로 채워진다.
+await api("POST", "/api/guard/events", {
+  cause: "watch:bedtime", level: 3, client_id: "t32-past", risk_snapshot: DEV_SNAP,
+  fired_at: `${P3}T23:45:00${OFF}`,
+});
+const past = snapOf("t32-past");
+ok("firedAt 기준으로 조회한다 — 사흘 전 발동이 그 날의 Log를 담는다",
+  past.snap?.server?.on_date === P3 && past.snap.server.logs_24h === 2
+  && past.snap.server.log_last_min === 15, JSON.stringify(past.snap?.server));
+ok("수면 추정은 전날 Log의 첫/마지막이다 (§1.2) — 사흘 전엔 전날 기록이 없다",
+  past.snap?.server?.sleep_prev_first === null && past.snap?.server?.sleep_prev_last === null);
+
+// ② 양성 대조 — 오늘 발동은 오늘 값을 담는다.
+//    ①만 보면 조회가 통째로 죽어 전부 비어도 초록이다(AGENT-CHAIN §5).
+await api("POST", "/api/logs", { text: "T-32 오늘 기록" });
+await api("POST", "/api/guard/events", {
+  cause: "watch:bedtime", level: 3, client_id: "t32-now", risk_snapshot: DEV_SNAP,
+});
+const now32 = snapOf("t32-now");
+ok("양성 대조 — 오늘 발동은 오늘 값을 담는다 (조회가 살아 있다)",
+  now32.snap?.server?.on_date === D && now32.snap.server.logs_24h > 0
+  && now32.snap.server.log_last_min !== null, JSON.stringify(now32.snap?.server));
+
+// ③ 기기 항이 **그대로 남는다** — 서버가 얹으면서 지우거나 이름을 바꾸지 않는다.
+//    ①②만 보면 기기 항을 통째로 덮어써도 초록이다.
+ok("기기 항이 그대로다 — 여덟 키가 값까지 같다",
+  Object.keys(DEV_SNAP).every((k) => JSON.stringify(now32.snap[k]) === JSON.stringify((DEV_SNAP as any)[k])),
+  JSON.stringify(now32.snap));
+ok("출처가 갈려 있다 — 서버 항은 server 아래에만 있다",
+  typeof now32.snap.server === "object" && now32.snap.logs_24h === undefined
+  && now32.snap.score_last === undefined);
+
+// ④ risk_score — 서버가 낸다. **발동이 끝난 뒤라 게이트가 될 수 없다**(ADR-021).
+ok("risk_score가 NULL이 아니다 (서버가 냈다)",
+  typeof now32.score === "number" && now32.score > 0 && now32.score <= 100, String(now32.score));
+// 양성 대조 — 항이 없으면 어떻게 되는지. **기기가 안 보낸 것과 서버가 못 찾은 것은 다르다.**
+await api("POST", "/api/guard/events", {
+  cause: "watch:bedtime", level: 3, client_id: "t32-nosnap",
+});
+const bare = snapOf("t32-nosnap");
+ok("스냅샷이 없으면 서버 항만으로 만들지 않는다 — snapshot·score 둘 다 NULL",
+  bare.snap === null && bare.score === null, JSON.stringify(bare));
+
+// ⑤ 데드라인까지 남은 시간 · 보호 구간 여부 — 역산은 protectAxis 하나뿐이다.
+//    **자기 일정을 직접 만든다** — 위 gNow는 603줄에서 보호가 해제됐다(재사용하면 전제가 조용히 썩는다).
+const g32 = (await api("POST", "/api/events", { title: "T-32 보호 중인 시험", date: dPlus(2), time: "09:00" })).json.id as string;
+await api("PUT", `/api/events/${g32}/protect`, { protect_from: "-2d 00:00", protect_level: 4 });
+const evPlan = ((await api("GET", "/api/guard/schedule")).json.events as any[]).find((e) => e.event_id === g32);
+ok("보호 구간이 지금을 포함한다 (⑤의 전제)",
+  !!evPlan && Date.parse(evPlan.protect_from) <= Date.parse(t0.now), JSON.stringify(evPlan?.protect_from));
+await api("POST", "/api/guard/events", {
+  cause: "protect:deadline", level: 3, client_id: "t32-ev", risk_snapshot: DEV_SNAP, event_id: g32,
+});
+const evSnap = snapOf("t32-ev");
+ok("데드라인까지 남은 분이 schedule()의 역산과 같은 값이다 (두 벌이 아니다)",
+  evSnap.snap?.server?.deadline_min !== null
+  && Math.abs(evSnap.snap.server.deadline_min
+    - Math.round((Date.parse(evPlan.deadline) - Date.parse(evSnap.snap.server.at)) / 60_000)) === 0,
+  JSON.stringify({ got: evSnap.snap?.server?.deadline_min, plan: evPlan?.deadline }));
+ok("보호 구간 안이었음을 남긴다 · event 없는 감지 경로는 null",
+  evSnap.snap.server.protecting === true && now32.snap.server.protecting === null);
+
 
 // buildCoreContext (§6.2) — **빈 섹션을 생략하지 않는다.**
 // 생략하면 모델이 빈 곳을 상상으로 메우고, 명시하면 "정보가 없어 판단 보류"가 나온다.

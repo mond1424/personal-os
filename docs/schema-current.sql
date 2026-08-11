@@ -66,7 +66,10 @@ CREATE TABLE "guard_events" (
   foreground_app  TEXT,                             -- 발동 시점에 쓰던 앱/프로세스 (보조 입력)
 
   risk_score      INTEGER,                          -- 1단계 결정론 점수 (기록만 — 발동 게이트 아님)
+                                                    -- **서버가 record()에서 낸다** (T-32). 기기는 항 값만 뜬다 —
+                                                    -- 발동이 끝난 뒤 계산해야 게이트가 될 수 없다(ADR-021)
   risk_snapshot   TEXT,                             -- JSON. 판단 시점의 항 값 전부 ★자기 보정의 원재료
+                                                    -- 기기 항은 최상위 · 서버 항(§6.6)은 `server` 아래 (T-32)
 
   ai_used         INTEGER NOT NULL DEFAULT 0,       -- model_high 호출 여부 (ADR-024)
   ai_verdict      TEXT CHECK (ai_verdict IN ('approve','deny','unavailable')),

@@ -159,7 +159,7 @@ Guard 로직을 한 줄도 쓰지 않는다. 이 주의 유일한 목적은 **�
 위 §완성의 정의에서 03:00 알람 항목이 **7월 말부터 빈칸**이다. 그것을 채우기 전에는 W5로 넘어가지 않는다 —
 절차는 `docs/FIELD-TEST-NIGHT.md`이고 **자기 전 10분이면 준비된다.**
 
-- 마이그레이션 **0016_cal_sync** (Phase 7 참조) + `POST /api/cal/sync` 멱등 upsert
+- 마이그레이션 **`cal_sync`** (Phase 7 참조 · 번호는 착수 시) + `POST /api/cal/sync` 멱등 upsert
 - 기기: READ_CALENDAR 권한 + 대상 캘린더 선택 + Instances 창 조회 → diff push
 - devcal-소스 event 읽기 전용 표시
 - 보호 키워드 제안 카드 (ADR-030, outcome 카드 패턴 재사용)
@@ -372,9 +372,11 @@ CREATE TABLE guard_modes (
 
 ### guard_events 스키마 (마이그레이션 **0010**)
 
-> 번호 주의 (2026-08-10 실사 정정) — 리포의 최신은 `0015_me_history_reason`이다. Guard는 **0010**을 썼고 **0011은 `guard_sync`가 소비**했다(계획명 0011_notify와 불일치).
-> 캘린더 동기화는 **0016_cal_sync**, notify 아웃박스·인증은 착수 시 배정. 새 마이그레이션을 추가하면
-> **`test/smoke.ts`의 하드코딩 스키마 목록에도 파일명을 넣는다**(CLAUDE.md 규칙).
+> **번호를 미리 배정하지 않는다** (2026-08-11). 계획이 번호를 잡아 두면 그 사이에 다른 것이
+> 그 번호를 쓰고, 그때 계획이 조용히 낡는다 — 실제로 두 번 났다: `0011_notify`를 `guard_sync`가
+> 가져갔고, `0016_cal_sync`를 **T-31의 `guard_unavailable_reason`이 가져갔다.**
+> 마이그레이션은 **이름으로 부르고 번호는 착수할 때 다음 빈 번호를 받는다.**
+> 새 마이그레이션을 추가하면 **`test/smoke.ts`의 하드코딩 스키마 목록에도 파일명을 넣는다**(CLAUDE.md 규칙).
 
 설계 §6.5가 요구하는 필드를 그대로 옮긴다.
 
@@ -586,7 +588,7 @@ smoke +10 내외 — 규칙별 생성 · 재평가 시 중복 0 · 비활성 규
 - 시점: 앱 열 때 + **하루 1회 보호 일정 pull 직전** + 수동 새로고침. 대상 캘린더는 사용자 선택(settings)
 - **8월 = 읽기 방향만.** devcal-소스 event는 앱에서 읽기 전용(수정은 캘린더에서) — 쓰기 방향(9월)이 붙기 전까지 갈라짐을 물리적으로 차단
 
-### 마이그레이션 `0016_cal_sync`
+### 마이그레이션 `cal_sync`
 
 ```sql
 ALTER TABLE events ADD COLUMN ext_src TEXT;      -- 'devcal' | NULL(앱 생성)
