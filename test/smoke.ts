@@ -450,7 +450,16 @@ ok("취소 해제 후에도 사유 보존 · state=not_finished",
 console.log("\n[9.5] Guard — 보호 규칙 · 발동 기록 · 불변성");
 
 // (1) 보호 규칙 부착 — 일정 본문 수정과 분리된 경로
-const gEv = (await api("POST", "/api/events", { title: "정보처리기사 실기", date: "2026-08-15", time: "09:00" })).json.id as string;
+// ★ 날짜는 **상대**다 (T-36). 고정 날짜를 쓰면 달력이 언젠가 그것을 따라잡는다 —
+//   `2026-08-15` + `-1d 00:00`이 8/14에 보호 구간을 열어 **한 번에 11건**이 빨간불이 됐다.
+//   ★ **피해야 할 시계가 둘이다.** 이 일정의 보호 구간(`-1d 00:00` ~ 당일 09:00)은
+//     ① 실시각(오늘)과 ② T-23 검사가 **주입하는 시계**(`gNow.start + 1분` = `D+2 09:01`)를
+//     **둘 다** 벗어나야 한다. `D+3`이면 구간이 `D+2 00:00`에 시작해 ②를 삼킨다 —
+//     실제로 그렇게 고쳤다가 11건은 돌아오고 **다른 하나가 죽었다.**
+//     `D+4` ⇒ 구간 `D+3 00:00 ~ D+4 09:00` — 둘 다 밖이다.
+//   구간 **안**을 보는 검사는 따로 있고(`gNow`), 그쪽은 이미 상대였다.
+const gEvDate = addDays(D, 4);
+const gEv = (await api("POST", "/api/events", { title: "정보처리기사 실기", date: gEvDate, time: "09:00" })).json.id as string;
 ok("보호 없는 일정은 schedule에 안 잡힘",
   ((await api("GET", "/api/guard/schedule")).json.events as any[]).every((e) => e.event_id !== gEv));
 ok("보호 규칙 부착 200",
@@ -610,12 +619,14 @@ ok("정리 후 모드 2종 · coach 활성", (await api("GET", "/api/guard/modes
 // (4) 발동 기록 — 기기가 밀어 올린다
 const gRec = await api("POST", "/api/guard/events", {
   cause: "protect:sleep-deadline", level: 3, event_id: gEv,
-  fired_at: "2026-08-15T01:30:00+09:00", foreground_app: "com.android.chrome",
+  // 그 일정의 취침 데드라인(09:00 − 90 − 360 = 01:30)에 발동한 것이다 — 날짜는 일정을 따라간다.
+  fired_at: `${gEvDate}T01:30:00+09:00`, foreground_app: "com.android.chrome",
   risk_score: 62, risk_snapshot: { hour: 1.5, sleepEst: 3.2, logsLastHour: 4 },
 });
 ok("발동 기록 201", gRec.status === 201);
 const gId = gRec.json.id as string;
-ok("귀속일이 기기 시각 기준 (01:30 → 전날 08-14)", gRec.json.on_date === "2026-08-14", gRec.json.on_date);
+// 01:30은 경계(06:00) 아래라 **전날**에 귀속된다 — 값이 아니라 그 성질을 본다.
+ok("귀속일이 기기 시각 기준 (01:30 → 전날)", gRec.json.on_date === addDays(gEvDate, -1), gRec.json.on_date);
 ok("level 5는 400", (await api("POST", "/api/guard/events", { cause: "x", level: 5 })).status === 400);
 ok("cause 없으면 400", (await api("POST", "/api/guard/events", { level: 3 })).status === 400);
 
@@ -649,7 +660,8 @@ ok("foreground_app · mode · source 기록됨",
   !!gRow && gRow.foreground_app === "com.android.chrome" && gRow.mode === "coach" && gRow.source === "android");
 
 // (7.5) client_id 멱등 (0011) — 밀어 올리기 재시도가 두 행을 만들면 안 된다
-const cidBody = { cause: "protect:test", level: 3, client_id: "dev-uuid-1", fired_at: "2026-08-15T02:00:00+09:00" };
+// 내일 02:00 — **유예(36시간) 안쪽**이라는 것이 이 fixture의 성질이다(아래 (7.6)이 그것을 본다).
+const cidBody = { cause: "protect:test", level: 3, client_id: "dev-uuid-1", fired_at: `${N1}T02:00:00+09:00` };
 const c1 = await api("POST", "/api/guard/events", cidBody);
 const c2 = await api("POST", "/api/guard/events", cidBody);          // 응답 유실 후 재시도 흉내
 ok("같은 client_id 재전송 → 같은 행 · duplicate 표시",
@@ -671,19 +683,19 @@ ok("나중에 온 반응이 기존 행에 채워짐 (ignored)", !!c4row && c4row
 // KST 14:00 = UTC 05:00. 정규화가 없으면 '05시'가 경계(06:00) 아래로 읽혀 전날로 귀속된다.
 const utcFire = await api("POST", "/api/guard/events", {
   cause: "watch:bedtime", level: 2, client_id: "dev-uuid-utc",
-  fired_at: "2026-08-15T05:00:00Z", reaction: "accepted", reacted_at: "2026-08-15T05:00:30Z",
+  fired_at: `${N1}T05:00:00Z`, reaction: "accepted", reacted_at: `${N1}T05:00:30Z`,
 });
-ok("UTC 발동이 올바른 날에 귀속 (KST 14:00 → 당일)", utcFire.json.on_date === "2026-08-15", utcFire.json.on_date);
+ok("UTC 발동이 올바른 날에 귀속 (KST 14:00 → 당일)", utcFire.json.on_date === N1, utcFire.json.on_date);
 const utcRow = ((await api("GET", "/api/guard/events")).json as any[]).find((r) => r.client_id === "dev-uuid-utc");
 ok("fired_at·reacted_at이 로컬 오프셋 표기로 저장",
-  !!utcRow && utcRow.fired_at === "2026-08-15T14:00:00+09:00" && utcRow.reacted_at === "2026-08-15T14:00:30+09:00",
+  !!utcRow && utcRow.fired_at === `${N1}T14:00:00+09:00` && utcRow.reacted_at === `${N1}T14:00:30+09:00`,
   `${utcRow?.fired_at} / ${utcRow?.reacted_at}`);
 
 // (7.6) 반응 없는 발동의 'ignored' 확정 (ADR-025 — 루프의 닫는 쪽)
 // 유예 36시간: 기기가 오프라인이면 발동과 반응을 함께 늦게 올린다. 먼저 박으면 진짜 반응이 막힌다.
 const oldFire = await api("POST", "/api/guard/events", {
   cause: "watch:bedtime", level: 2, client_id: "dev-uuid-old",
-  fired_at: "2026-06-01T02:00:00+09:00",
+  fired_at: `${D_3}T02:00:00+09:00`,   // 사흘 전 — **유예 36시간을 확실히 넘긴 쪽**
 });
 const acG = await api("POST", "/api/admin/auto-close");
 const oldRow = ((await api("GET", "/api/guard/events")).json as any[]).find((r) => r.id === oldFire.json.id);
@@ -1240,6 +1252,35 @@ ok("VERIFY_SYSTEM이 실제 대가를 말한다 — 180초 · 30분 · 새 일�
   vs.includes("180초") && vs.includes("30분")
     && vs.includes("오늘 날짜가 새로 붙지 않는다")
     && vs.includes("새 일도") && vs.includes("미루던 일도"), vs);
+
+// ── T-36 · 검사 자신을 훑는다 — 고정 날짜는 언젠가 현재가 된다 ────
+console.log("\n[T-36] fixture 날짜가 상대인가 (검사가 자기 소스를 훑는다)");
+// 8/14에 `2026-08-15` 하나가 보호 구간을 열어 **한 번에 11건**이 빨간불이 됐다.
+// 회귀가 아니라 달력이 fixture를 따라잡은 것이고, 고치는 것만으로는 재발을 못 막는다 —
+// **다음에 누가 또 심으면 그 순간 빨간불이 되어야 한다**(CLAUDE.md 함정 12).
+const smokeSrc = readFileSync(join(here, "smoke.ts"), "utf8").split("\n");
+const DATE_LIT = /20\d\d-\d\d-\d\d/;
+// 고정 날짜가 허용되는 유일한 자리: **순수 함수에 넘기는 시각 인자.**
+// 그 함수들은 시계를 읽지 않고 인자만 보므로 달력이 따라잡을 수 없다 —
+// 오히려 고정이어야 30일 달·윤년을 날짜와 무관하게 검사할 수 있다(T-12가 front에서 한 것).
+const PURE_CLOCK = /(attributionDate|isoNow|mondayOf)\(/;
+const isComment = (l: string) => /^\s*(\/\/|\*|\/\*)/.test(l);
+const scanFixed = (lines: string[]) => lines
+  .map((l, i) => ({ n: i + 1, l }))
+  .filter((x) => DATE_LIT.test(x.l) && !isComment(x.l) && !PURE_CLOCK.test(x.l));
+
+const stray = scanFixed(smokeSrc);
+ok("fixture에 고정 날짜가 없다 — 서버 시계와 만나는 날짜는 전부 상대다",
+  stray.length === 0, stray.map((x) => `:${x.n} ${x.l.trim().slice(0, 70)}`).join(" | "));
+
+// ★ 짝. 위는 **스캐너가 죽어도 0건이라 초록이다** — 실제로 잡는지를 합성 줄로 확인한다.
+// ⚠️ 합성 날짜를 이어 붙이는 이유: 여기 그대로 적으면 위 검사가 **자기 자신을 잡는다.**
+const probeDate = "20" + "26-08-15";
+ok("★ 스캐너가 살아 있다 — 고정 날짜를 실제로 잡는다",
+  scanFixed([`  await api("POST", "/api/events", { date: "${probeDate}" });`]).length === 1);
+// 허용된 자리도 **개수로** 센다. '0건'만 보면 시간 블록이 통째로 사라져도 조용히 통과한다(T-26).
+const pureFixed = smokeSrc.filter((l) => DATE_LIT.test(l) && !isComment(l) && PURE_CLOCK.test(l));
+ok("순수 함수에 넘기는 고정 시각은 그대로 있다 — 다섯 줄", pureFixed.length === 5, String(pureFixed.length));
 
 // ── 결과 ─────────────────────────────────────────────────────
 console.log(`\n${"=".repeat(46)}\n통과 ${passN} · 실패 ${fails.length}`);
