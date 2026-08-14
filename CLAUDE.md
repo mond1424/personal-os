@@ -54,6 +54,21 @@ Codex의 진입 파일은 `AGENTS.md`(이 문서를 원본으로 가리킨다 �
 | `npm run front` | 격리 러너 `e2e.mjs`(임시 D1 + jsdom). 실 DB 불변 |
 | `npm run verify` | 위 셋을 한 번에 |
 
+## 사람이 하는 것의 상태는 적지 않는다
+
+**배포 여부 · `--remote` 적용 여부 · APK 설치 여부**는 사용자가 하고 이 층은 모른다.
+문서에 적으면 **하는 층과 적는 층이 달라 반드시 낡는다** — 배포 상태만 네 번 정정했다.
+
+**상태 대신 확인하는 법을 적는다:**
+
+```powershell
+npx wrangler deployments list           # 무엇이 언제 라이브가 됐나
+npx wrangler d1 migrations apply personal-os --remote --dry-run   # 남은 마이그레이션
+adb shell dumpsys package dev.mond1424.personalos | findstr versionCode
+```
+
+기준선 숫자를 여기서 뺀 것과 같은 이유다. **한 곳에만 두거나, 아예 두지 않는다.**
+
 ## 마이그레이션 · 배포
 
 - **마이그레이션은 배포보다 먼저**, `--local` → `--remote` 순서.
