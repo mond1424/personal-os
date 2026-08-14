@@ -27,6 +27,11 @@ function isoNowLocal() {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}${sg}${p(a / 60 | 0)}:${p(a % 60)}`;
 }
 const WAIT_LIMIT = 21;   // 대기 최대 체류 (1.4) — 연장은 여기 닿았을 때만 의미가 있다
+/* 세 번 밀린 일에 출구를 준다 (T-35 · ADR-036).
+ * **N은 여기 한 자리뿐이다** — 실사용이 정한다. 잦으면 올리고 한 번도 안 뜨면 내린다.
+ * 한 번은 흔하고 두 번도 있을 수 있어서 3에서 시작한다. */
+const CARRY_N = 3;
+const CARRY_SEEN = "carry_seen";   // 하루 한 번 — 귀속일 하나를 localStorage에 (§②)
 const ageClass = (a) => (a >= 15 ? "age3" : a >= 8 ? "age2" : "age1");
 /* 월 그리드의 주(일요일 시작) 배열 — 앞뒤 채움 포함 */
 /* 달 그리드는 **항상 6주**로 고정한다. 실제 주 수는 4~6주로 들쭉날쭉해서
@@ -352,6 +357,7 @@ async function refreshToday() {
   loadNotice();
   loadGuardOutcome();
   if (!S.staleShown && S.today.overdue.length) { S.staleShown = true; showStale(S.today.overdue[0]); }
+  maybeCarryPrompt();   // 세 번 밀린 일의 출구 (T-35). 조건을 넘는 게 없으면 아무 일도 없다.
 }
 
 function renderToday() {
@@ -520,6 +526,64 @@ async function loadGuardOutcome() {
     // 그 판단은 옳았고, 바뀐 것은 **이 실패가 이제 이름을 갖는다**는 것뿐이다.
     set("error");
   }
+}
+
+/* 세 번 밀린 일의 출구 (T-35 · ADR-036) ─────────────────────
+ *
+ * **알림이 목적이 아니라 출구가 목적이다.** *"이거 세 번 미뤘어요"*만 말하면 잔소리이고,
+ * 사용자는 이미 안다 — §6.3이 경고한 도구 이탈로 가는 길이다.
+ *
+ * **출구는 '대기로 되돌리기'가 아니다.** 그 간선은 없고 라우트 하나로 생기지도 않는다:
+ * `is_waiting`(예정이 하나도 없음)과 `defer_count`(예정 수 − 1)가 **같은 것을 세므로**
+ * 되돌리려면 그 항목들을 지워야 하는데, 지우면 팝업의 근거가 증발하고,
+ * 그 항목들은 Missed 기록 그 자체이며(§1.2), 마감된 날의 것은 트리거가 삭제를 막는다.
+ * **ADR-036이 그래서 `defer`의 2주 상한을 이 경우에만 푸는 쪽으로 정했다.**
+ *
+ * 조건 셋이 **함께** 좁힌다(하나라도 빠지면 잔소리가 된다):
+ *   ① `defer_count ≥ CARRY_N`   ② 하루 한 번(귀속일)   ③ 가장 많이 밀린 하나만
+ *
+ * **판단을 여는 자리(리스너)와 분리한다** — 순수 함수라 `front.mjs`가 직접 부른다(T-34의 그 자리).
+ */
+function carryCandidate() {
+  const T = S.today;
+  if (!T) return null;
+  // 오늘 목록과 재배정 대기 **둘 다** 본다 — 둘 다 `defer_count`를 싣고 둘 다 미루기 경로가 있다.
+  // `from`은 미루기의 출발 항목이다: 오늘 것은 오늘, 재배정 대기는 마지막 예정일.
+  const rows = [
+    ...(T.todo || []).map((t) => ({ id: t.id, title: t.title, n: t.defer_count, from: T.date })),
+    ...(T.reassign || []).map((r) => ({ id: r.id, title: r.title, n: r.defer_count, from: r.latest_date })),
+  ].filter((r) => r.n >= CARRY_N);
+  // ③ 가장 많이 밀린 하나. 동점이면 id가 이른 것 —
+  //    id는 `YYYYMMDD-NNN`이고 불변이라 문자열 순서가 곧 생성 순서다.
+  rows.sort((a, b) => b.n - a.n || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  return rows[0] || null;
+}
+
+/** 띄웠으면 그 항목을, 안 띄웠으면 `null`을 돌려준다.
+ *  **`null`이 정상 상태다** — 조건을 넘는 게 없으면 아무 일도 없는 것이 맞다. */
+function maybeCarryPrompt() {
+  const T = S.today;
+  if (!T) return null;
+  if (S.pick) return null;                                   // 날짜를 고르는 중엔 덮지 않는다
+  if ($("#stale").classList.contains("on")) return null;     // 차단 팝업 위에 쌓지 않는다
+  if (localStorage.getItem(CARRY_SEEN) === T.date) return null;   // ② 오늘 몫은 이미 썼다
+  const c = carryCandidate();
+  if (!c) return null;
+  // **띄우는 순간** 오늘 몫을 쓴다 — 어느 버튼을 눌러도 오늘은 다시 안 뜬다.
+  // 귀속일이라 기기 날짜가 아니라 서버가 준 `S.today.date`다(경계를 바꿔도 과거는 불변).
+  localStorage.setItem(CARRY_SEEN, T.date);
+  $("#carry-text").innerHTML =
+    `${esc(c.title)} — <b class="warn">${c.n}회 이월</b>.<br>오늘 할 게 아니면, 멀리 미루는 편이 정직해요.`;
+  $("#carry-today").onclick = () => closeSheet("sh-carry");
+  $("#carry-later").onclick = () => closeSheet("sh-carry");
+  $("#carry-far").onclick = () => {
+    closeSheet("sh-carry");
+    // ★ **상한 해제는 이 경로에서만 걸린다.** `far`가 실리는 자리는 여기 하나뿐이고,
+    //   `startPick`이 매번 `S.pick`을 새로 만들므로 다음 미루기로 새지 않는다(ADR-036).
+    startPick({ mode: "defer", id: c.id, from: c.from, title: c.title, far: true });
+  };
+  openSheet("sh-carry");
+  return c;
 }
 
 async function loadNotice() {
@@ -1198,7 +1262,11 @@ function pickMinMax() {
   const floor = S.level4 ? addDaysStr(D, 1) : D;
   if (S.pick.mode === "defer") {
     const min = S.pick.from >= D ? addDaysStr(D, 1) : D;
-    return { min: min > floor ? min : floor, max: addDaysStr(D, 14) };
+    // ★ 2주 상한이 풀리는 것은 **`far`로 열린 피커 하나뿐이다** (T-35 · ADR-036).
+    //   그 상한의 취지("미루기가 무기한 연기가 되지 않게")는 여전히 옳고,
+    //   `defer_count ≥ CARRY_N`은 **그 취지가 이미 실패했다는 증거**일 때만 예외가 된다.
+    //   `far`를 싣는 자리는 `maybeCarryPrompt` 하나이고, 평소 미루기는 그대로 D+14다.
+    return { min: min > floor ? min : floor, max: S.pick.far ? null : addDaysStr(D, 14) };
   }
   return { min: floor, max: null };
 }
@@ -1223,7 +1291,9 @@ function startPick(p) {
   $("#cal-grid").style.display = "";
   $("#cal-list").style.display = "none";
   $("#pick-title").textContent = p.title;
-  $("#pick-note").textContent = p.mode === "defer" ? "(2주 이내)" : "(앞날 아무 날짜나)";
+  $("#pick-note").textContent = p.mode === "defer"
+    ? (p.far ? "(멀리 — 2주 상한 없음)" : "(2주 이내)")
+    : "(앞날 아무 날짜나)";
   $("#pick-banner").classList.add("on");
   applyPickDim();
 }

@@ -271,6 +271,21 @@
   <p class="cap" style="margin-top:10px">제목만 → schedule 빈 task, 대기(미배정)로. 날짜를 붙이면 첫 schedule 항목이 생겨요.</p>
 </div>
 
+<!-- 세 번 밀린 일의 출구 (T-35 · ADR-036) — 대기로 되돌리는 간선은 없다.
+     출구는 defer의 2주 상한을 이 경우에만 푸는 것이고, 그래서 선택지가 셋이다.
+     넷째를 만들지 않는다 — 취소는 이미 다른 경로에 있고, 넷이 되면 "대충 치우기"가 시작된다. -->
+<div class="sheet" id="sh-carry">
+  <div class="grip"></div>
+  <div class="sh-t">여러 번 미룬 일이 있어요</div>
+  <p class="abody" style="margin-top:6px;color:var(--sub)" id="carry-text"></p>
+  <div class="actrow">
+    <button class="btn ghost" style="flex:1" id="carry-today">오늘 한다</button>
+    <button class="btn" style="flex:1" id="carry-far">멀리 미룬다</button>
+  </div>
+  <button class="linklike" style="margin-top:10px;display:block;width:100%;text-align:center" id="carry-later">나중에</button>
+  <p class="cap" style="margin-top:9px">'멀리 미룬다'는 2주 상한 없이 날짜를 고를 수 있어요 — 평소 미루기는 그대로 2주까지예요.</p>
+</div>
+
 <!-- Feelings 필드 고르기 -->
 <div class="sheet" id="sh-fields">
   <div class="grip"></div>

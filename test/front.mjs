@@ -1490,6 +1490,105 @@ ok("★ none과 error는 화면에서 같고 기록에서만 다르다",
   `${t33None.state}/${t33None.display} vs ${t33Err.state}/${t33Err.display}`);
 await ev(`(async()=>{ Api.guardPending = window.__t33.old[0]; Api.guardOutcome = window.__t33.old[1]; })()`);
 
+console.log("\n[세 번 밀린 일의 출구 — 팝업 · 2주 상한 해제]");
+// 판단(`carryCandidate`·`maybeCarryPrompt`)이 리스너 밖 순수 함수라 여기서 **직접 부른다**(T-34의 그 자리).
+// 날짜는 **고정 센티널**이다 — 기기 날짜를 쓰는 구현이 통과하지 못하게(T-12).
+const T35_D = "2026-05-10";
+const t35Set = (todo, reassign, d = T35_D) => ev(`(()=>{
+  if (S.pick) exitPick();
+  closeAll();
+  S.today = { ...S.today, date: ${JSON.stringify(d)},
+              todo: ${JSON.stringify(todo)}, reassign: ${JSON.stringify(reassign)}, overdue: [] };
+  localStorage.removeItem("carry_seen");
+})()`);
+const t35Row = (id, title, n, extra = {}) => ({ id, title, defer_count: n, ...extra });
+const t35On = () => $("#sh-carry").classList.contains("on");
+const t35Prompt = () => ev(`(()=>{ const c = maybeCarryPrompt(); return c ? c.id : null; })()`);
+
+// ① 조건 미달 — **안 뜨는 것이 기본 상태다.**
+t35Set([t35Row("20260501-001", "두 번만 밀린 일", 2)], []);
+const t35Under = t35Prompt();
+ok("① defer_count가 N 미만이면 안 뜬다", t35Under === null && !t35On(), `${t35Under}`);
+
+// ② ①의 짝. 이것이 없으면 **"항상 안 뜬다"가 통과한다** — 그리고 이 기능은
+//    안 뜨는 것이 기본이라 그 실수가 특히 조용하다.
+t35Set([t35Row("20260501-002", "세 번 밀린 일", 3)], []);
+const t35Over = t35Prompt();
+ok("② N 이상이면 뜬다 — ①의 짝",
+  t35Over === "20260501-002" && t35On() && txt("#carry-text").includes("세 번 밀린 일"),
+  `${t35Over} / ${txt("#carry-text")}`);
+
+// ③ 하루 한 번 — 닫고 다시 불러도 안 뜬다. **귀속일이 바뀌면 다시 뜬다**(짝).
+ev(`closeSheet("sh-carry")`);
+const t35Again = t35Prompt(), t35AgainOn = t35On();
+ev(`(()=>{ S.today = { ...S.today, date: "2026-05-11" }; })()`);   // 기기 날짜가 아니라 귀속일이다
+const t35Next = t35Prompt();
+ok("③ 오늘 이미 봤으면 안 뜬다 · 귀속일이 바뀌면 다시 뜬다 — 짝",
+  t35Again === null && !t35AgainOn && t35Next === "20260501-002" && t35On(),
+  `again=${t35Again}/${t35AgainOn} next=${t35Next}/${t35On()}`);
+
+// ④ 여럿이 조건을 넘으면 **가장 많이 밀린 하나만**. 오늘 목록과 재배정 대기를 함께 본다 —
+//    한쪽만 보면 다른 쪽의 더 밀린 일이 조용히 빠진다.
+t35Set([t35Row("20260501-003", "덜 밀린 것", 3)],
+       [t35Row("20260501-004", "가장 많이 밀린 것", 5, { latest_date: "2026-05-08" })]);
+const t35Top = t35Prompt();
+ok("④ 둘 이상이 조건을 넘으면 가장 많이 밀린 하나만",
+  t35Top === "20260501-004" && txt("#carry-text").includes("가장 많이 밀린 것")
+  && txt("#carry-text").includes("5회"), `${t35Top} / ${txt("#carry-text")}`);
+// 동점 — **뒤에 놓인 이른 id**를 골라야 목록 순서가 아니라 규칙을 따른 것이다.
+t35Set([t35Row("20260501-009", "나중 id", 4), t35Row("20260501-005", "이른 id", 4)], []);
+const t35Tie = t35Prompt();
+ok("동점이면 id가 이른 것 — 목록 순서가 아니다", t35Tie === "20260501-005", `${t35Tie}`);
+
+// 선택지는 셋이다. **"0이 아니다"가 아니라 "몇이다"를 센다** — 넷째가 붙으면 여기서 죽는다.
+ok("선택지가 셋이다 (넷째를 만들지 않았다)",
+  w.document.querySelectorAll("#sh-carry button").length === 3,
+  String(w.document.querySelectorAll("#sh-carry button").length));
+
+// ⑤ ★ 이 티켓의 요점. '멀리 미룬다'로 연 피커는 2주 밖을 고를 수 있다.
+t35Set([], [t35Row("20260501-006", "멀리 미룰 일", 4, { latest_date: "2026-05-01" })]);
+if (t35Prompt()) $("#carry-far").click();
+await sleep(60);
+// ⚠️ 팝업이 안 뜨는 변이에서는 `S.pick`이 없다. **던지지 않고 빨간불이 되게** 읽는다 —
+//    러너가 TypeError로 죽으면 이 뒤의 검사가 통째로 안 돌고, 그게 T-06이 없앤 실패 모양이다.
+const t35FarRaw = ev(`JSON.stringify(S.pick ? {
+  far: !!S.pick.far, max: pickMinMax().max,
+  d20: pickable(addDaysStr(S.today.date, 20)),
+  d40: pickable(addDaysStr(S.today.date, 40)),
+  note: $("#pick-note").textContent,
+} : null)`);
+const t35Far = JSON.parse(t35FarRaw);
+ok("⑤ '멀리 미룬다'가 연 피커는 2주 밖을 고르게 한다 (상한 없음)",
+  !!t35Far && t35Far.far && t35Far.max === null && t35Far.d20 && t35Far.d40
+  && t35Far.note.includes("상한 없음"), t35FarRaw);
+
+// ★ ⑤의 짝 — **해제가 이 경로에서만 걸리는가.** 같은 항목을 평소 경로(재배정 대기의 '미루기 →')로
+//   열면 상한이 그대로여야 한다. 이게 없으면 **모든 미루기에서 상한을 없앤 구현**도 ⑤를 통과한다.
+//   ⚠️ `cancelPick()`으로 빠져나오면 안 된다 — 원래 탭이 Today라 `refreshToday()`가 돌고
+//   **가짜 `S.today`가 실제 데이터로 덮인다**(그러면 아래 `pickReassign`이 항목을 못 찾는다).
+//   `exitPick()`은 탭을 안 건드린다. t35Set이 그것까지 한다.
+t35Set([], [t35Row("20260501-006", "멀리 미룰 일", 4, { latest_date: "2026-05-01" })]);
+ev(`pickReassign("20260501-006")`);
+await sleep(60);
+const t35NormRaw = ev(`JSON.stringify(S.pick ? {
+  far: !!S.pick.far, max: pickMinMax().max, cap: addDaysStr(S.today.date, 14),
+  d20: pickable(addDaysStr(S.today.date, 20)),
+  d14: pickable(addDaysStr(S.today.date, 14)),
+  note: $("#pick-note").textContent,
+} : null)`);
+const t35Norm = JSON.parse(t35NormRaw);
+ok("★ 평소 미루기는 여전히 D+14가 상한이다 — 해제가 그 경로로 새지 않는다",
+  !!t35Norm && !t35Norm.far && t35Norm.max === t35Norm.cap
+  && !t35Norm.d20 && t35Norm.d14 && t35Norm.note === "(2주 이내)", t35NormRaw);
+
+await ev(`(async()=>{
+  if (S.pick) exitPick();
+  closeAll();
+  localStorage.removeItem("carry_seen");
+  await refreshToday();
+  closeAll();
+})()`);
+
 console.log("\n[부팅 · 연결 실패 복구]");
 ok("로드 후 부팅 오버레이 닫힘", !$("#boot").classList.contains("on"));
 
