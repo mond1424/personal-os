@@ -99,6 +99,21 @@ adb shell dumpsys alarm | findstr /i "personalos"
 
 `setAlarmClock`으로 걸린 것이 보여야 한다. **`RTC_WAKEUP`이 아니면 Doze가 미룬다.**
 
+### ★ 그날 낮에 `testNotify({level:4})`를 쓰지 않는다
+
+**AI 상한(하루 5회)은 귀속일 기준이다**(`guard.ts:568`). 경계가 06:00이므로
+**밤 01:30~05:00은 전날 낮과 같은 귀속일**이고, 낮에 상한을 다 쓰면 그 밤의 Level 4가
+**전부 `cap`으로 막힌다** — 격상이 없으면 `GuardLevel4.note()`도 없고 날짜 게이트도 안 걸린다.
+
+2026-08-17 낮에 실제로 그렇게 됐다: `13:57:40 L3 unavailable cap`.
+**T-31이 그 구별을 남겨 준 덕에 "네트워크가 없었나"로 오진하지 않았다.**
+
+남은 횟수는 이렇게 본다:
+
+```js
+(await Api.guardEvents(20)).filter(e => e.on_date === <오늘 귀속일> && e.ai_used === 1).length
+```
+
 ### ④ 폰을 두고 잔다
 
 ```

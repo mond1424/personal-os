@@ -79,7 +79,12 @@ await G.resetWatchNight();
 
 ## ③ Level 4 — 기록 (T-28) · 날짜 게이트 (T-29)
 
-**②를 되돌린 뒤에. `level: 4`는 하루 한 번만** — AI 상한이 5회다.
+**②를 되돌린 뒤에.**
+
+> ⚠️ **`level: 4`는 AI 상한(하루 5회)을 먹고, 그 상한은 귀속일 기준이다**
+> (`guard.ts:568` `guardAiCallsOn(env, onDate)`). 경계가 06:00이므로
+> **오늘 낮에 다 쓰면 오늘 밤 01:30~05:00 발동도 전부 `cap`으로 막힌다** — 같은 귀속일이다.
+> **밤 실측을 하는 날에는 낮에 `testNotify({level:4})`를 쓰지 않는다.**
 
 ```js
 await G.testNotify({ level: 4 });
@@ -118,7 +123,24 @@ await G.level4State();          // { level4: true, until: … }   ← T-28
 □ 최상위에 screen_on_sec · intervene_sec · top_apps 도 그대로   ← 짝
 ```
 
-## ⑤ outcome 카드 (T-33)
+## ⑤ 이월 팝업 (T-35) — 반은 지금, 반은 며칠 뒤
+
+**지금 되는 것**은 상한이 안 새는지다.
+
+```
+□ 평소 미루기에서 2주 밖 날짜가 흐려져 있다   ← 상한이 이 경로에서만 풀린다
+```
+
+**팝업 자체는 `defer_count ≥ 3`인 항목이 있어야 뜬다.** 세 번 미루려면 날짜가 세 번
+지나야 하므로 **인위적으로 만들 수 없다** — 며칠 쓰다 보면 나온다.
+
+```js
+(await Api.works("scheduled")).filter(t => t.defer_count >= 3)
+```
+
+비어 있으면 **안 뜨는 것이 정상**이다. 나오면 그때 뜨는지 보고, `N = 3`이 잦으면 올린다.
+
+## ⑥ outcome 카드 (T-33)
 
 ```js
 document.querySelector("#td-guard").dataset.state    // ask | none | error
