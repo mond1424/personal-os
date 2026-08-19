@@ -75,6 +75,12 @@ adb shell dumpsys package dev.mond1424.personalos | findstr versionCode
 - **`wrangler deploy`와 `wrangler secret put`은 사용자가 직접** 한다. Claude가 배포하지 않는다.
 - **`wrangler.toml`의 `database_id`는 건드리지 않는다.**
 - **새 마이그레이션을 추가하면 `test/smoke.ts`의 스키마 목록(하드코딩)에도 파일명을 넣는다.** (`e2e.mjs`는 디렉터리 전체를 적용하므로 자동.)
+- **적용된 마이그레이션은 SQL을 고치지 않는다. 주석은 고쳐도 된다.**
+  '이력 불변'은 **무엇을 적용했는가**의 계약이고 주석은 그 계약이 아니다 — SQL이 그대로면
+  재적용 결과가 같다. 오히려 주석에 박힌 숫자·경로가 코드와 두 벌이 되면 그 순간 틀린 문서가
+  되므로 **그때는 고친다**(T-37이 0016의 `6초`·`8초`를 그렇게 뺐다).
+  ⚠️ **SQL은 한 글자도 안 된다** — 고칠 것이 있으면 새 마이그레이션을 만든다.
+  (이미 만들어진 DB의 `sqlite_master`엔 옛 주석이 남는다. 주석이라 동작은 같다.)
 
 ```powershell
 npx wrangler d1 migrations apply personal-os --local
