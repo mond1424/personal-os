@@ -29,13 +29,13 @@ ALTER TABLE guard_events ADD COLUMN ai_unavailable_reason TEXT
   CHECK (
     ai_unavailable_reason IN (
       -- 기기가 서버에 못 닿았다
-      'timeout',        -- 6초 안에 응답이 없다 (SocketTimeoutException)
+      'timeout',        -- 기기가 기다리다 끊었다 (SocketTimeoutException). 상한은 GuardVerify.kt
       'dns',            -- 호스트 이름을 못 풀었다 (UnknownHostException)
       'network',        -- 연결 자체가 안 됐다 (ConnectException·SSL·소켓 끊김)
       'bad_response',   -- 2xx인데 본문이 판정이 아니다
       'no_base',        -- 서버 주소가 설정에 없다
       -- 서버는 답했는데 판정이 아니었다 (`source`가 그대로 온다)
-      'server_timeout', -- 모델이 8초를 넘겼다
+      'server_timeout', -- 모델이 서버 예산(AI_TIMEOUT_MS)을 넘겼다
       'server_error',   -- 서버가 오류를 만났다
       'cap'             -- 일일 상한 (ADR-024 ③) — 못 부른 게 아니라 안 부른 것이다
     )

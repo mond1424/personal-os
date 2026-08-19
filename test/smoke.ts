@@ -1354,6 +1354,50 @@ ok("★ 스캐너가 살아 있다 — 고정 날짜를 실제로 잡는다",
 const pureFixed = smokeSrc.filter((l) => DATE_LIT.test(l) && !isComment(l) && PURE_CLOCK.test(l));
 ok("순수 함수에 넘기는 고정 시각은 그대로 있다 — 다섯 줄", pureFixed.length === 5, String(pureFixed.length));
 
+// ── T-37 · 중첩 타임아웃은 바깥이 안보다 길다 (ADR-038) ──────────
+console.log("\n[T-37] 기기가 서버보다 먼저 포기하지 않는다");
+// 두 상수가 **서로 다른 언어·다른 파일**에 있고 서로를 모른다. 한쪽만 고쳐도 아무것도
+// 빨간불이 되지 않았고, 그래서 기기 6초 < 서버 8초인 채로 남아 `server_timeout`이
+// **구조적으로 관측 불가능**했다 — T-31이 갈라 둔 두 이유 중 한쪽이 죽어 있었다.
+// `guardSrc`는 [13]에서 이미 읽었다 — 같은 파일을 두 번 읽지 않는다.
+const KT_READ = /const val READ_TIMEOUT_MS = ([0-9_]+)/;
+const KT_CONNECT = /const val CONNECT_TIMEOUT_MS = ([0-9_]+)/;
+const TS_AI = /const AI_TIMEOUT_MS = ([0-9_]+)/;
+const msOf = (re: RegExp, src: string): number | null => {
+  const hit = re.exec(src)?.[1];
+  return hit === undefined ? null : Number(hit.replace(/_/g, ""));
+};
+const ktRead = msOf(KT_READ, ktSrc);
+const ktConnect = msOf(KT_CONNECT, ktSrc);
+const serverAi = msOf(TS_AI, guardSrc);
+
+// ③ **먼저** 둘을 찾았는지 본다. 못 찾으면 아래 부등호가 *조용히* 뜻을 잃는다 —
+//    `null > null`은 false라 실패로 보이지만, 원인이 "값이 뒤집혔다"인지
+//    "정규식이 낡았다"인지 구별이 안 된다(AGENT-CHAIN §5).
+ok("두 상수를 각각 찾았다 — 못 찾으면 아래 검사가 뜻을 잃는다",
+  ktRead !== null && ktConnect !== null && serverAi !== null,
+  `read=${ktRead} connect=${ktConnect} server=${serverAi}`);
+
+// ① 본체.
+ok("기기 readTimeout이 서버 AI_TIMEOUT_MS보다 길다 (바깥이 안보다 길다)",
+  ktRead !== null && serverAi !== null && ktRead > serverAi,
+  `read=${ktRead} server=${serverAi}`);
+
+// connect는 read보다 **짧아야** 한다. 둘의 뜻이 다르기 때문이다 —
+// 연결 부재는 빨리 알수록 낫고, 읽기는 서버가 생각하는 시간이다.
+// 한 상수로 되돌리면 이 줄이 죽는다(두 값이 같아진다).
+ok("connect와 read가 다른 값이고 connect가 짧다 (한 상수로 되돌리면 죽는다)",
+  ktConnect !== null && ktRead !== null && ktConnect < ktRead,
+  `connect=${ktConnect} read=${ktRead}`);
+
+// ② ★ 위 셋은 **스캐너가 죽으면 이유를 못 말한다.** 합성 소스로 실제로 뽑는지 본다.
+//    숫자를 이어 붙이지 않아도 되는 것은 이 파일에 날짜가 아니라 밀리초가 있어서다(T-36과 다르다).
+ok("★ 스캐너가 살아 있다 — 합성 소스에서 세 값을 실제로 뽑는다",
+  msOf(KT_READ, "    private const val READ_TIMEOUT_MS = 1_234") === 1234
+  && msOf(KT_CONNECT, "    private const val CONNECT_TIMEOUT_MS = 567") === 567
+  && msOf(TS_AI, "const AI_TIMEOUT_MS = 8_000;") === 8000
+  && msOf(KT_READ, "private const val TIMEOUT_MS = 6_000") === null);
+
 // ── 결과 ─────────────────────────────────────────────────────
 console.log(`\n${"=".repeat(46)}\n통과 ${passN} · 실패 ${fails.length}`);
 if (fails.length) { console.log("실패:\n  - " + fails.join("\n  - ")); process.exit(1); }

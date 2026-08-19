@@ -11,7 +11,8 @@ import java.net.URL
  * **Level 1~3은 이 파일을 타지 않는다**(ADR-021). 격상에만 조건이 붙는다.
  *
  * 지연을 발동 앞에 두지 않는다: 화면은 이미 Level 3으로 떴고, 이 호출은 그 뒤에 돈다.
- * 새벽에 6초 늦는 화면은 6초만큼 덜 막는다 — 그래서 검증은 **격상 여부만** 정한다.
+ * 새벽에 몇 초 늦는 화면은 그만큼 덜 막는다 — 그래서 검증은 **격상 여부만** 정한다.
+ * (기다리는 상한은 아래 두 상수다. 여기 숫자를 적으면 두 벌이 된다.)
  *
  * **실패는 전부 Level 3이다**(fail-closed). 거부·타임아웃·오프라인·형식 오류 어느 것도
  * Level 4를 만들지 않는다 — ADR-024가 fail-open을 명시적으로 기각했다.
@@ -23,10 +24,35 @@ import java.net.URL
 object GuardVerify {
 
     /**
-     * 6초. 서버의 모델 타임아웃은 8초지만(ADR-024 ④) 기기는 그보다 먼저 포기한다 —
-     * 서버가 8초를 다 쓰는 밤이면 이미 격상을 기다릴 이유가 없다.
+     * **중첩된 타임아웃은 바깥이 안보다 길다** (ADR-038). 안쪽이 자기 실패를 말할 시간을 남긴다.
+     *
+     * 전에는 하나의 상수 6초가 connect·read 양쪽에 쓰였고, 서버의 모델 예산은 8초였다
+     * (`services/guard.ts`의 `AI_TIMEOUT_MS`). **바깥이 안보다 먼저 끊으니
+     * `server_timeout`은 한 번도 관측될 수 없었다** — 서버가 그 신호를 주려면 8초 뒤에
+     * 답해야 하는데 기기가 6초에 끊었다. T-31이 갈라 둔 두 이유 중 한쪽이
+     * **구조적으로 나올 수 없는 값**이었다.
+     *
+     * **기기 쪽을 늘린다.** 서버를 줄이면 모델에게 주는 시간이 줄어 격상이 더 어려워진다
+     * (ADR-038 §기각한 대안 2행). 개입 화면은 이미 떠 있고 이 호출은 백그라운드 스레드라
+     * **사용자가 기다리는 시간이 아니다.**
+     *
+     * ⚠️ **둘을 한 상수로 되돌리지 않는다. 뜻이 다르다:**
+     * - `connect` — 연결 자체가 안 되는 것은 **진짜 네트워크 부재**다. 빨리 알수록 낫다
+     * - `read` — 서버가 생각 중인 시간이다. **여기가 서버 예산보다 커야** 판정이 도착한다
+     *
+     * 한 이름으로 두면 한쪽을 고칠 때 다른 쪽이 딸려 간다 —
+     * 그게 이 결함이 생긴 방식이다. `test/smoke.ts`가 두 파일을 읽어 부등호를 지킨다.
      */
-    private const val TIMEOUT_MS = 6_000
+    private const val CONNECT_TIMEOUT_MS = 4_000
+
+    /**
+     * `AI_TIMEOUT_MS`(현재 8초) + 여유 4초. 서버는 그 예산 **위에** 컨텍스트 조립과 왕복이
+     * 얹히므로 여유는 그쪽 몫이다. 늘어나는 최악은 connect + read = 16초이고, 전부 백그라운드다.
+     *
+     * ⚠️ **`AI_TIMEOUT_MS`를 올릴 때 이 값을 같이 본다** — 안쪽이 바깥을 넘으면
+     * 원래 결함으로 돌아간다. 검사가 막지만, 막힌 이유는 여기 적혀 있다.
+     */
+    private const val READ_TIMEOUT_MS = 12_000
 
     /**
      * **왜 판정을 못 받았는가** — 닫힌 목록 (T-31 · 0016).
@@ -40,12 +66,12 @@ object GuardVerify {
      * 12월에 **세어야** 하고, 같은 원인이 여러 철자로 흩어지면 집계가 안 된다.
      */
     object Reason {
-        const val TIMEOUT = "timeout"              // 6초 안에 응답이 없다
+        const val TIMEOUT = "timeout"              // 기기가 기다리다 끊었다 (상한은 위 두 상수)
         const val DNS = "dns"                      // 호스트 이름을 못 풀었다
         const val NETWORK = "network"              // 연결 자체가 안 됐다
         const val BAD_RESPONSE = "bad_response"    // 2xx인데 본문이 판정이 아니다
         const val NO_BASE = "no_base"              // 서버 주소가 설정에 없다
-        const val SERVER_TIMEOUT = "server_timeout" // 서버가 모델 8초를 넘겼다
+        const val SERVER_TIMEOUT = "server_timeout" // 서버가 모델 예산을 넘겼다
         const val SERVER_ERROR = "server_error"    // 서버가 오류를 만났다
         const val CAP = "cap"                      // 일일 상한 — 못 부른 게 아니라 안 부른 것이다
         fun http(code: Int) = "http_$code"         // 2xx 아닌 응답. 401과 503의 대응이 다르다
@@ -87,9 +113,12 @@ object GuardVerify {
         /**
          * 서버가 답했는데 판정이 아니었을 때의 이유 (T-31).
          *
-         * **기기가 못 닿은 경우와 갈라 둔다** — `timeout`은 기기의 6초이고
-         * `server_timeout`은 서버의 모델 8초다. 12월에 *"서버가 늦었나"*와
+         * **기기가 못 닿은 경우와 갈라 둔다** — `timeout`은 기기가 기다리다 끊은 것이고
+         * `server_timeout`은 서버가 모델 예산을 넘긴 것이다. 12월에 *"서버가 늦었나"*와
          * *"Doze가 끊었나"*는 대응이 다르므로 같은 이름으로 세면 안 된다.
+         *
+         * ⚠️ **T-37 전에는 이 갈래의 아래쪽이 도달 불가능했다** — 기기가 서버보다 먼저
+         * 끊었으므로 `server_timeout`이 실린 응답이 도착할 수 없었다(ADR-038).
          */
         val unavailableReason: String?
             get() = when (source) {
@@ -137,7 +166,7 @@ object GuardVerify {
     /**
      * [verify]와 같되 **못 받았으면 왜인지 들고 나온다** (T-31).
      *
-     * **판정 자체는 조금도 달라지지 않는다** — fail-closed도 6초도 그대로다(ADR-024).
+     * **판정 자체는 조금도 달라지지 않는다** — fail-closed 그대로다(ADR-024).
      * 늘어나는 것은 **기록**뿐이다.
      */
     fun attempt(
@@ -189,8 +218,8 @@ object GuardVerify {
     private fun post(base: String, token: String?, body: JSONObject): Raw = try {
         val c = (URL("$base/api/guard/verify").openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"
-            connectTimeout = TIMEOUT_MS
-            readTimeout = TIMEOUT_MS
+            connectTimeout = CONNECT_TIMEOUT_MS
+            readTimeout = READ_TIMEOUT_MS
             doOutput = true
             setRequestProperty("Content-Type", "application/json")
             if (!token.isNullOrBlank()) setRequestProperty("Authorization", "Bearer $token")
@@ -203,7 +232,11 @@ object GuardVerify {
         // 2xx면 본문, 아니면 코드를 남긴다 — 401(토큰 만료)과 503(과부하)의 대응이 다르다.
         if (text != null) Raw(text, null) else Raw(null, Reason.http(code))
     } catch (e: java.net.SocketTimeoutException) {
-        // connect·read 어느 쪽이든 6초를 넘긴 것이다. **Doze가 가장 유력한 자리다.**
+        // connect(4초)·read(12초) **어느 쪽이든** 여기로 온다 — 자바가 둘 다 이 예외를 던진다.
+        // ⚠️ 갈라서 세지 않는다: 이유는 닫힌 목록이고 그 목록은 0016의 CHECK가 강제하는데,
+        // SQLite는 CHECK를 고치려면 테이블을 다시 만들어야 한다 — `guard_events`는
+        // 개입 이력 영구 보존이라 옮기지 않는다(0016 주석). **더하고, 빼지 않는다.**
+        // 대신 `server_timeout`이 이제 도착할 수 있으므로 "서버가 늦었나"는 갈린다(T-37).
         Raw(null, Reason.TIMEOUT)
     } catch (e: java.net.UnknownHostException) {
         // 이름을 못 풀었다 — DNS가 안 서거나 네트워크가 통째로 내려간 것이다.

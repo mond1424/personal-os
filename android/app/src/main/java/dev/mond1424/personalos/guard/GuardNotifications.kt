@@ -144,8 +144,10 @@ object GuardNotifications {
         ensureChannels(ctx)
 
         // Level 4 후보는 **먼저 Level 3으로 낸다**(ADR-024 + ADR-021).
-        // 검증을 발동 앞에 두면 응답을 기다리는 동안 개입이 늦어지는데, 새벽에 6초 늦는
-        // 화면은 6초만큼 덜 막는다. 그래서 지연 0으로 띄우고 **승인이 오면 그 화면을 올린다.**
+        // 검증을 발동 앞에 두면 응답을 기다리는 동안 개입이 늦어지는데, 새벽에 몇 초 늦는
+        // 화면은 그만큼 덜 막는다. 그래서 지연 0으로 띄우고 **승인이 오면 그 화면을 올린다.**
+        // (기다리는 상한은 `GuardVerify`의 두 상수다 — T-37이 그것을 늘렸고, 늘릴 수 있는
+        //  이유가 바로 이 순서다: 사용자는 이미 화면을 보고 있다.)
         // 거부·실패·오프라인은 Level 3 그대로 — fail-closed(ADR-024가 fail-open을 기각했다).
         val candidate4 = level >= 4
         val fireLevel = if (candidate4) 3 else level
