@@ -609,6 +609,33 @@ export const stInsertGuardEvent = (
     e.risk_score, e.risk_snapshot, e.ai_used, e.ai_verdict, e.ai_unavailable_reason, e.ai_reason,
     e.task_id, e.period_id, e.event_id, e.client_id, e.created_at);
 
+/**
+ * 판정을 **뒤늦게** 채운다 (T-39). 기기가 검증을 끝냈을 때 그 발동 행이 이미 올라가 있으면
+ * `amendFire`가 큐에서 못 찾으므로, 판정만 담은 항목이 따로 온다(`recordReaction`과 같은 모양).
+ *
+ * ⚠️ **`NULL → 값`만 채운다. 재시도가 판정을 뒤집으면 안 된다.**
+ * 여기서 `COALESCE`가 유일한 방어선이다 — `trg_guard_event_immutable`은 `ai_*` 넷을
+ * **아예 보지 않는다**(0010: `reaction`·`override_*`·`outcome`만 지킨다). 즉 DB는 덮어쓰기를
+ * 허용하고, 막는 것은 이 문장뿐이다. 조건을 지우면 아무것도 빨간불이 되지 않는다.
+ *
+ * `ai_used`만 규칙이 다르다 — `NOT NULL DEFAULT 0`이라 "비어 있음"이 없다. **0 → 1만 올린다**
+ * (`MAX`). 지출은 되돌려지지 않으므로 1을 0으로 내리는 것은 상한(ADR-024 ③)을 잃는 것이다.
+ *
+ * **`level`은 여기 없다.** `NOT NULL`이고 트리거가 `OLD.level != NEW.level`을 **조건 없이**
+ * 막는다(0010) — 뒤늦은 격상은 이 경로로 기록되지 않는다. 동작은 안 바뀐다: 격상 구간은
+ * 기기가 `GuardLevel4.note()`로 따로 들고 있다(ADR-035 ③).
+ */
+export const stAmendGuardAi = (
+  env: Env, id: string,
+  a: { ai_used: 0 | 1; ai_verdict: string | null; ai_unavailable_reason: string | null; ai_reason: string | null },
+) => q(env, `UPDATE guard_events SET
+      ai_used               = MAX(ai_used, ?),
+      ai_verdict            = COALESCE(ai_verdict, ?),
+      ai_unavailable_reason = COALESCE(ai_unavailable_reason, ?),
+      ai_reason             = COALESCE(ai_reason, ?)
+    WHERE id = ?`)
+  .bind(a.ai_used, a.ai_verdict, a.ai_unavailable_reason, a.ai_reason, id);
+
 /** 반응 — 한 번만. `AND reaction IS NULL`이 트리거보다 먼저 걸러 409를 덜 나게 한다. */
 export const stReactGuardEvent = (
   env: Env, id: string, reaction: string, reason: string | null, at: string,

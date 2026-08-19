@@ -110,13 +110,35 @@ object GuardEventQueue {
         aiReason: String? = null,
     ) {
         val list = read(ctx)
-        val hit = list.firstOrNull { it.optString("client_id") == clientId } ?: return
-        if (level != null) hit.put("level", level)
-        hit.put("ai_used", aiUsed)
-        hit.put("ai_verdict", aiVerdict ?: JSONObject.NULL)
-        hit.put("ai_unavailable_reason", unavailableReason ?: JSONObject.NULL)
-        hit.put("ai_reason", aiReason ?: JSONObject.NULL)
-        write(ctx, list)
+        val hit = list.firstOrNull { it.optString("client_id") == clientId }
+        if (hit != null) {
+            if (level != null) hit.put("level", level)
+            hit.put("ai_used", aiUsed)
+            hit.put("ai_verdict", aiVerdict ?: JSONObject.NULL)
+            hit.put("ai_unavailable_reason", unavailableReason ?: JSONObject.NULL)
+            hit.put("ai_reason", aiReason ?: JSONObject.NULL)
+            write(ctx, list)
+            return
+        }
+
+        // 이미 밀어 올려 큐에서 빠졌다 — **판정만 담은 항목을 새로 넣는다** (T-39).
+        // `recordReaction`이 이미 간 길이다. 새 패턴을 만들지 않는다.
+        //
+        // 전에는 여기서 조용히 돌아섰고, 그러면 그 판정은 **영영 사라진다.**
+        // 검증이 최악 16초까지 걸리는데(T-37) 새벽에 깬 사람이 그 안에 화면을 치우면
+        // `GuardAlertActivity`가 `flush()`를 부르므로, 그 경우가 **드문 게 아니라 기본값**이다.
+        //
+        // ⚠️ `level`은 싣지 않는다. `NOT NULL`이라 'NULL → 값' 규칙에 안 맞고
+        // 불변성 트리거가 `OLD.level != NEW.level`을 **조건 없이** 막는다(0010).
+        // 뒤늦은 격상은 기록되지 않지만 **동작은 안 바뀐다** — 격상 구간은
+        // `GuardLevel4.note()`가 따로 들고 있다(ADR-035 ③).
+        val o = JSONObject()
+            .put("client_id", clientId)
+            .put("ai_used", aiUsed)
+            .put("ai_verdict", aiVerdict ?: JSONObject.NULL)
+            .put("ai_unavailable_reason", unavailableReason ?: JSONObject.NULL)
+            .put("ai_reason", aiReason ?: JSONObject.NULL)
+        write(ctx, list + o)
     }
 
     /**

@@ -946,6 +946,54 @@ ok("★ 스캐너가 살아 있다 — 이어진 모양은 잡고 끊긴 모양�
   && KT_CARRIES.test("aiReason = v?.aiReason,")
   && !KT_CARRIES.test("unavailableReason = a.reason,"));
 
+// ── T-39 · 판정이 flush를 앞질러도 살아남는다 ───────────────────
+// 검증은 발동 뒤 최악 16초까지 걸리는데(T-37) 그 사이에 사용자가 반응하면
+// `GuardAlertActivity`가 `flush()`를 불러 발동 행이 먼저 올라간다. 새벽에 깬 사람이
+// 화면을 바로 치우는 것은 **드문 일이 아니라 기본값**이고, 그러면 T-38이 되찾은
+// `ai_reason`이 **가장 흔한 상황에서** 사라진다. 두 곳이 함께 막혀 있었다.
+
+// 1. 본체 — 발동이 먼저 올라간 뒤 판정만 담긴 항목이 온다(cause·level 없이).
+await api("POST", "/api/guard/events", { cause: "protect:deadline", level: 3, client_id: "t39-late-1" });
+const rLate = await api("POST", "/api/guard/events", {
+  client_id: "t39-late-1", ai_used: 1, ai_verdict: "deny",
+  ai_reason: "내일 일정이 오후라 격상까지는 불필요해요",
+});
+const late1 = raw.prepare(
+  "SELECT ai_used AS u, ai_verdict AS v, ai_reason AS r FROM guard_events WHERE client_id='t39-late-1'").get();
+ok("flush 뒤에 도착한 판정이 서버에 실린다 (cause·level 없이 와도 400이 아니다)",
+  rLate.status < 400 && rLate.json?.duplicate === true
+  && late1?.u === 1 && late1?.v === "deny" && String(late1?.r ?? "").startsWith("내일"),
+  `${rLate.status} ${JSON.stringify(late1)}`);
+
+// 2. 1의 짝 — `NULL → 값`만이다. 재시도가 판정을 뒤집으면 안 된다.
+//    ⚠️ 여기가 **유일한 방어선**이다: `trg_guard_event_immutable`은 ai_* 넷을 아예 안 본다.
+await api("POST", "/api/guard/events", {
+  cause: "protect:deadline", level: 4, client_id: "t39-late-2", ai_used: 1,
+  ai_verdict: "approve", ai_reason: "첫 판정",
+});
+await api("POST", "/api/guard/events", {
+  client_id: "t39-late-2", ai_used: 0, ai_verdict: "deny", ai_reason: "두 번째",
+});
+const late2 = raw.prepare(
+  "SELECT ai_used AS u, ai_verdict AS v, ai_reason AS r FROM guard_events WHERE client_id='t39-late-2'").get();
+ok("이미 값이 있으면 덮지 않는다 — ai_used도 1에서 0으로 안 내려간다",
+  late2?.v === "approve" && late2?.r === "첫 판정" && late2?.u === 1, JSON.stringify(late2));
+
+// 3. **위 둘은 서버로 직접 POST 한다 — 기기가 무엇을 하든 초록이다.** T-38에서 실제로 물린 자리다.
+//    기기가 fallback 항목을 만드는지는 소스를 직접 봐야 한다.
+const amendBlock = ktQueue.slice(ktQueue.indexOf("fun amendFire("), ktQueue.indexOf("fun recordReaction("));
+const carriesFallback = (block: string) =>
+  block.length > 0 && !/\?: return/.test(block) && /write\(ctx, list \+ o\)/.test(block);
+ok("기기가 fallback 항목을 만든다 — 큐에 없으면 버리지 않는다 (T-39의 본체)",
+  carriesFallback(amendBlock), `block=${amendBlock.length}자`);
+
+// 4. ★ 3의 짝. 슬라이스가 빗나가면 `amendBlock`이 빈 문자열이 되는데, 그때 **조용히 초록이
+//    되지 않도록** 빈 블록도 거짓으로 둔다 — 그 자리를 합성 소스로 확인한다.
+ok("★ 스캐너가 살아 있다 — 옛 모양(?: return)은 잡고 빈 블록도 거짓이다",
+  !carriesFallback("val hit = list.firstOrNull { it } ?: return\nwrite(ctx, list + o)")
+  && carriesFallback("if (hit != null) { write(ctx, list); return }\nwrite(ctx, list + o)")
+  && !carriesFallback(""));
+
 // ★ 대장이 셋이다 — TS · 0016의 CHECK · GuardVerify.kt. **두 곳에 두면 갈라진다.**
 //   기대값이 비어 있지 않으므로 **스캐너가 죽어 목록이 `[]`가 되면 그 자체로 빨간불**이다
 //   (T-26의 교훈 — '0건'은 못 찾을 때도 초록이다).

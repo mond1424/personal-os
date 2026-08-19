@@ -72,6 +72,25 @@ const aiReason = (verdict: string | null, raw: unknown): string | null => {
   return s ? s.slice(0, AI_REASON_MAX) : null;
 };
 
+/**
+ * 뒤늦게 온 판정에서 **채울 것이 있는지** 본다 (T-39). 없으면 `null` — 단순 재시도가
+ * 쓸데없이 UPDATE를 돌지 않게 한다.
+ *
+ * 값을 만드는 규칙은 insert 경로와 **같은 함수**를 쓴다. 두 벌로 두면
+ * "직접 올린 행"과 "뒤늦게 채운 행"이 서로 다른 정규화를 거치게 되고,
+ * 12월에 그 둘을 같은 표에서 세게 된다.
+ */
+const aiAmendOf = (input: any) => {
+  const verdict = input?.ai_verdict ?? null;
+  const a = {
+    ai_used: (input?.ai_used ? 1 : 0) as 0 | 1,
+    ai_verdict: verdict,
+    ai_unavailable_reason: unavailableReason(verdict, input?.ai_unavailable_reason),
+    ai_reason: aiReason(verdict, input?.ai_reason),
+  };
+  return a.ai_used || a.ai_verdict || a.ai_unavailable_reason || a.ai_reason ? a : null;
+};
+
 // Override 사유에 **길이 하한을 두지 않는다.**
 // 20자 규칙을 뒀다가 실사용에서 마찰이 아니라 강제로 읽혀 걷어냈다 —
 // §6.3이 원하는 것은 "비용을 치르게 한다"이지 "분량을 채우게 한다"가 아니다.
@@ -384,6 +403,12 @@ export async function record(env: Env, t: TimeCtx, input: any) {
       if (!dup.reaction && input?.reaction) {
         await applyReaction(env, t, dup.id, input);
       }
+      // **판정도 뒤늦게 온다** (T-39). 검증은 발동 뒤 최악 16초까지 걸리는데(T-37),
+      // 그 사이에 사용자가 반응하면 `flush()`가 발동 행을 먼저 올려 버린다 —
+      // 새벽에 깨서 화면을 바로 치우는 것은 **드문 일이 아니라 기본값**이다.
+      // 전엔 여기서 `reaction`만 봐서, 기기를 고쳐도 판정이 서버에 안 실렸다.
+      const amend = aiAmendOf(input);
+      if (amend) await db.stAmendGuardAi(env, dup.id, amend).run();
       return { id: dup.id, on_date: dup.on_date, level: dup.level, mode: dup.mode, duplicate: true };
     }
   }

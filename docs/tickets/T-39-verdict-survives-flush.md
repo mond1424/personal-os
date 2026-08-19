@@ -129,8 +129,60 @@ Kotlin: assembleRelease BUILD SUCCESSFUL
 
 ```
 티켓: T-39
-바꾼 파일:
-기준선: typecheck · smoke 317 → ? · front 291 · verify exit 0
-level 이 불변성 트리거에 걸리는가 (§할 일 ② — 확인 결과):
-변이 둘째(기기만 되돌리기)가 실제로 3만 죽였는가:
+바꾼 파일: android/guard/GuardEventQueue.kt   amendFire 의 ?: return → fallback 항목
+           src/db/index.ts                   stAmendGuardAi (신규 · COALESCE + MAX)
+           src/services/guard.ts             aiAmendOf() · record() dup 경로
+           test/smoke.ts                     검사 4건
+기준선: typecheck 통과 · smoke 317 → 321 · front 291(변화 없음) · 실패 0 · verify exit 0
+        Kotlin assembleRelease BUILD SUCCESSFUL (1m 2s) · [signing] release SHA-256 확인
+        마이그레이션 없음 — 0017의 칼럼을 쓰는 것뿐이다.
+level 이 불변성 트리거에 걸리는가 (§할 일 ②): **걸린다. 조건 없이 걸린다.**
+        `0010_guard.sql:89` — `trg_guard_event_immutable` 의 WHEN 절에
+        `OR OLD.level != NEW.level` 이 **아무 조건 없이** 들어 있다. `reaction`·`outcome` 처럼
+        `OLD... IS NOT NULL AND ...` 로 감싼 사후 확정 필드가 **아니다.**
+        `level` 은 `NOT NULL` 이라 애초에 'NULL → 값' 이 성립하지 않는다.
+        ⇒ **뒤늦은 격상은 이 경로로 기록될 수 없다. 별건으로 올린다** (아래 §별건).
+변이 둘째(기기만 되돌리기)가 실제로 3만 죽였는가: **그렇다. 320/1 — 3만 죽었다.**
+        1·2 는 초록으로 남았다(서버로 직접 POST 하므로). 실패 줄이 `block=1079자` 를 함께
+        찍어 **슬라이스가 살아 있었다는 것**까지 말한다 — 스캐너 고장이 아니라 배선이 끊긴 것이다.
 ```
+
+## 변이 셋 — 실제로 돌렸다
+
+| 변이 | 기대 | 실제 |
+|---|---|---|
+| 서버 dup 경로를 되돌린다 (`reaction`만) | 1이 죽고 3은 산다 | **320/1** — 1만 죽고 `{"u":0,"v":null,"r":null}` 를 찍는다 ✅ |
+| **기기 fallback을 되돌린다 (`?: return`)** | **3만 죽는다** | **320/1 — 3만** ✅ **이 티켓의 판정** |
+| 스캐너를 눈멀게 한다 | 3은 초록 · ★만 죽는다 | **319/2** — 3도 함께 죽는다 ⚠️ |
+
+**셋째가 기대와 다르다 — T-37 둘째와 같은 이유로, 더 안전한 쪽이다.**
+`carriesFallback`은 **양성 매치를 요구**한다(`write(ctx, list + o)`가 있어야 참). 그래서
+스캐너가 낡으면 *조용히 참*이 되지 않고 죽는다. **빈 블록도 거짓으로 뒀다** — 슬라이스가
+빗나가는 것이 스캐너가 죽는 가장 흔한 방식이기 때문이다.
+
+**그래도 ★는 제 일을 한다 — 두 변이의 *모양이 다르다*.**
+
+```
+배선이 끊겼다   3만 죽는다   (block=1079자 — 슬라이스는 살아 있었다)
+스캐너가 낡았다  3·★ 둘이 죽는다
+```
+
+**★의 값은 "①을 살리는 것"이 아니라 원인을 가르는 것이다.** 실패 하나만 보고
+*"정규식이 낡았나"*를 되짚지 않아도 된다.
+
+## 별건으로 올림 — 뒤늦은 격상은 기록되지 않는다
+
+**`level`은 티켓의 예상대로 막혀 있고, 그것을 여기서 풀지 않았다**(§금지 4행).
+
+```
+지금   flush 뒤에 승인이 오면  ai_verdict='approve' 는 실리고  level 은 3에 남는다
+```
+
+**동작은 안 바뀐다** — Level 4 구간은 기기의 `GuardLevel4.note()`가 정한다(ADR-035 ③).
+**기록만 덜 남는다**: 12월에 `level=4` 행을 세면 *"승인됐는데 flush가 빨랐던 밤"*이 빠진다.
+`ai_verdict='approve' AND level=3` 으로 셀 수는 있으므로 **복구 가능한 종류**다.
+
+푸는 방법이 있다면 트리거의 그 줄을 `reaction`처럼 **한 방향으로만** 여는 것인데
+(`OLD.level < NEW.level` 은 허용), **CHECK·트리거 수정은 SQLite에서 테이블 재작성**이고
+`guard_events`는 영구 보존 원장이다(0016이 같은 이유로 CHECK를 안 넓혔다).
+**값어치와 비용을 Cowork가 저울질할 일이라 여기서 정하지 않는다.**
