@@ -100,6 +100,10 @@ object GuardEventQueue {
         // 값을 넓히면 0010의 CHECK에 걸려 400이 되고, 아래 `flush()`가 그 행을 버린다.
         // 옛 서버는 이 키를 그냥 무시한다(모르는 필드다) — APK를 먼저 깔아도 안전하다.
         unavailableReason: String? = null,
+        // 왜 **그렇게 답했는가** (T-38 · 0017). 서버가 늘 보내던 `reason`을 여기서 버리고 있었다 —
+        // deny 열한 번의 사유가 그래서 어디에도 안 남았다. 판정이 있을 때만 찬다(`Verdict.aiReason`).
+        // 옛 서버는 이 키를 그냥 무시한다 — APK를 먼저 깔아도 안전하다(위와 같은 이유).
+        aiReason: String? = null,
     ) {
         val list = read(ctx)
         val hit = list.firstOrNull { it.optString("client_id") == clientId } ?: return
@@ -107,6 +111,7 @@ object GuardEventQueue {
         hit.put("ai_used", aiUsed)
         hit.put("ai_verdict", aiVerdict ?: JSONObject.NULL)
         hit.put("ai_unavailable_reason", unavailableReason ?: JSONObject.NULL)
+        hit.put("ai_reason", aiReason ?: JSONObject.NULL)
         write(ctx, list)
     }
 

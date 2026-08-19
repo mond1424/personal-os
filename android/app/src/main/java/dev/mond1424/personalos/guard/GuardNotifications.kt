@@ -250,6 +250,9 @@ object GuardNotifications {
                         aiUsed = v?.aiUsed ?: 0,
                         aiVerdict = v?.aiVerdict ?: "unavailable",
                         unavailableReason = a.reason,
+                        // 판정이 있을 때 **왜 그렇게 답했는지** (T-38). 서버가 늘 보내던 값인데
+                        // 여기서 버려지고 있었다 — deny 열한 번의 사유가 그래서 없다.
+                        aiReason = v?.aiReason,
                     )
                 }
                 if (v?.upgrades == true) {

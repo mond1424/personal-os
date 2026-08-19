@@ -99,6 +99,23 @@ object GuardVerify {
                 else -> null
             }
 
+        /**
+         * **왜 그렇게 답했는가** (T-38 · 0017). 위와 정확히 반대편이다 —
+         * 저쪽은 판정이 **없을 때**, 이쪽은 판정이 **있을 때**만 값이 있다.
+         *
+         * 서버는 늘 `reason`을 실어 보내고 이 클래스는 예전부터 그것을 파싱했다.
+         * **버리던 것을 나르기만 한다** — 판정도 프롬프트도 달라지지 않는다.
+         *
+         * `cap`·`timeout`·`error`의 `reason`("상한을 다 썼어요" 같은 것)은 **싣지 않는다.**
+         * 그건 판정의 사유가 아니라 못 부른 사정이고, 그쪽은 `unavailableReason`이 닫힌
+         * 목록으로 이미 나른다. 둘이 동시에 차면 12월에 어느 쪽을 세는지가 흐려진다.
+         */
+        val aiReason: String?
+            get() = when (source) {
+                "ai", "cache" -> reason.trim().ifEmpty { null }
+                else -> null
+            }
+
         val upgrades: Boolean get() = approved && level >= 4
     }
 

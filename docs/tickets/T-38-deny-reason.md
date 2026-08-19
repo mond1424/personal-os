@@ -140,8 +140,47 @@ npm run deploy
 
 ```
 티켓: T-38
-바꾼 파일:
-기준선: typecheck · smoke 306 → ? · front 291 · verify exit 0
-0017 이름 / smoke 스키마 목록에 넣었는가:
-옛 기기 호환(4번)을 어떻게 확인했나:
+바꾼 파일: migrations/0017_ai_reason.sql (신규)
+           src/db/index.ts              GuardEventRow.ai_reason · stInsertGuardEvent 한 칸
+           src/services/guard.ts        aiReason() 헬퍼 · record()
+           android/guard/GuardVerify.kt        Verdict.aiReason (ai·cache일 때만)
+           android/guard/GuardEventQueue.kt    amendFire 인자 하나 + 큐에 담는다
+           android/guard/GuardNotifications.kt v?.aiReason 을 넘긴다
+           test/smoke.ts                스키마 목록 + 검사 7
+           docs/api-surface.md          POST /api/guard/events 본문
+기준선: typecheck 통과 · smoke 306 → 313 · front 291(변화 없음) · 실패 0 · verify exit 0
+        Kotlin assembleRelease BUILD SUCCESSFUL (2m 16s) · [signing] release SHA-256 확인
+        npx wrangler d1 migrations apply personal-os --local ✅
+0017 이름 / smoke 스키마 목록: `0017_ai_reason.sql` · 넣었다(smoke.ts:19).
+옛 기기 호환(4번): 검사 4가 ai_reason 없이 POST → 201 + 행 존재 + NULL.
+        구조로도 막아 뒀다 — 칼럼에 NOT NULL도 CHECK도 없다(0017). 반대 방향(새 APK +
+        옛 서버)도 안전하다: 옛 서버는 모르는 키를 그냥 무시한다(T-31이 이미 그 길로 갔다).
 ```
+
+**검사가 넷이 아니라 일곱이다. 티켓의 변이 예상이 어긋나서다.**
+
+티켓은 *"`amendFire`에서 `reason`을 다시 버리면 1·2가 죽는다"*고 적었는데 **1·2는 산다** —
+그 셋은 서버로 직접 POST하므로 **기기가 무엇을 하든 초록이다.** 그런데 이 티켓이 고치는
+결함이 정확히 그 자리다(서버는 보냈고 `GuardVerify`는 파싱했는데 `amendFire`가 안 날랐다).
+**티켓이 정한 넷만으로는 같은 결함이 재발해도 아무것도 안 죽는다** — T-01의 교훈 그대로다.
+
+그래서 **끊기는 자리를 직접 보는 검사**와 그 짝을 넣었다. 언어가 달라 타입이 이어 주지 않으므로
+`0016`의 대장 검사(TS·SQL·Kotlin 셋 비교)와 같은 종류다.
+
+⚠️ **스캐너는 주석을 걷어내고 본다.** 처음엔 안 그랬는데, 그러면 배선을 끊는 **가장 쉬운 방법**
+(`// aiReason = ...`)이 검사를 그대로 통과한다.
+
+**변이 셋을 실제로 돌렸다.**
+
+| 변이 | 결과 |
+|---|---|
+| MUT-1 기기가 다시 버린다 (`aiReason = v?.aiReason` 주석) | **313 → 312/1.** 배선 검사만 죽고 `notif=false`로 **어느 쪽이 끊겼는지 말한다.** 1·2·3은 산다 — 이것이 검사를 일곱으로 늘린 이유다 |
+| MUT-2 서버가 판정 없을 때도 싣는다 | **312/1** — 3번(`unavailable`이면 빈다)만 죽는다 |
+| MUT-3 서버가 다시 버린다 (`ai_reason: null`) | **310/3** — 1·2·5가 죽고 **부재를 주장하는 3·4는 산다**(맞는 동작이다) |
+
+**길이는 거부하지 않고 자른다(500자).** 모델이 쓴 문장이라 상한이 없고 개입 이력은 영구
+보존인데, 400을 던지면 `flush()`가 **발동 행을 버린다** — 0016 주석이 말한 그 경로다.
+검사 5가 700자를 넣어 500으로 잘리되 **행이 사는 것**을 본다.
+
+**§할 일 ③(approve도 남긴다)은 검사 1이 지킨다.** 다만 실물에서는 `approve`가 아직 0이라
+**대조군은 첫 승인이 나야 생긴다.** 그때 그 한 건이 가장 값진 기록이 된다는 티켓의 말 그대로다.

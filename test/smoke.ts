@@ -16,7 +16,7 @@ import type { Env } from "../src/types";
 import { makeD1, rawOf } from "./d1shim";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const schema = ["0001_init.sql", "0002_models.sql", "0003_ai_provider.sql", "0004_events.sql", "0005_delete_scope.sql", "0006_fix_model_high.sql", "0007_defer_reason.sql", "0008_cancel_task.sql", "0009_cancel_reason.sql", "0010_guard.sql", "0011_guard_sync.sql", "0012_life_model.sql", "0013_analysis_backfill.sql", "0014_schema_titles.sql", "0015_me_history_reason.sql", "0016_guard_unavailable_reason.sql"]
+const schema = ["0001_init.sql", "0002_models.sql", "0003_ai_provider.sql", "0004_events.sql", "0005_delete_scope.sql", "0006_fix_model_high.sql", "0007_defer_reason.sql", "0008_cancel_task.sql", "0009_cancel_reason.sql", "0010_guard.sql", "0011_guard_sync.sql", "0012_life_model.sql", "0013_analysis_backfill.sql", "0014_schema_titles.sql", "0015_me_history_reason.sql", "0016_guard_unavailable_reason.sql", "0017_ai_reason.sql"]
   .map((f) => readFileSync(join(here, "../migrations/" + f), "utf8")).join("\n");
 const env: Env = { DB: makeD1(schema) };
 const raw = rawOf(env.DB);
@@ -873,6 +873,78 @@ await api("POST", "/api/guard/events", {
 });
 ok("approve에는 이유가 안 붙는다 (판정이 있으면 못 부른 게 아니다)",
   raw.prepare("SELECT ai_unavailable_reason AS r FROM guard_events WHERE client_id='unavail-uuid-5'").get()?.r === null);
+
+// ── T-38 · 왜 그렇게 답했는가 (0017) ────────────────────────────
+// deny 열한 번의 사유가 어디에도 없었다. 서버는 만들어 보냈고 기기는 파싱까지 했는데
+// `amendFire`가 나르지 않아 그 자리에서 버려졌다. **늘리는 것은 기록뿐이다** —
+// 판정도 프롬프트도 안 건드린다.
+const reasonOf = (cid: string) =>
+  raw.prepare("SELECT ai_reason AS r, ai_unavailable_reason AS u FROM guard_events WHERE client_id=?").get(cid);
+
+await api("POST", "/api/guard/events", {
+  cause: "protect:deadline", level: 4, client_id: "reason-uuid-1", ai_used: 1,
+  ai_verdict: "approve", ai_reason: "시험이 9시간 뒤이고 지금 2시간째 깨어 있어요",
+});
+ok("approve 판정에 ai_reason이 실린다",
+  reasonOf("reason-uuid-1")?.r === "시험이 9시간 뒤이고 지금 2시간째 깨어 있어요");
+
+await api("POST", "/api/guard/events", {
+  cause: "protect:deadline", level: 3, client_id: "reason-uuid-2", ai_used: 1,
+  ai_verdict: "deny", ai_reason: "내일 일정이 오후라 격상까지는 불필요해요",
+});
+ok("deny 판정에도 실린다 — approve만 남기면 대조군이 없다",
+  reasonOf("reason-uuid-2")?.r === "내일 일정이 오후라 격상까지는 불필요해요");
+
+// ★ 3의 짝. 못 물어봤는데 "왜 그렇게 답했는지"가 있으면 그 자체가 거짓이다.
+// 둘이 동시에 차면 12월에 어느 쪽을 세는지가 흐려진다 — 기계가 세는 쪽과 사람이 읽는 쪽이다.
+await api("POST", "/api/guard/events", {
+  cause: "protect:deadline", level: 3, client_id: "reason-uuid-3", ai_used: 1,
+  ai_verdict: "unavailable", ai_unavailable_reason: "server_timeout",
+  ai_reason: "이것은 판정의 사유가 아니다",
+});
+const r3 = reasonOf("reason-uuid-3");
+ok("unavailable이면 ai_reason은 비고 ai_unavailable_reason만 찬다",
+  r3?.r === null && r3?.u === "server_timeout", JSON.stringify(r3));
+
+// ★ T-31의 교훈. 새 칼럼을 필수로 만들면 옛 APK가 올리는 행이 400이 되고
+// `flush()`가 그것을 '재시도 무의미'로 버린다 — **관측을 늘리려다 관측을 잃는다.**
+const rOld = await api("POST", "/api/guard/events", {
+  cause: "protect:deadline", level: 3, client_id: "reason-uuid-4", ai_used: 1,
+  ai_verdict: "deny",
+});
+ok("★ ai_reason 없는 판정을 올려도 행이 산다 (옛 APK · NULL 허용)",
+  rOld.status === 201 && reasonOf("reason-uuid-4")?.r === null, String(rOld.status));
+
+// 길이도 같은 이유로 **거부하지 않고 자른다.** 400은 위와 같은 행 유실 경로다.
+await api("POST", "/api/guard/events", {
+  cause: "protect:deadline", level: 3, client_id: "reason-uuid-5", ai_used: 1,
+  ai_verdict: "deny", ai_reason: "가".repeat(700),
+});
+ok("긴 이유는 잘리되 행은 산다 (400을 던지면 flush가 행을 버린다)",
+  String(reasonOf("reason-uuid-5")?.r ?? "").length === 500);
+
+// ★ 위 다섯의 짝. **저것들만으로는 이 티켓을 못 지킨다** — 서버로 직접 POST하므로
+// 기기가 `reason`을 다시 버려도 전부 초록이다. 그런데 T-38이 고치는 결함이 바로 그 자리다:
+// 서버는 늘 보냈고 `GuardVerify`는 파싱까지 했는데 `amendFire`가 안 날라서 사라졌다.
+// **끊기는 자리를 검사가 직접 봐야 한다** — 언어가 달라 타입이 이어 주지 않는다.
+// ⚠️ **주석을 걷어내고 본다.** 안 그러면 그 줄을 `//`로 막아도 정규식이 그대로 맞아
+// 초록이 된다 — 배선을 끊는 가장 쉬운 방법이 검사를 못 지나가야 한다(T-36의 `isComment`와 같다).
+const ktCode = (p: string) => readFileSync(join(here, p), "utf8")
+  .split("\n").filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join("\n");
+const ktQueue = ktCode("../android/app/src/main/java/dev/mond1424/personalos/guard/GuardEventQueue.kt");
+const ktNotif = ktCode("../android/app/src/main/java/dev/mond1424/personalos/guard/GuardNotifications.kt");
+const KT_STORES = /put\("ai_reason"/;
+const KT_CARRIES = /aiReason\s*=\s*v\?\.aiReason/;
+ok("기기가 이유를 나른다 — 큐가 담고 호출부가 넘긴다 (T-38의 본체)",
+  KT_STORES.test(ktQueue) && KT_CARRIES.test(ktNotif),
+  `queue=${KT_STORES.test(ktQueue)} notif=${KT_CARRIES.test(ktNotif)}`);
+// 위는 **스캐너가 죽어도 false가 아니라 조용히 false**가 된다 — 그건 실패로는 보이지만
+// 원인이 "안 날랐다"인지 "정규식이 낡았다"인지 구별이 안 된다. 합성 줄로 가른다.
+ok("★ 스캐너가 살아 있다 — 이어진 모양은 잡고 끊긴 모양은 안 잡는다",
+  KT_STORES.test('hit.put("ai_reason", aiReason ?: JSONObject.NULL)')
+  && !KT_STORES.test('hit.put("ai_verdict", aiVerdict ?: JSONObject.NULL)')
+  && KT_CARRIES.test("aiReason = v?.aiReason,")
+  && !KT_CARRIES.test("unavailableReason = a.reason,"));
 
 // ★ 대장이 셋이다 — TS · 0016의 CHECK · GuardVerify.kt. **두 곳에 두면 갈라진다.**
 //   기대값이 비어 있지 않으므로 **스캐너가 죽어 목록이 `[]`가 되면 그 자체로 빨간불**이다

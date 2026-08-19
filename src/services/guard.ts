@@ -52,6 +52,26 @@ const unavailableReason = (verdict: string | null, raw: unknown): string | null 
   return (UNAVAILABLE_REASONS as readonly string[]).includes(s) || HTTP_REASON.test(s) ? s : null;
 };
 
+/** 모델이 쓴 문장이라 상한이 없다 — 개입 이력은 영구 보존이므로 여기서 한 번 자른다. */
+const AI_REASON_MAX = 500;
+
+/**
+ * **왜 그렇게 답했나** (T-38 · 0017). 위 `unavailableReason`과 정확히 반대편이다 —
+ * 저쪽은 판정이 **없을 때만**, 이쪽은 판정이 **있을 때만** 값이 있다.
+ *
+ * `unavailable`에 이 값이 붙으면 그 자체가 거짓이다: 못 물어봤는데 "왜 그렇게 답했는지"가
+ * 있을 수 없다. 기기도 같은 판단을 하지만(`Verdict.aiReason`) **여기서 다시 막는다** —
+ * 옛 APK·PC 에이전트·수기 POST가 모두 이 문을 지나고, 둘이 갈라지면 서버가 이긴다.
+ *
+ * **길어도 거부하지 않고 자른다.** 400을 던지면 기기의 `flush()`가 '재시도 무의미'로 보고
+ * **발동 행을 버린다**(T-31이 잡힌 자리 · 0016 주석). 이유 하나 때문에 기록을 잃지 않는다.
+ */
+const aiReason = (verdict: string | null, raw: unknown): string | null => {
+  if (verdict !== "approve" && verdict !== "deny") return null;
+  const s = typeof raw === "string" ? raw.trim() : "";
+  return s ? s.slice(0, AI_REASON_MAX) : null;
+};
+
 // Override 사유에 **길이 하한을 두지 않는다.**
 // 20자 규칙을 뒀다가 실사용에서 마찰이 아니라 강제로 읽혀 걷어냈다 —
 // §6.3이 원하는 것은 "비용을 치르게 한다"이지 "분량을 채우게 한다"가 아니다.
@@ -412,6 +432,8 @@ export async function record(env: Env, t: TimeCtx, input: any) {
     ai_verdict: input.ai_verdict ?? null,
     // 왜 못 불렀는가 (0016). 목록 밖이면 조용히 비운다 — 위 주석 참조.
     ai_unavailable_reason: unavailableReason(input.ai_verdict ?? null, input.ai_unavailable_reason),
+    // 왜 그렇게 답했는가 (0017). 판정이 있을 때만 — 위 둘은 짝이고 동시에 차지 않는다.
+    ai_reason: aiReason(input.ai_verdict ?? null, input.ai_reason),
     task_id: input.task_id ?? null,
     period_id: input.period_id ?? null,
     event_id: input.event_id ?? null,
