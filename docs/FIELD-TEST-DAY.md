@@ -85,6 +85,8 @@ await G.resetWatchNight();
 > (`guard.ts:568` `guardAiCallsOn(env, onDate)`). 경계가 06:00이므로
 > **오늘 낮에 다 쓰면 오늘 밤 01:30~05:00 발동도 전부 `cap`으로 막힌다** — 같은 귀속일이다.
 > **밤 실측을 하는 날에는 낮에 `testNotify({level:4})`를 쓰지 않는다.**
+> **상한 값은 모드가 정한다** — `coach`는 5, `secretary`는 **0**이다. `secretary`면
+> 한 번도 안 썼어도 `cap`이 나온다(2026-08-17이 그랬다 — `APP-BUILD.md` §낮 실측 ②의 정정).
 
 ```js
 await G.testNotify({ level: 4 });
