@@ -1,4 +1,4 @@
-# STATE — 최종 갱신 2026-08-17
+# STATE — 최종 갱신 2026-08-20
 
 ## 저장소
 
@@ -21,14 +21,15 @@
 - 마지막 코드 변경: **T-39 `d5a6149`** (2026-08-20 · 서버 + Kotlin + smoke · **마이그레이션 없음**).
   그 앞이 **T-37 `d9a2f7a`** (같은 날 · `GuardVerify.kt`·`smoke.ts` — **Kotlin 상수**) ·
   **T-38 `d71d42b`** (같은 날 · **`0017_ai_reason.sql` 포함** · 서버 + Kotlin + smoke).
-  - ⚠️ **셋 다 APK가 필요하고 T-38은 마이그레이션도 필요하다.** 한 번의 유선 연결에 묶는다.
-    **T-39를 빼고 깔면 안 된다** — 그 구멍(판정이 flush를 앞지르면 유실)이 열린 채로 9월 데이터가 쌓인다.
-    남은 것을 **여기서 단정하지 않는다** — 확인은 이 두 줄이 한다:
-    ```powershell
-    npx wrangler d1 migrations apply personal-os --remote --dry-run   # 0017이 남았나
-    adb shell dumpsys package dev.mond1424.personalos | findstr versionCode
-    ```
-  - **웹 자산은 이 둘에 없다**(`public/` 무변경). 즉 `deploy`가 필요한 이유는 **서버 코드와
+  - ✅ **2026-08-20 06:57 KST 실측 — 셋 다 라이브·설치까지 끝났다** (이 절 머리 경고대로 **이력이다**).
+    - `deployments list` 최신 `2026-08-19T21:57:10Z`(= 06:57:10 KST)가 **T-39 커밋 06:20:47보다 뒤다.**
+    - `d1 migrations list --remote` → **"No migrations to apply!"** — `0017`까지 적용됨.
+    - **설치된 APK가 로컬 빌드와 바이트 단위로 같다**: `md5 4e001be24ce4e4c1c15dc8baf8487e7c` —
+      `pm path`의 `base.apk`와 `app-release.apk`가 **동일**. `lastUpdateTime 2026-08-20 06:57:34`.
+      **버전 코드는 1로 고정이라 아무것도 말해 주지 않는다** — 해시가 유일하게 말해 준다.
+    - ⚠️ **`--remote --dry-run`은 이 환경에서 죽는다**(exit 9 · `uv_handle` assertion).
+      **`d1 migrations list --remote`를 쓴다.**
+  - **웹 자산은 셋에 없다**(`public/` 무변경). 즉 `deploy`가 필요했던 이유는 **서버 코드와
     0017**이지 화면이 아니다.
 - 그 앞 코드 변경: **T-36 `4554c73`** (2026-08-14 18:39 KST · **`test/smoke.ts`만 — 소스 무변경**).
   그 앞이 **T-35 `7cd89e3`** (같은 날 17:46 · `public/app.js`·`index.html`·`front.mjs` — **웹만**).
