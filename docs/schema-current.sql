@@ -1,14 +1,19 @@
 -- docs/schema-current.sql — 스키마 스냅샷 (자동 생성)
 -- migrations/ 전체를 인메모리 sqlite에 적용한 뒤 sqlite_master를 덤프한 것.
--- 최신 마이그레이션: 0016_guard_unavailable_reason.sql  ·  갱신 2026-08-11
+-- 최신 마이그레이션: 0017_ai_reason.sql  ·  갱신 2026-08-20
 -- 0013·0014는 DDL을 바꾸지 않는다: 0013 = analyses backfill(트리거를 원문 그대로 복원) ·
 --   0014 = lm_schema.body에 title 얹기(UPDATE만).
 -- 0015 = me_history에 reason TEXT 추가(ADR-027 — 모드 하향 사유). ALTER라 컬럼이 표 끝에 붙는다.
 -- 0016 = guard_events에 ai_unavailable_reason TEXT 추가(T-31 — 왜 못 불렀는가). 같은 이유로 표 끝.
 --   ai_verdict의 CHECK는 건드리지 않았다 — 값을 넓히면 과거 행과 모양이 갈라지고,
 --   CHECK 위반이 400이 되어 기기의 flush()가 발동 행을 버린다.
+-- 0017 = guard_events에 ai_reason TEXT 추가(T-38 — 왜 그렇게 답했는가). 같은 이유로 표 끝.
+--   위 ai_unavailable_reason과 **반대편**이다: 저쪽은 판정이 없을 때(닫힌 목록 · 기계가 센다),
+--   이쪽은 판정이 있을 때(자유 문자열 · 사람이 읽는다). CHECK도 NOT NULL도 두지 않는다 —
+--   옛 APK가 이 키 없이 올리는 행이 살아야 한다.
+-- ⚠️ ai_unavailable_reason의 CHECK **주석 두 줄**이 T-37에서 바뀌었다(숫자를 뺐다).
+--   이미 만들어진 DB의 sqlite_master에는 옛 문구가 남아 있다 — 주석이라 동작은 같다.
 -- 손으로 고치지 않는다 — 마이그레이션을 추가하고 다시 덤프한다 (CLAUDE.md 세션 종료 규칙).
-
 
 -- ==========================================================
 -- 테이블
@@ -90,19 +95,19 @@ CREATE TABLE "guard_events" (
   CHECK (
     ai_unavailable_reason IN (
       -- 기기가 서버에 못 닿았다
-      'timeout',        -- 6초 안에 응답이 없다 (SocketTimeoutException)
+      'timeout',        -- 기기가 기다리다 끊었다 (SocketTimeoutException). 상한은 GuardVerify.kt
       'dns',            -- 호스트 이름을 못 풀었다 (UnknownHostException)
       'network',        -- 연결 자체가 안 됐다 (ConnectException·SSL·소켓 끊김)
       'bad_response',   -- 2xx인데 본문이 판정이 아니다
       'no_base',        -- 서버 주소가 설정에 없다
       -- 서버는 답했는데 판정이 아니었다 (`source`가 그대로 온다)
-      'server_timeout', -- 모델이 8초를 넘겼다
+      'server_timeout', -- 모델이 서버 예산(AI_TIMEOUT_MS)을 넘겼다
       'server_error',   -- 서버가 오류를 만났다
       'cap'             -- 일일 상한 (ADR-024 ③) — 못 부른 게 아니라 안 부른 것이다
     )
     -- 2xx가 아닌 응답. 코드까지 남긴다 — 401(토큰 만료)과 503(과부하)의 대응이 다르다.
     OR ai_unavailable_reason GLOB 'http_[0-9][0-9][0-9]'
-  ),
+  ), ai_reason TEXT,
 
   CHECK (reaction != 'override' OR override_reason IS NOT NULL)   -- Override엔 사유 필수 (§6.3)
 );
