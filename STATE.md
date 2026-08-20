@@ -18,7 +18,15 @@
 
 - repo: https://github.com/mond1424/personal-os
 - branch: main
-- 마지막 코드 변경: **T-40** (2026-08-20 · `GuardEventQueue.kt`·`smoke.ts` — **Kotlin만 · 서버 무변경**).
+- 마지막 코드 변경: **T-41 `3e1a933`** (2026-08-21 · **`0018_collected_items.sql` 포함** ·
+  서버만 — `services/uclass.ts` 신설 · 프런트·기기 무변경).
+  - ⚠️ **APK가 필요 없다.** `--remote` + `deploy`만이면 된다. 다만 **시크릿을 넣기 전까지는
+    아무 일도 안 일어난다** — `UCLASS_ICAL_URL`이 없으면 수집이 `no_token`으로 끝난다.
+    ```powershell
+    npx wrangler secret put UCLASS_ICAL_URL   # 학사 iCal 내보내기 토큰 URL
+    ```
+    ⚠️ **그 URL을 채팅·문서·커밋에 붙여넣지 않는다.** `/user/managetoken.php`에서 무효화된다.
+- 그 앞 코드 변경: **T-40** (2026-08-20 · `GuardEventQueue.kt`·`smoke.ts` — **Kotlin만 · 서버 무변경**).
   그 앞이 **T-39 `d5a6149`** (같은 날 · 서버 + Kotlin + smoke · **마이그레이션 없음**) ·
   **T-37 `d9a2f7a`** (같은 날 · `GuardVerify.kt`·`smoke.ts` — **Kotlin 상수**) ·
   **T-38 `d71d42b`** (같은 날 · **`0017_ai_reason.sql` 포함** · 서버 + Kotlin + smoke).
@@ -1455,8 +1463,9 @@ Guard v1이 1순위라는 건 안 바뀐다. Phase 1을 셋으로 쪼개 **UI를
 - style.css      https://raw.githubusercontent.com/mond1424/personal-os/main/public/style.css
 
 ## 기준선
-typecheck 통과 / **smoke 325** / **front 291** / 실패 0 / verify exit 0
-**2026-08-20 (T-38 → T-37 → T-39 → T-40).** 착수 전 재측정에서도 **306/291**이었다 —
+typecheck 통과 / **smoke 335** / **front 291** / 실패 0 / verify exit 0
+**2026-08-21 (T-41).** 그 앞이 8/20의 T-38 → T-37 → T-39 → T-40이다.
+8/20 착수 전 재측정에서도 **306/291**이었다 —
 8/17에서 사흘이 더 지났는데 같다. **날짜 의존 결함에서는 그것만이 증거다**(T-36의 상대화가 버틴다).
 
 **여기가 기준선 숫자의 유일한 자리다.** `CLAUDE.md`·`AGENTS.md`·`_TEMPLATE.md`에서 실수치를 뺐다 —
@@ -1469,6 +1478,28 @@ front가 **257**로 나왔다 — T-26은 `public/`·`front.mjs`를 건드리지
 다시 재니 256이었다(smoke 279는 같았다). **오염된 트리에서 잰 숫자가 원장에 들어가면 그 줄은
 거짓이고, 다음 티켓의 '앞 숫자'가 어긋난다.** 병렬 발행은 Cowork가 `AGENT-CHAIN.md` §3로 막았다.
 
+(T-41 학사 마감 수집: smoke **325 → 335** · front 291 무변경 · **0018 `collected_items`** ·
+ **서버만**(프런트·기기 무변경) — cron → iCal 토큰 URL → VEVENT → `UID` diff → 저장. 화면은 T-42.
+ ★ **해석하지 않는다**: `SUMMARY`·`DESCRIPTION`을 원문 그대로 넣는다. 강좌 구분이 어디 실리는지도
+ 과제 due의 형식도 모른다(ADR-037 §실측) — **모르는 것을 지금 정하면 개강 첫날 틀린다.**
+ 표 이름이 `collected_deadlines`가 아닌 것도 같은 이유다: **마감이라 부르는 것부터가 해석이다.**
+ ★ **사라진 것을 지우지 않는다** — 창이 `-5일 ~ +365일`이라 지난 마감이 저절로 빠지고,
+ 그걸 삭제로 읽으면 **어제 한 과제가 오늘 사라진다.** `last_seen_at`으로만 안다.
+ 빈도는 `settings.uclass_last_collect_at` + 6시간 = **하루 4회**(cron은 30분마다 돈다).
+ 토큰이 없으면 `no_token`으로 끝난다 — **지금 배포해도 아무것도 안 바뀐다.**
+ 실패는 `autoClose`가 `.catch`로 삼키되(`finalizeIgnored`와 같은 모양) 사유는
+ `settings.uclass_last_error`에 남는다. ⚠️ **사유에 URL을 안 싣는다 — 그 값이 열쇠다.**
+ **변이 둘**: `.catch` 제거 **334/1**(7만) · 사라짐을 삭제로 **334/1**(5만 · `A=0`).
+ ⚠️ **첫 변이가 처음엔 러너를 죽였다**(요약도 개수도 안 남았다) — T-35에서 물린 자리라
+ 검사가 `autoClose(...).catch(...)`로 **던짐을 빨간불로 번역**하게 고쳤다.
+ 검사는 티켓의 일곱에 셋을 보태 열이다: 빈도 제한(`fetch` 호출 수를 센다) ·
+ 실패 사유가 남고 URL이 안 실린다 · `DTSTART`가 로컬 오프셋으로 정규화된다.
+ ⚠️ **T-36 스캐너에 걸렸고 그 가드를 넓히지 않았다** — 기대값을 fixture에서 독립으로
+ 계산한다(`isoOf`). `icalDateToIso`를 부르면 순환이고, 대시 리터럴은 스캐너가 **맞게** 잡는다.
+ ⚠️ **fixture는 재구성이다** — 원본 `.ics`가 리포에 없어 ADR-037 §실측 기록에서 만들었다.
+ UID·LAST-MODIFIED·필드 여덟·`DTSTART` UTC·PRODID는 실측 그대로이고 **접힌 줄은 합성**이다.
+ ⚠️ **`DTSTART`가 마감 시각인지는 아직 모른다** — 그래서 `starts_at`이고 마감이라 안 불렀다.
+ T-42가 이 이름을 그대로 믿으면 안 된다. **개강 첫 과제가 답한다.**)
 (T-40 flush가 자기 스냅샷으로 큐를 덮지 않는다: smoke **321 → 325** · front 291 무변경 · **마이그레이션 없음** —
  `read` → `post`(~1.8초) → `write(list.drop(1))`가 **목록 전체를 덮어** 그 창에 들어온 것을 지웠다.
  T-39가 고친 자리가 아니다 — 큐에 행이 있으므로 fallback이 안 탄다. **POST 뒤에 다시 읽고,
@@ -1713,7 +1744,17 @@ await (async () => {
   26회가 끝나면 `S.cal`은 원래 달로 돌아온다(+1/−1 짝수).
 
 ## 마이그레이션
-최신: **`0017_ai_reason`** (T-38 · 2026-08-20) — **`--local` 적용 완료.**
+최신: **`0018_collected_items`** (T-41 · 2026-08-21) — **`--local` 적용 완료.**
+**`--remote`·deploy 여부는 이 층이 모른다** — 확인은 `d1 migrations list --remote`.
+- `0018_collected_items` (T-41) — 학사 일정 수집 원장. **새 테이블**이라 ALTER가 아니다.
+  `uid` UNIQUE가 diff 기준이자 멱등 키(0011의 `client_id`와 같은 역할).
+  ⚠️ **파생값이 아니다** — 원천이 밖에 있고 창이 `-5일 ~ +365일` 고정이라 **다시 못 가져온다.**
+  조회로 재현되지 않으므로 사본이 아니라 **기록**이다(원칙 1과 충돌하지 않는다).
+  `summary`·`description`은 **원문 그대로** — 형식을 아직 모른다(ADR-037 §실측).
+  `DTEND`도 쓰는 곳이 없지만 버리지 않는다. **원문 보존이 이 결정의 전부다.**
+  `test/smoke.ts`의 하드코딩 스키마 목록에 등록 완료 · `docs/schema-current.sql` 재덤프 완료.
+  - **APK 무관.** 순서는 `--remote` → `deploy`뿐이고, **시크릿을 넣기 전까지 아무 일도 안 한다.**
+- `0017_ai_reason` (T-38 · 2026-08-20) — **`--local` 적용 완료.**
 **`--remote`·deploy 여부는 이 층이 모른다**(CLAUDE.md §사람이 하는 것의 상태) —
 확인은 `npx wrangler d1 migrations apply personal-os --remote --dry-run`.
 - `0017_ai_reason` (T-38) — `guard_events`에 `ai_reason TEXT`. **CHECK도 NOT NULL도 없다.**

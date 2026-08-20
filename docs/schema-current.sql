@@ -1,6 +1,6 @@
 -- docs/schema-current.sql — 스키마 스냅샷 (자동 생성)
 -- migrations/ 전체를 인메모리 sqlite에 적용한 뒤 sqlite_master를 덤프한 것.
--- 최신 마이그레이션: 0017_ai_reason.sql  ·  갱신 2026-08-20
+-- 최신 마이그레이션: 0018_collected_items.sql  ·  갱신 2026-08-21
 -- 0013·0014는 DDL을 바꾸지 않는다: 0013 = analyses backfill(트리거를 원문 그대로 복원) ·
 --   0014 = lm_schema.body에 title 얹기(UPDATE만).
 -- 0015 = me_history에 reason TEXT 추가(ADR-027 — 모드 하향 사유). ALTER라 컬럼이 표 끝에 붙는다.
@@ -13,6 +13,10 @@
 --   옛 APK가 이 키 없이 올리는 행이 살아야 한다.
 -- ⚠️ ai_unavailable_reason의 CHECK **주석 두 줄**이 T-37에서 바뀌었다(숫자를 뺐다).
 --   이미 만들어진 DB의 sqlite_master에는 옛 문구가 남아 있다 — 주석이라 동작은 같다.
+-- 0018 = collected_items 신설(T-41 — 학사 마감 수집). **새 테이블이라 표 순서에 알파벳으로 낀다.**
+--   summary·description은 **원문 그대로**다 — 형식을 아직 모르므로 해석하지 않는다(ADR-037 §실측).
+--   uid UNIQUE가 diff 기준이자 멱등 키다. 사라진 항목을 **지우지 않는 것**이 이 표의 성질이고,
+--   그래서 last_seen_at이 있다(창이 -5일~+365일이라 지난 마감은 저절로 빠진다).
 -- 손으로 고치지 않는다 — 마이그레이션을 추가하고 다시 덤프한다 (CLAUDE.md 세션 종료 규칙).
 
 -- ==========================================================
@@ -27,6 +31,24 @@ CREATE TABLE analyses (
   context_meta TEXT,                 -- 조립된 윈도우 기록 (JSON) — 재현·감사용 (v0.8 확정, 5.4)
   created_at   TEXT NOT NULL
 , anchor_type     TEXT, anchor_id       TEXT, model_tier      TEXT, source_versions TEXT);
+
+CREATE TABLE collected_items (
+  id            TEXT PRIMARY KEY,                 -- 'YYYYMMDD-NNN' (리포 관례)
+  uid           TEXT NOT NULL UNIQUE,             -- iCal UID. diff 기준 · 멱등 키
+  source        TEXT NOT NULL DEFAULT 'uclass'
+                  CHECK (source IN ('uclass')),   -- 원천이 늘 것을 전제로 칸을 둔다
+  summary       TEXT NOT NULL,                    -- 원문 그대로. 해석 금지
+  description   TEXT,                             -- 원문 그대로. 비어 있어도 칸을 둔다
+  starts_at     TEXT,                             -- DTSTART를 로컬 오프셋 표기로 정규화
+  ends_at       TEXT,                             -- DTEND. 쓰는 곳은 아직 없지만 **버리지 않는다**
+  last_modified TEXT,                             -- LAST-MODIFIED — 변경 감지
+  first_seen_at TEXT NOT NULL,                    -- 처음 본 시각
+  last_seen_at  TEXT NOT NULL,                    -- 마지막으로 목록에 있던 시각 ← 사라짐 판정 근거
+  state         TEXT NOT NULL DEFAULT 'new'
+                  CHECK (state IN ('new','accepted','dismissed')),
+  event_id      TEXT REFERENCES events(id),       -- accepted일 때 만들어진 일정 (T-42)
+  created_at    TEXT NOT NULL
+);
 
 CREATE TABLE daily (
   date          TEXT PRIMARY KEY,    -- YYYY-MM-DD = id (귀속일)
@@ -302,6 +324,8 @@ FROM tasks t;
 -- ==========================================================
 
 CREATE INDEX idx_analyses_anchor ON analyses(anchor_type, anchor_id);
+
+CREATE INDEX idx_collected_state ON collected_items(state, starts_at);
 
 CREATE INDEX idx_entries_date ON schedule_entries(date);
 

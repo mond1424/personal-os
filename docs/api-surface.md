@@ -80,7 +80,8 @@
 | POST `/api/guard/watch-apps` | `{source, identifier, label?}` | `{source, identifier}` (201) | `guard.addWatchApp` |
 | DELETE `/api/guard/watch-apps/:source/:identifier` | — | `{deleted}` | `guard.removeWatchApp` |
 | GET `/api/health` | — | `{ok, date, now}` | (인라인) |
-| POST `/api/admin/auto-close` | — | `{closed, orphaned, guard_ignored, as_of}` | `scheduled.autoClose` |
+| POST `/api/admin/auto-close` | — | `{closed, orphaned, guard_ignored, uclass, as_of}` | `scheduled.autoClose` |
+| — | | ↑ `uclass`(T-41)는 학사 iCal 수집 결과다: `{skipped:'no_token'\|'too_soon'\|'error'\|null, collected, added, changed}`. **던지지 않는다** — `guard_ignored`와 같은 이유로 `.catch`로 삼키고 실패 사유는 `settings.uclass_last_error`에 남는다. 토큰(`UCLASS_ICAL_URL`)이 없으면 `no_token`으로 끝나 아무 일도 안 한다 | |
 
 > **라우트 순서 주의** — 리터럴 경로를 와일드카드보다 **앞**에 둔다. 실제로 두 번 물렸다:
 > `/api/analyses/context-*`는 `/api/analyses/:id`보다 앞 · `/api/lm/{sections,import-me,item/:id}`는 `/api/lm/:section`보다 앞.
