@@ -62,10 +62,18 @@ Codex의 진입 파일은 `AGENTS.md`(이 문서를 원본으로 가리킨다 �
 **상태 대신 확인하는 법을 적는다:**
 
 ```powershell
-npx wrangler deployments list           # 무엇이 언제 라이브가 됐나
-npx wrangler d1 migrations apply personal-os --remote --dry-run   # 남은 마이그레이션
-adb shell dumpsys package dev.mond1424.personalos | findstr versionCode
+npx wrangler deployments list                        # 무엇이 언제 라이브가 됐나
+npx wrangler d1 migrations list personal-os --remote  # 남은 마이그레이션
+# APK: 설치본과 방금 만든 빌드가 같은 물건인가 — 해시로만 갈린다
+$p = (adb shell pm path dev.mond1424.personalos) -replace 'package:','' ; adb shell md5sum $p.Trim()
+(Get-FileHash android\app\build\outputs\apk\release\app-release.apk -Algorithm MD5).Hash.ToLower()
 ```
+
+⚠️ **셋 중 둘이 아무것도 확인해 주지 않아 2026-08-20에 바꿨다** — 적힌 확인법이 안 돌면
+이 절이 거짓말을 하는 것이고, 그건 상태를 적어 두는 것과 같은 실패다.
+- `d1 migrations apply --remote --dry-run` → **exit 9로 죽는다**(`uv_handle` assertion). `list`를 쓴다.
+- `dumpsys … findstr versionCode` → **`versionCode`가 1로 고정**이라 무엇이 깔렸든 늘 같은 값이다.
+  **해시가 유일한 증거다** — 실제로 이것으로 "T-39가 깔렸는가"를 갈랐다.
 
 기준선 숫자를 여기서 뺀 것과 같은 이유다. **한 곳에만 두거나, 아예 두지 않는다.**
 

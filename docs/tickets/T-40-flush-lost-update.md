@@ -139,9 +139,51 @@ Kotlin: assembleRelease BUILD SUCCESSFUL
 
 ```
 티켓: T-40
-바꾼 파일:
-기준선: typecheck · smoke 321 → ? · front 291 · verify exit 0
-반복 전송 방지(§할 일 ⚠️)를 어떻게 했나:
-실측 넷 (반응 +0.5 / +0.5 / +1.5 / +30초)의 ai_verdict:
-그 창에서 새 발동 행도 살아남는가 (§사라지는 것):
+바꾼 파일: android/guard/GuardEventQueue.kt   flush 의 read-modify-write · keyOf() 신설
+           test/smoke.ts                     스캐너 4건
+           CLAUDE.md                         §사람이 하는 것의 상태 — 확인법 둘 교체(별건 회신)
+기준선: typecheck 통과 · smoke 321 → 325 · front 291(변화 없음) · 실패 0 · verify exit 0
+        Kotlin assembleRelease BUILD SUCCESSFUL (2m 48s) · [signing] release SHA-256 확인
+        무선 설치 성공 · 설치본 MD5 0e830490fdba468eceb1251ec85fb934 = 로컬 빌드
+반복 전송 방지: `tried: MutableSet<String>` — 이 flush 에서 보낸 것의 키를 담고
+        `firstOrNull { keyOf(it) !in tried }` 로 고른다. 키는 `client_id`이고 없으면 내용 자체다
+        (`keyOf`). **매 회차가 tried 를 하나 늘리거나 break 하므로 반드시 끝난다.**
+        남긴 항목이 다시 first() 가 되는데, 이 가드가 없으면 그 하나로 무한히 돈다.
+실측 넷의 ai_verdict: **넷 다 deny 가 실렸다 — 통과.**
+        09:37:48 (+6.54초) · 09:38:13 (**+0.69초**) · 09:38:38 (+1.68초) · 09:39:03 (+30.18초)
+        ⚠️ 첫째는 **+0.5초를 못 맞췄다** — adb 명령이 시작되기 전에 창이 지나갔다(6.5초 지각).
+        판정을 가르는 표본은 **+0.69초 하나**다. 판정 도착(캐시 ~0.8초)보다 앞서므로
+        옛 코드에서 유실되던 바로 그 구간이고, 실제로 8/20 아침 같은 조건에서 두 번 유실됐다.
+그 창에서 새 발동 행도 살아남는가: **살아남는다. 이것이 이 실측의 본체다.**
+        E 를 즉시 발동시키고 **곧바로 flushEvents()** 를 걸어 창을 연 뒤,
+        그 창 안(**E+944ms**)에서 F 를 발동시켰다.
+        ```
+        flush #1  { sent: 2, remaining: 2 }   ← 둘 다 보냈고, 왕복 중 amendFire 가 바꿔서 남겼다
+        flush #2  { sent: 2, remaining: 0 }   ← 남긴 둘을 보내고, 그대로였으므로 뺐다
+        서버       09:48:05 E · 09:48:06 F   둘 다 deny + ai_reason · queued 0
+        ```
+        **옛 코드였다면 F 는 행 자체가 없다** — flush 가 [E] 스냅샷으로 큐를 덮어
+        F 가 전송되기 전에 지워진다. `sent: 2` 가 그것이 안 일어났다는 증거다.
+        남긴 것을 다음 flush 가 보내고 **서버 dup 경로가 NULL → 값으로 채우는** 흐름도
+        그대로 확인됐다(T-39가 만든 자리).
 ```
+
+## 실측이 어려웠던 이유 — 다음 사람을 위해
+
+**좌표 맹탭(`input tap`)은 잠긴 폰에서 믿을 수 없다.**
+
+```
+mCurrentFocus=NotificationShade   ← 삼성의 잠금 화면이다. 탭이 여기로 떨어진다
+```
+
+09:39~09:45 표본 셋이 이것 때문에 **반응이 기록되지 않았다**(`reaction: null`).
+개입 화면이 떠 있어도 **포커스를 늦게 잡는다** — 한 번은 발동 **+31초**에야 잡혔다.
+`wm dismiss-keyguard`는 **Bouncer(PIN 입력)**까지만 간다. 잠금 해제는 사용자만 할 수 있다.
+
+**그래서 화면을 거치지 않는 경로로 갈아탔다**: 경쟁은 `flush` ↔ `amendFire` 사이의 것이고
+반응은 그 방아쇠일 뿐이므로, **`flushEvents()`를 직접 불러 같은 창을 연다.**
+`testNotify` → 곧바로 `flushEvents()`(await 하지 않는다) → 900ms 뒤 두 번째 `testNotify`.
+**이 방법이 재현성이 훨씬 높다** — 화면 상태·잠금·포커스에 전혀 기대지 않는다.
+
+⚠️ **`testNotify`의 `delayMs`는 잠긴 상태에서 최대 8초까지 밀린다**(Handler 기반 · 앱이 배경).
+시각을 절대값으로 잡는 실측에는 못 쓴다. 위 방법은 그 문제도 함께 피한다.

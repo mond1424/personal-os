@@ -18,9 +18,14 @@
 
 - repo: https://github.com/mond1424/personal-os
 - branch: main
-- 마지막 코드 변경: **T-39 `d5a6149`** (2026-08-20 · 서버 + Kotlin + smoke · **마이그레이션 없음**).
-  그 앞이 **T-37 `d9a2f7a`** (같은 날 · `GuardVerify.kt`·`smoke.ts` — **Kotlin 상수**) ·
+- 마지막 코드 변경: **T-40** (2026-08-20 · `GuardEventQueue.kt`·`smoke.ts` — **Kotlin만 · 서버 무변경**).
+  그 앞이 **T-39 `d5a6149`** (같은 날 · 서버 + Kotlin + smoke · **마이그레이션 없음**) ·
+  **T-37 `d9a2f7a`** (같은 날 · `GuardVerify.kt`·`smoke.ts` — **Kotlin 상수**) ·
   **T-38 `d71d42b`** (같은 날 · **`0017_ai_reason.sql` 포함** · 서버 + Kotlin + smoke).
+  - ✅ **T-40 APK는 무선 adb로 그 자리에서 깔았다** — 유선을 기다리지 않았다.
+    `adb -s <폰IP>:5555 install -r …` → Success · 설치본 MD5 `0e830490…` = 로컬 빌드.
+    ⚠️ **설치하면 앱이 재시작해 `adb forward`가 죽는다**(소켓 이름의 pid가 바뀐다).
+    복구는 `FIELD-TEST-NIGHT.md` §준비 ④의 절차 그대로 — 폰을 깨울 일이 아니다.
   - ✅ **2026-08-20 06:57 KST 실측 — 셋 다 라이브·설치까지 끝났다** (이 절 머리 경고대로 **이력이다**).
     - `deployments list` 최신 `2026-08-19T21:57:10Z`(= 06:57:10 KST)가 **T-39 커밋 06:20:47보다 뒤다.**
     - `d1 migrations list --remote` → **"No migrations to apply!"** — `0017`까지 적용됨.
@@ -1450,8 +1455,8 @@ Guard v1이 1순위라는 건 안 바뀐다. Phase 1을 셋으로 쪼개 **UI를
 - style.css      https://raw.githubusercontent.com/mond1424/personal-os/main/public/style.css
 
 ## 기준선
-typecheck 통과 / **smoke 321** / **front 291** / 실패 0 / verify exit 0
-**2026-08-20 (T-38 → T-37 → T-39).** 착수 전 재측정에서도 **306/291**이었다 —
+typecheck 통과 / **smoke 325** / **front 291** / 실패 0 / verify exit 0
+**2026-08-20 (T-38 → T-37 → T-39 → T-40).** 착수 전 재측정에서도 **306/291**이었다 —
 8/17에서 사흘이 더 지났는데 같다. **날짜 의존 결함에서는 그것만이 증거다**(T-36의 상대화가 버틴다).
 
 **여기가 기준선 숫자의 유일한 자리다.** `CLAUDE.md`·`AGENTS.md`·`_TEMPLATE.md`에서 실수치를 뺐다 —
@@ -1464,6 +1469,22 @@ front가 **257**로 나왔다 — T-26은 `public/`·`front.mjs`를 건드리지
 다시 재니 256이었다(smoke 279는 같았다). **오염된 트리에서 잰 숫자가 원장에 들어가면 그 줄은
 거짓이고, 다음 티켓의 '앞 숫자'가 어긋난다.** 병렬 발행은 Cowork가 `AGENT-CHAIN.md` §3로 막았다.
 
+(T-40 flush가 자기 스냅샷으로 큐를 덮지 않는다: smoke **321 → 325** · front 291 무변경 · **마이그레이션 없음** —
+ `read` → `post`(~1.8초) → `write(list.drop(1))`가 **목록 전체를 덮어** 그 창에 들어온 것을 지웠다.
+ T-39가 고친 자리가 아니다 — 큐에 행이 있으므로 fallback이 안 탄다. **POST 뒤에 다시 읽고,
+ 위치가 아니라 그 항목을 찾아, 내용이 바뀌었으면 남긴다.** 락을 쓰지 않는다(ADR-021).
+ `tried` 집합이 같은 것을 두 번 보내지 않게 막는다 — 없으면 남긴 항목으로 무한히 돈다.
+ **실측이 판정이다**(무선 adb로 설치 후 그 자리에서):
+ 반응 **+0.69초**에도 `deny`가 실렸다(옛 코드에서 유실되던 구간) · 넷 다 실렸다.
+ ★ **새 발동 행도 살아남는다**: E를 발동시키고 곧바로 `flushEvents()`로 창을 연 뒤
+ **E+944ms**에 F를 발동 → `flush#1 {sent:2, remaining:2}`(둘 다 보내고, 바뀌어서 남겼다) →
+ `flush#2 {sent:2, remaining:0}` → 서버에 **E·F 두 행 다** `deny`+사유. 큐 0.
+ **옛 코드였다면 F는 행 자체가 없다.** 그리고 남긴 것을 다음 flush가 보내 **서버 dup 경로가
+ NULL→값으로 채우는** 흐름이 그대로 돌았다(T-39가 만든 자리).
+ ⚠️ **실측 방법이 바뀌었다** — 잠긴 폰에서 `input tap`은 잠금 화면(`NotificationShade`)으로
+ 떨어지고 개입 화면은 포커스를 늦게(한 번은 +31초) 잡는다. `wm dismiss-keyguard`는 Bouncer까지다.
+ **`flushEvents()`를 직접 불러 같은 창을 여는 쪽이 재현성이 높다** — 화면·잠금·포커스에 안 기댄다.
+ `testNotify`의 `delayMs`도 잠긴 상태에서 **최대 8초 밀린다**(Handler · 앱이 배경).)
 (T-39 판정이 flush를 앞질러도 살아남는다: smoke **317 → 321** · front 291 무변경 · **마이그레이션 없음** —
  T-37이 넓힌 창(6초 → 최악 16초)을 닫고 T-38이 만든 칸을 실제로 채운다. **두 곳이 함께 막혀 있었다**:
  `amendFire`가 큐에 없으면 `?: return`으로 버렸고, `record()`의 dup 경로는 `reaction`만 채웠다 —

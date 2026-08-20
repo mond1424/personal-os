@@ -994,6 +994,33 @@ ok("★ 스캐너가 살아 있다 — 옛 모양(?: return)은 잡고 빈 블�
   && carriesFallback("if (hit != null) { write(ctx, list); return }\nwrite(ctx, list + o)")
   && !carriesFallback(""));
 
+// ── T-40 · flush가 자기 스냅샷으로 큐를 덮지 않는다 ──────────────
+// 실측이 원인을 짚었다(2026-08-20, 반응 시점만 바꿔 넷): +0.48·+0.57초는 판정이 유실되고
+// +1.31·+30초는 남았다. `read` → `post`(~1.8초) → `write(list.drop(1))`가 **목록 전체를 덮어**
+// 그 창에 들어온 것을 지운다 — amendFire의 판정뿐 아니라 **새 발동 행까지** 사라진다.
+//
+// ⚠️ **경쟁 조건은 정적 검사가 증명하지 못한다.** 아래 셋은 배선이 되돌려지는 것을 막을 뿐이고,
+//    진짜 판정은 티켓 §확인 절차의 실측이다. 그래도 두는 이유는 T-38·T-39와 같다 —
+//    **서버로 직접 POST하는 검사는 기기가 무엇을 하든 초록이기 때문이다.**
+const flushBlock = ktQueue.slice(ktQueue.indexOf("fun flush("), ktQueue.indexOf("private fun post("));
+const rereadsAfterPost = (b: string) => (b.match(/read\(ctx\)/g) ?? []).length >= 2;
+const removesByKey = (b: string) =>
+  b.length > 0 && !/drop\(1\)/.test(b) && /indexOfFirst/.test(b) && /filterIndexed/.test(b);
+const guardsRepeat = (b: string) => /tried/.test(b) && /!in tried/.test(b);
+
+ok("flush가 POST 뒤에 큐를 다시 읽는다 — 스냅샷을 재사용하지 않는다",
+  flushBlock.length > 0 && rereadsAfterPost(flushBlock), `block=${flushBlock.length}자`);
+ok("제거가 위치(drop(1))가 아니라 그 항목 기준이다",
+  removesByKey(flushBlock), `block=${flushBlock.length}자`);
+// 남긴 항목이 다시 first()가 되므로 이것이 없으면 **한 flush가 무한히 돈다.**
+ok("한 flush 안에서 같은 것을 두 번 보내지 않는다 (무한 루프 방지)",
+  guardsRepeat(flushBlock));
+ok("★ 스캐너가 살아 있다 — 옛 flush 모양을 실제로 잡고 빈 블록도 거짓이다",
+  !rereadsAfterPost("val list = read(ctx); post(...); write(ctx, list.drop(1))")
+  && !removesByKey("val list = read(ctx); write(ctx, list.drop(1))")
+  && !guardsRepeat("val list = read(ctx); write(ctx, list.drop(1))")
+  && !removesByKey(""));
+
 // ★ 대장이 셋이다 — TS · 0016의 CHECK · GuardVerify.kt. **두 곳에 두면 갈라진다.**
 //   기대값이 비어 있지 않으므로 **스캐너가 죽어 목록이 `[]`가 되면 그 자체로 빨간불**이다
 //   (T-26의 교훈 — '0건'은 못 찾을 때도 초록이다).

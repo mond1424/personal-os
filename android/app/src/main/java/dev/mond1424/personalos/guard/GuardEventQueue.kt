@@ -164,27 +164,63 @@ object GuardEventQueue {
         write(ctx, list + o)
     }
 
+    /** 큐에서 한 항목을 가리키는 이름. `client_id`가 대장이고, 없으면 내용 자체로 센다. */
+    private fun keyOf(o: JSONObject): String =
+        o.optString("client_id").ifEmpty { o.toString() }
+
     /**
      * 밀어 올리기. ⚠️ **백그라운드 스레드에서만.**
      *
      * 하나씩 보내고 성공한 것만 뺀다 — 중간에 끊겨도 남은 건 다음에 간다.
      * 400(형식 오류)은 재시도해도 소용없으므로 버린다. 그러지 않으면 큐가 영원히 막힌다.
+     *
+     * ★ **보낸 뒤의 제거는 "내가 보낸 그것이 그대로일 때만" 한다** (T-40).
+     *
+     * 전에는 POST 앞에서 읽은 목록을 들고 있다가 `write(ctx, list.drop(1))`로 **통째로 덮었다.**
+     * `read`·`write`는 각각 `@Synchronized`지만 **read-modify-write 쌍이 아니라서**,
+     * 왕복(~1.8초) 사이에 다른 스레드가 쓴 것이 전부 사라졌다. 실측으로 확인된 유실:
+     *
+     * ```
+     * 반응 +0.48초 · +0.57초 → ai_verdict 가 null   (amendFire 가 쓴 판정이 지워졌다)
+     * 반응 +1.31초 · +30초   → 판정이 남는다        (그때는 flush 가 이미 끝나 있었다)
+     * ```
+     *
+     * **판정만의 문제가 아니었다.** 목록 전체를 덮으므로 그 창에 들어온 **새 발동 행**도
+     * 사라진다 — 30분 간격 발동 하나가 앞 발동의 flush 창에 걸리면 **그 개입이 있었다는
+     * 사실 자체가** 없어지고, 9~11월 전례의 분모가 조용히 준다. 그쪽이 더 무겁다.
+     *
+     * **락으로 감싸지 않는다.** 네트워크 왕복 동안 락을 쥐면 `amendFire`·`recordReaction`이
+     * 그만큼 멈춘다 — 개입 경로에 네트워크 대기를 들이는 것과 같은 모양이다(ADR-021).
+     * 대신 **덮지 않고, 방금 읽은 목록에서 그 하나만 뺀다.**
      */
     fun flush(ctx: Context): Pair<Int, Int> {
         val base = GuardSync.baseUrl(ctx) ?: return 0 to size(ctx)
         val token = GuardSync.token(ctx)
         var sent = 0
+        // 이 flush 에서 이미 보낸 것. **같은 것을 두 번 보내지 않는다** —
+        // 바뀌어서 남긴 항목이 다시 first()가 되므로, 없으면 여기서 무한히 돈다.
+        val tried = mutableSetOf<String>()
 
         while (true) {
-            val list = read(ctx)
-            if (list.isEmpty()) break
-            val item = list.first()
+            val snapshot = read(ctx)
+            val item = snapshot.firstOrNull { keyOf(it) !in tried } ?: break
+            val key = keyOf(item)
+            val bodyAsSent = item.toString()               // 보낸 내용을 글자 그대로 기억한다
 
             val code = post(base, token, item) ?: break     // 네트워크 실패 → 다음 기회에
             if (code in 200..299 || code == 400 || code == 409) {
                 // 2xx 성공 · 400 형식 오류(재시도 무의미) · 409 이미 반응 있음(멱등)
-                write(ctx, list.drop(1))
                 if (code in 200..299) sent++
+                tried += key
+
+                // ★ 여기서 **다시 읽는다.** 위 snapshot 은 왕복 전의 것이라 이미 낡았다.
+                val fresh = read(ctx)
+                // 위치(drop(1))가 아니라 **그 항목**을 찾는다 — 그 사이 앞에 새 항목이
+                // 들어왔으면 위치는 엉뚱한 것을 가리킨다.
+                val at = fresh.indexOfFirst { keyOf(it) == key && it.toString() == bodyAsSent }
+                // 내용이 바뀌었으면(= amendFire 가 판정을 얹었으면) **남긴다.**
+                // 다음 flush 가 보내고 서버의 dup 경로가 NULL → 값으로 채운다(T-39가 만든 자리).
+                if (at >= 0) write(ctx, fresh.filterIndexed { i, _ -> i != at })
             } else {
                 break                                       // 5xx 등 — 다음 기회에
             }
