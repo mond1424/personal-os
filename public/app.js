@@ -356,6 +356,7 @@ async function refreshToday() {
   renderToday();
   loadNotice();
   loadGuardOutcome();
+  loadCollected();
   if (!S.staleShown && S.today.overdue.length) { S.staleShown = true; showStale(S.today.overdue[0]); }
   maybeCarryPrompt();   // 세 번 밀린 일의 출구 (T-35). 조건을 넘는 게 없으면 아무 일도 없다.
 }
@@ -526,6 +527,65 @@ async function loadGuardOutcome() {
     // 그 판단은 옳았고, 바뀐 것은 **이 실패가 이제 이름을 갖는다**는 것뿐이다.
     set("error");
   }
+}
+
+/* 수집한 학사 일정 제안 (T-42 · ADR-030 본체 · ADR-037) ──────
+ *
+ * **T-33의 outcome 카드와 같은 모양이다** — 한 줄 · `data-state` 셋 · `catch`가 화면을 안 막는다.
+ * 새 패턴을 만들지 않는다. `none`과 `error`가 화면에서 똑같이 안 보이는 것도 같고,
+ * 그래서 **둘을 가르는 검사가 짝**이다(T-33에서 그것 때문에 조회 실패가 초록이었다).
+ *
+ * ★ **문구에 "마감"·"제출"을 쓰지 않는다.** `DTSTART`가 마감 시각인지 아직 모른다
+ * (ADR-037 §실측). 이름을 믿는 순간 그것이 해석이고, 개강 첫날 틀린다 —
+ * **원문과 시각만** 보여준다. `summary`를 다듬지도 않는다.
+ *
+ * **"전부 추가"를 두지 않는다.** 첫 수집에 무엇이 들어오는지 아직 아무도 못 봤다.
+ * 지금 만들면 오수집을 한 번에 캘린더에 붓는 버튼이 된다 — 보고 나서 정한다.
+ */
+async function loadCollected() {
+  const bar = $("#td-coll");
+  const set = (state) => {
+    bar.dataset.state = state;
+    bar.style.display = state === "ask" ? "flex" : "none";
+  };
+  try {
+    const rows = await Api.collectedPending();
+    if (!rows?.length) return void set("none");
+
+    $("#td-coll-text").innerHTML = `<b>새로 들어온 일정 ${rows.length}건</b> — 캘린더에 넣을까요?`;
+    $("#td-coll-open").onclick = () => { renderCollected(rows); openSheet("sh-coll"); };
+    set("ask");
+  } catch {
+    // Today를 막지 않는다 — 수집이 없는 상태에서도 화면은 떠야 한다(T-33 §금지 1행).
+    set("error");
+  }
+}
+
+/** 시트 본문 — 하나씩 [추가]/[무시]. 처리하면 그 줄만 빠지고 카드 수가 준다. */
+function renderCollected(rows) {
+  const body = $("#coll-list");
+  body.innerHTML = rows.map((r) => {
+    // `2026-09-03T23:00:00+09:00` → "9/3(수) 23:00". **원문은 그대로 붙인다.**
+    const when = r.starts_at ? `${md(r.starts_at.slice(0, 10))} ${r.starts_at.slice(11, 16)}` : "";
+    return `<div class="evrow" data-cid="${esc(r.id)}">
+      <span class="en" style="flex:1">${esc(when)} · ${esc(r.summary)}</span>
+      <button class="go" data-act="add">추가</button>
+      <button class="go" data-act="skip" style="color:var(--sub)">무시</button>
+    </div>`;
+  }).join("");
+
+  body.querySelectorAll("button").forEach((b) => {
+    b.onclick = () => run(async () => {
+      const row = b.closest("[data-cid]");
+      const id = row.dataset.cid;
+      if (b.dataset.act === "add") { await Api.collectedAccept(id); toast("캘린더에 넣었어요"); }
+      else { await Api.collectedDismiss(id); toast("안 묻을게요"); }
+      row.remove();
+      if (!body.querySelector("[data-cid]")) closeSheet("sh-coll");
+      await refreshToday();       // 카드 수가 줄고, 없으면 카드가 사라진다
+      if (S.cal) renderCal();     // 추가된 일정이 캘린더에 보이게
+    });
+  });
 }
 
 /* 세 번 밀린 일의 출구 (T-35 · ADR-036) ─────────────────────

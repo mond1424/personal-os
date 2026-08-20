@@ -36,6 +36,15 @@
       <button class="go" id="td-guard-no" style="color:var(--sub)">못 했어요</button>
     </span>
   </div>
+  <!-- 수집한 학사 일정 제안 (T-42 · ADR-030). Guard 카드와 **같은 모양**을 쓴다 —
+       한 줄 · data-state로 ask/none/error · catch가 화면을 막지 않는다.
+       ⚠️ 문구에 "마감"·"제출"을 쓰지 않는다: DTSTART의 뜻을 아직 모른다(ADR-037). -->
+  <div class="guardbar" id="td-coll" style="display:none">
+    <span id="td-coll-text"></span>
+    <span style="margin-left:auto;display:flex;gap:10px;flex:none">
+      <button class="go" id="td-coll-open">보기</button>
+    </span>
+  </div>
   <div class="sec" id="td-events" style="display:none"></div>
 
   <div class="sec">
@@ -260,6 +269,15 @@
 </div>
 
 <!-- 빠른 추가 -->
+<!-- 수집한 일정 제안 (T-42). **"전부 추가"를 두지 않는다** — 첫 수집에 무엇이 오는지
+     아직 못 봤다. 지금 만들면 오수집을 한 번에 캘린더에 붓는 버튼이 된다. -->
+<div class="sheet" id="sh-coll">
+  <div class="grip"></div>
+  <div class="sh-t">새로 들어온 일정</div>
+  <div id="coll-list" style="margin-top:12px"></div>
+  <p class="cap" style="margin-top:10px">학사 캘린더에서 읽어 온 것이에요. 원문 그대로 보여드려요.</p>
+</div>
+
 <div class="sheet" id="sh-add">
   <div class="grip"></div>
   <div class="sh-t">새 task</div>

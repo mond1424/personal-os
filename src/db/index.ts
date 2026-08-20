@@ -531,6 +531,31 @@ export const stTouchCollected = (
     WHERE uid=?`)
   .bind(c.summary, c.description, c.starts_at, c.ends_at, c.last_modified, c.at, c.uid);
 
+export const collectedGet = (env: Env, id: string) =>
+  q(env, "SELECT * FROM collected_items WHERE id = ?").bind(id).first<CollectedItemRow>();
+
+/**
+ * 제안 카드가 묻는 것 — **아직 안 물은 것 중 곧 닥치는 것만** (T-42 결정 ①).
+ *
+ * 개강 첫 수집에 학기 전체(60건 이상)가 `new`로 앉는다. 그것을 하나씩 묻는 것은
+ * 적극성 문제를 푸는 게 아니라 만드는 것이다. **창 밖은 지우지 않고 그대로 둔다** —
+ * 때가 되면 저절로 올라온다.
+ *
+ * `starts_at`이 NULL인 것은 **묻지 않는다.** 날짜가 없으면 `events` 행을 만들 수 없다.
+ */
+export const collectedPending = (env: Env, from: string, to: string) =>
+  q(env, `SELECT * FROM collected_items
+           WHERE state = 'new' AND starts_at IS NOT NULL AND starts_at >= ? AND starts_at <= ?
+           ORDER BY starts_at, id`).bind(from, to).all<CollectedItemRow>();
+
+/** `AND state <> 'accepted'`가 **두 번째 요청을 조용히 무해하게** 만든다(T-42 §할 일 ①). */
+export const stAcceptCollected = (env: Env, id: string, eventId: string) =>
+  q(env, "UPDATE collected_items SET state='accepted', event_id=? WHERE id=? AND state <> 'accepted'")
+    .bind(eventId, id);
+
+export const stDismissCollected = (env: Env, id: string) =>
+  q(env, "UPDATE collected_items SET state='dismissed' WHERE id=?").bind(id);
+
 // settings
 export const settingsAll = (env: Env) =>
   q(env, "SELECT key, value FROM settings ORDER BY key").all<{ key: string; value: string }>();

@@ -87,6 +87,10 @@ const Api = {
   // outcome은 Guard가 판단하지 않는다 — 사용자가 사후 확정한다 (설계 §6.5)
   guardPending: () => _req("GET", "/guard/pending-outcome"),
   guardOutcome: (id, outcome) => _req("POST", `/guard/events/${id}/outcome`, { outcome }),
+  // 수집한 학사 일정 — 제안까지가 상한이다. 자동으로 events에 넣지 않는다 (T-42 · ADR-030)
+  collectedPending: () => _req("GET", "/collected/pending"),
+  collectedAccept: (id) => _req("POST", `/collected/${id}/accept`),
+  collectedDismiss: (id) => _req("POST", `/collected/${id}/dismiss`),
   guardModes: () => _req("GET", "/guard/modes"),
   guardSetMode: (key, reason) => _req("PUT", "/guard/modes/active",
     reason === undefined ? { key } : { key, reason }),

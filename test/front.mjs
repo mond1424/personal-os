@@ -1490,6 +1490,74 @@ ok("★ none과 error는 화면에서 같고 기록에서만 다르다",
   `${t33None.state}/${t33None.display} vs ${t33Err.state}/${t33Err.display}`);
 await ev(`(async()=>{ Api.guardPending = window.__t33.old[0]; Api.guardOutcome = window.__t33.old[1]; })()`);
 
+console.log("\n[수집 제안 카드 — 곧 닥치는 것만, 원문 그대로]");
+// T-33의 카드와 **같은 모양**이라 검사도 같은 모양이다. ③(none)과 ④(error)가 화면에서
+// 똑같이 안 보이므로, 여기서도 **둘을 가르는 것이 짝**이다 — 그 자리를 네 번 물렸다.
+const t42Bar = $("#td-coll");
+const t42Rows = [
+  { id: "t42-a", source: "uclass", summary: "5주차 과제 (~9/3 23:00) 기한", starts_at: "2026-09-03T23:00:00+09:00" },
+  { id: "t42-b", source: "uclass", summary: "실험2 결과보고서", starts_at: "2026-09-05T18:00:00+09:00" },
+];
+await ev(`(async()=>{
+  window.__t42 = { pending: ${JSON.stringify(t42Rows)}, sent: [],
+                   old: [Api.collectedPending, Api.collectedAccept, Api.collectedDismiss] };
+  Api.collectedPending = async () => window.__t42.pending;
+  Api.collectedAccept = async (id) => {
+    window.__t42.sent.push("add:" + id);
+    window.__t42.pending = window.__t42.pending.filter((r) => r.id !== id);
+    return { event_id: "ev-" + id };
+  };
+  Api.collectedDismiss = async (id) => {
+    window.__t42.sent.push("skip:" + id);
+    window.__t42.pending = window.__t42.pending.filter((r) => r.id !== id);
+    return {};
+  };
+  await loadCollected();
+})()`);
+ok("① 대기가 있으면 카드가 뜬다 · state='ask' · 건수가 문구에 든다",
+  t42Bar.dataset.state === "ask" && t42Bar.style.display === "flex"
+  && txt("#td-coll-text").includes("2건"),
+  `${t42Bar.dataset.state} / ${txt("#td-coll-text")}`);
+// ★ 결정 ②는 **문자열로만** 확인된다. 원문이 그대로 나오고, 우리가 뜻을 붙이지 않는다.
+$("#td-coll-open").click();
+await sleep(120);
+ok("② 시트에 원문이 그대로 나온다 · '마감'·'제출'을 우리가 붙이지 않는다",
+  txt("#coll-list").includes("5주차 과제 (~9/3 23:00) 기한")
+  && !txt("#td-coll-text").includes("마감") && !txt("#td-coll-text").includes("제출"),
+  txt("#coll-list").slice(0, 80));
+// "전부 추가"가 없다 — 첫 수집에 무엇이 오는지 아직 못 봤다(§금지 3행).
+ok("③ '전부 추가' 버튼이 없다",
+  !/전부|모두/.test($("#sh-coll").textContent || ""), $("#sh-coll").textContent?.slice(0, 60));
+
+$("#coll-list [data-cid='t42-a'] [data-act='add']").click();
+await sleep(200);
+ok("④ 하나를 처리하면 남은 수가 준다 — 카드가 1건으로",
+  ev(`window.__t42.sent.join("|")`) === "add:t42-a" && txt("#td-coll-text").includes("1건"),
+  `${ev(`window.__t42.sent.join("|")`)} / ${txt("#td-coll-text")}`);
+
+await ev(`(async()=>{ window.__t42.pending = []; await loadCollected(); })()`);
+const t42None = { state: t42Bar.dataset.state, display: t42Bar.style.display };
+ok("⑤ 대기가 없으면 안 뜬다 · state='none'",
+  t42None.state === "none" && t42None.display === "none", JSON.stringify(t42None));
+
+await ev(`(async()=>{
+  Api.collectedPending = async () => { throw new Error("t42 boom"); };
+  await loadCollected();
+})()`);
+const t42Err = { state: t42Bar.dataset.state, display: t42Bar.style.display };
+ok("⑥ 조회가 실패해도 Today를 막지 않는다 · state='error'",
+  t42Err.state === "error" && t42Err.display === "none", JSON.stringify(t42Err));
+// ★ ⑤와 ⑥의 짝. 화면에서 같고 기록에서 다르다 — 이게 없으면 조회가 항상 실패해도 초록이다.
+ok("★ none과 error는 화면에서 같고 기록에서만 다르다 (T-42)",
+  t42None.display === t42Err.display && t42None.state !== t42Err.state,
+  `${t42None.state}/${t42None.display} vs ${t42Err.state}/${t42Err.display}`);
+await ev(`(async()=>{
+  Api.collectedPending = window.__t42.old[0];
+  Api.collectedAccept = window.__t42.old[1];
+  Api.collectedDismiss = window.__t42.old[2];
+  closeAll();
+})()`);
+
 console.log("\n[세 번 밀린 일의 출구 — 팝업 · 2주 상한 해제]");
 // 판단(`carryCandidate`·`maybeCarryPrompt`)이 리스너 밖 순수 함수라 여기서 **직접 부른다**(T-34의 그 자리).
 // 날짜는 **고정 센티널**이다 — 기기 날짜를 쓰는 구현이 통과하지 못하게(T-12).

@@ -28,6 +28,7 @@ WIP: (없음)
 ```
 
 > 최근 이력(새 것부터) — 전부 커밋 직전 해제:
+> **T-42** 수집 제안 카드 (claude-code, 08-21) ·
 > **T-41** 학사 마감 수집 (claude-code, 08-21) ·
 > **T-40** flush의 lost update (claude-code, 08-20 · ⚠️ 작업 중 WIP를 못 잡았다) ·
 > **T-39** 판정이 flush를 앞질러도 (claude-code, 08-20) ·

@@ -12,6 +12,7 @@ import * as periods from "./services/periods";
 import * as memos from "./services/memos";
 import * as me from "./services/me";
 import * as analysis from "./services/analysis";
+import * as collected from "./services/collected";
 import * as events from "./services/events";
 import { PROVIDERS, aiConfig, testConnection } from "./lib/ai";
 import * as guard from "./services/guard";
@@ -268,6 +269,15 @@ app.post("/api/guard/events/:id/outcome", async (c) => {
   return c.json(await guard.setOutcome(c.env, c.get("t"), c.req.param("id"), b.outcome));
 });
 app.get("/api/guard/pending-outcome", async (c) => c.json(await guard.pendingOutcome(c.env)));
+
+// 수집한 학사 일정을 제안으로 꺼낸다 (T-42 · ADR-030 본체).
+// **자동으로 events에 넣지 않는다** — 오수집이 캘린더를 오염시킨다. 제안까지가 상한이다.
+app.get("/api/collected/pending", async (c) => c.json(await collected.pending(c.env, c.get("t"))));
+/** 멱등 — 두 번 눌러도 `events`는 하나다. */
+app.post("/api/collected/:id/accept", async (c) =>
+  c.json(await collected.accept(c.env, c.get("t"), c.req.param("id"))));
+app.post("/api/collected/:id/dismiss", async (c) =>
+  c.json(await collected.dismiss(c.env, c.req.param("id"))));
 
 // 모드 — 규칙이 아니라 파라미터 프로파일 (ADR-019)
 app.get("/api/guard/modes", async (c) => c.json(await guard.modes(c.env, c.get("t"))));

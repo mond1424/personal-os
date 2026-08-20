@@ -1583,6 +1583,69 @@ ok("실패가 조용히 사라지지 않는다 — 사유가 settings에 남고 
 })());
 globalThis.fetch = realFetchU;
 
+// ── T-42 · 수집한 것을 제안으로 꺼낸다 ──────────────────────────
+console.log("\n[T-42] 제안 — 곧 닥치는 것만 묻고, 원문을 다듬지 않는다");
+// 창의 양 끝을 **서버가 쓰는 시계로** 만든다. `starts_at`은 T-41이 로컬 오프셋으로
+// 정규화해 둔 값이라 같은 오프셋끼리 문자열 비교가 시각 비교와 같다.
+const atPlus = (ms: number) => isoNow(Date.parse(t0.now) + ms, t0.offsetMin);
+const HOUR = 3600_000, DAY = 24 * HOUR;
+const putCollected = (uid: string, summary: string, startsAt: string, state = "new") =>
+  raw.prepare(`INSERT INTO collected_items
+      (id, uid, source, summary, starts_at, first_seen_at, last_seen_at, state, created_at)
+      VALUES (?,?, 'uclass', ?, ?, ?, ?, ?, ?)`)
+    .run(`2026-t42-${uid}`, uid, summary, startsAt, t0.now, t0.now, state, t0.now);
+
+// ⚠️ **제목에 "마감"·"제출"을 쓰지 않는다** — 원문이 무엇이든 그대로 나른다는 것이
+//    이 검사의 요지이므로, fixture 자체도 원천이 줄 법한 문장을 그대로 쓴다.
+const RAW_TITLE = "5주차 과제 (~9/3 23:00) 기한";
+putCollected("t42-in", RAW_TITLE, atPlus(2 * DAY));                 // 창 안
+putCollected("t42-far", "먼 것", atPlus(9 * DAY));                   // 7일 밖
+putCollected("t42-past", "지난 것", atPlus(-2 * DAY));               // 과거
+putCollected("t42-dis", "거절한 것", atPlus(3 * DAY), "dismissed");  // 이미 거절
+
+const pend1 = (await api("GET", "/api/collected/pending")).json;
+ok("pending이 7일 밖·과거·dismissed를 안 준다 — 창 안 하나만",
+  pend1.length === 1 && pend1[0].summary === RAW_TITLE, JSON.stringify(pend1.map((r: any) => r.summary)));
+
+// ⚠️ **위치(`[0]`)로 고르지 않는다.** 그러면 아래 둘이 검사 1의 출력에 매달려,
+//    창 필터가 깨졌을 때 **셋이 한꺼번에** 죽는다(변이가 무엇을 죽였는지 못 읽는다).
+//    아는 원문으로 집으면 각 검사가 자기 것만 본다.
+const accId = pend1.find((r: any) => r.summary === RAW_TITLE)?.id;
+const acc1 = (await api("POST", `/api/collected/${accId}/accept`)).json;
+const evRow = raw.prepare("SELECT title AS ti, date AS dt, time AS tm FROM events WHERE id=?").get(acc1.event_id) as any;
+ok("accept가 events를 만들고 state·event_id를 잇는다 · title은 원문 그대로",
+  !!acc1.event_id && evRow?.ti === RAW_TITLE && evRow?.tm === atPlus(2 * DAY).slice(11, 16)
+  && (raw.prepare("SELECT state AS s, event_id AS e FROM collected_items WHERE id=?").get(accId) as any)?.s === "accepted",
+  `${JSON.stringify(acc1)} ${JSON.stringify(evRow)}`);
+
+// ★ 2의 짝. 느린 네트워크에서 두 번 눌리는 것이 이 카드의 기본 조건이다.
+const acc2 = (await api("POST", `/api/collected/${accId}/accept`)).json;
+const evCount = (raw.prepare("SELECT COUNT(*) AS n FROM events WHERE title=?").get(RAW_TITLE) as any).n;
+ok("★ accept를 두 번 불러도 events가 하나다 (멱등)",
+  acc2.event_id === acc1.event_id && acc2.duplicate === true && evCount === 1,
+  `${JSON.stringify(acc2)} events=${evCount}`);
+
+putCollected("t42-d2", "거절할 것", atPlus(4 * DAY));
+const dId = (await api("GET", "/api/collected/pending")).json.find((r: any) => r.summary === "거절할 것").id;
+await api("POST", `/api/collected/${dId}/dismiss`);
+ok("dismiss 뒤에는 pending에 안 나온다",
+  !(await api("GET", "/api/collected/pending")).json.some((r: any) => r.id === dId));
+
+// **문구에 해석이 없다** — 결정 ②는 화면 문자열로만 확인된다(§확인 절차 4행).
+const cardSrc = readFileSync(join(here, "../public/app.js"), "utf8");
+const cardBlock = cardSrc.slice(
+  cardSrc.indexOf("async function loadCollected"), cardSrc.indexOf("세 번 밀린 일의 출구 (T-35 · ADR-036)"));
+const htmlSrc = readFileSync(join(here, "../public/index.html"), "utf8");
+const htmlBlock = htmlSrc.slice(htmlSrc.indexOf('id="td-coll"'), htmlSrc.indexOf('id="td-events"'))
+  + htmlSrc.slice(htmlSrc.indexOf('id="sh-coll"'), htmlSrc.indexOf('id="sh-add"'));
+const noVerdict = (b: string) => b.length > 0 && !/마감|제출|due/i.test(b);
+ok("★ 카드 문구가 DTSTART의 뜻을 넘겨짚지 않는다 — '마감'·'제출'이 없다",
+  noVerdict(cardBlock) && noVerdict(htmlBlock), `app=${cardBlock.length}자 html=${htmlBlock.length}자`);
+// 위는 **블록이 비어도(슬라이스가 빗나가도) 거짓**이라 조용히 통과하지 않는다.
+// 그래도 정규식이 낡으면 알 수 없으므로 합성 문자열로 실제로 잡는지 본다.
+ok("★ 스캐너가 살아 있다 — '마감'이 든 문구를 실제로 잡는다",
+  !noVerdict("새로 들어온 마감 3건") && !noVerdict("") && noVerdict("새로 들어온 일정 3건"));
+
 // ── 결과 ─────────────────────────────────────────────────────
 console.log(`\n${"=".repeat(46)}\n통과 ${passN} · 실패 ${fails.length}`);
 if (fails.length) { console.log("실패:\n  - " + fails.join("\n  - ")); process.exit(1); }
