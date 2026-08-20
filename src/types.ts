@@ -2,6 +2,10 @@ export interface Env {
   DB: D1Database;
   API_TOKEN?: string;
   ANTHROPIC_API_KEY?: string; // wrangler secret — 구현 2 (lib/ai.ts)
+  // 학사 iCal 내보내기 토큰 URL (T-41 · ADR-037). **없으면 수집이 조용히 건너뛴다** —
+  // 그래야 시크릿을 넣기 전까지 배포가 아무것도 바꾸지 않는다.
+  // ⚠️ 값 자체가 열쇠다. 로그·응답·문서에 실어 나르지 않는다.
+  UCLASS_ICAL_URL?: string;
 }
 
 /** 요청 한 번의 시간 컨텍스트 — 귀속일은 여기서 한 번만 계산한다 (1.2). */

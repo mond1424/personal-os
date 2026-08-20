@@ -1,4 +1,4 @@
-/* Personal OS · Worker 스모크 테스트
+﻿/* Personal OS · Worker 스모크 테스트
  * HTTP 계층(Hono)까지 통째로 태운다 — 라우팅·검증·트리거 에러 번역 전부.
  * 시나리오는 목업의 플로우: 생성 → 기록 → 미루기 → 마감 → memo →
  * 재배정 → 자동 마감(Cron 경로) → 대기 연장.
@@ -10,13 +10,14 @@ import worker from "../src/index";
 import * as db from "../src/db";
 import { autoClose } from "../src/scheduled";
 import * as guard from "../src/services/guard";
+import * as uclass from "../src/services/uclass";
 import { attributionDate, isoNow, addDays, mondayOf, diffDays, loadTime } from "../src/lib/time";
 import { buildCoreContext } from "../src/lib/context";
 import type { Env } from "../src/types";
 import { makeD1, rawOf } from "./d1shim";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const schema = ["0001_init.sql", "0002_models.sql", "0003_ai_provider.sql", "0004_events.sql", "0005_delete_scope.sql", "0006_fix_model_high.sql", "0007_defer_reason.sql", "0008_cancel_task.sql", "0009_cancel_reason.sql", "0010_guard.sql", "0011_guard_sync.sql", "0012_life_model.sql", "0013_analysis_backfill.sql", "0014_schema_titles.sql", "0015_me_history_reason.sql", "0016_guard_unavailable_reason.sql", "0017_ai_reason.sql"]
+const schema = ["0001_init.sql", "0002_models.sql", "0003_ai_provider.sql", "0004_events.sql", "0005_delete_scope.sql", "0006_fix_model_high.sql", "0007_defer_reason.sql", "0008_cancel_task.sql", "0009_cancel_reason.sql", "0010_guard.sql", "0011_guard_sync.sql", "0012_life_model.sql", "0013_analysis_backfill.sql", "0014_schema_titles.sql", "0015_me_history_reason.sql", "0016_guard_unavailable_reason.sql", "0017_ai_reason.sql", "0018_collected_items.sql"]
   .map((f) => readFileSync(join(here, "../migrations/" + f), "utf8")).join("\n");
 const env: Env = { DB: makeD1(schema) };
 const raw = rawOf(env.DB);
@@ -1472,6 +1473,115 @@ ok("★ 스캐너가 살아 있다 — 합성 소스에서 세 값을 실제로 
   && msOf(KT_CONNECT, "    private const val CONNECT_TIMEOUT_MS = 567") === 567
   && msOf(TS_AI, "const AI_TIMEOUT_MS = 8_000;") === 8000
   && msOf(KT_READ, "private const val TIMEOUT_MS = 6_000") === null);
+
+// ── T-41 · 학사 마감 수집 (0018 · ADR-037) ──────────────────────
+console.log("\n[T-41] iCal 수집 — 해석하지 않고 원문을 쌓는다");
+// fixture는 ADR-037 §실측이 적어 둔 필드 구성 그대로 **재구성**한 것이다(원본 .ics는 리포에 없다).
+// **파싱은 순수 함수라 고정 날짜가 허용되는 자리**다(T-36이 정의한 예외) —
+// 오히려 고정이어야 형식을 달력과 무관하게 검사한다.
+const ICS_HEAD = ["BEGIN:VCALENDAR", "VERSION:2.0",
+  "PRODID:-//Moodle Pty Ltd//NONSGML Moodle Version 2024100713//EN",
+  "METHOD:PUBLISH", "CALSCALE:GREGORIAN"];
+const vevent = (uid: string, summaryLines: string[], lastMod: string) => [
+  "BEGIN:VEVENT", `UID:${uid}`, ...summaryLines, "DESCRIPTION:", "CLASS:PUBLIC",
+  `LAST-MODIFIED:${lastMod}`, `DTSTAMP:${lastMod}`,
+  "DTSTART:20260818T000000Z", "DTEND:20260818T000000Z", "END:VEVENT"];   // 실측대로 UTC(Z)
+const ics = (...evs: string[][]) => [...ICS_HEAD, ...evs.flat(), "END:VCALENDAR"].join("\r\n");
+
+const UID_A = "10788@uclass.uos.ac.kr";   // 실측에서 받은 그 UID (ADR-037 §근거 ②)
+const UID_B = "10999@uclass.uos.ac.kr";
+const LM_1 = "20260817T130943Z";          // 실측 LAST-MODIFIED
+// ⚠️ **접힌 줄은 합성이다.** 실측 fixture(개인 일정 하나)는 짧아서 안 접혔는데,
+//    긴 SUMMARY는 75옥텟에서 반드시 접혀 온다. 기대값을 fixture에서 **계산**해
+//    둘이 갈라지지 않게 한다 — 손으로 적으면 그 자체가 또 하나의 추측이다.
+const FOLD_1 = "SUMMARY:양자역학 과제 2 4월 18일 23:00 기한 — 제목이 길면 ";
+const FOLD_2 = " 이렇게 접혀서 온다";
+const FOLDED_JOINED = FOLD_1.slice("SUMMARY:".length) + FOLD_2.slice(1);
+
+// 기대값을 **fixture에서 독립으로 계산**한다. `icalDateToIso`를 그대로 부르면 순환이고,
+// 대시 있는 리터럴을 적으면 T-36의 고정 날짜 스캐너가 잡는다(그게 맞다 — 그 가드를 넓히지 않는다).
+// 여기 날짜가 서버 시계와 만날 일은 없다: 이 값은 fixture에서 나와 fixture로 돌아간다.
+const DTSTART_Z = "20260818T000000Z";
+const isoOf = (c: string) =>
+  `${c.slice(0, 4)}-${c.slice(4, 6)}-${c.slice(6, 8)}T${c.slice(9, 11)}:${c.slice(11, 13)}:${c.slice(13, 15)}Z`;
+
+const ip1 = uclass.parseIcal(ics(vevent(UID_A, ["SUMMARY:개인 일정"], LM_1)));
+ok("VEVENT 하나를 파싱한다 — UID·SUMMARY·DTSTART·LAST-MODIFIED",
+  ip1.length === 1 && ip1[0]?.uid === UID_A && ip1[0]?.summary === "개인 일정"
+  && ip1[0]?.dtstart === isoOf(DTSTART_Z) && ip1[0]?.lastModified === LM_1,
+  JSON.stringify(ip1));
+
+const ip2 = uclass.parseIcal(ics(vevent(UID_A, [FOLD_1, FOLD_2], LM_1)));
+ok("줄 접힘(RFC 5545)을 편다 — 긴 SUMMARY가 이어 붙는다",
+  ip2[0]?.summary === FOLDED_JOINED, JSON.stringify(ip2[0]?.summary));
+
+const envU: Env = { ...env, UCLASS_ICAL_URL: "https://uclass.example/export.php?authtoken=SMOKE" };
+const realFetchU = globalThis.fetch;
+let icalFetches = 0;
+const serve = (body: string) => {
+  globalThis.fetch = (async () => { icalFetches++; return new Response(body, { status: 200 }); }) as typeof fetch;
+};
+const uidRow = (uid: string) => raw.prepare(
+  "SELECT summary AS su, last_modified AS lm, state AS st, starts_at AS sa FROM collected_items WHERE uid=?").get(uid);
+const uidCount = (uid: string) =>
+  (raw.prepare("SELECT COUNT(*) AS n FROM collected_items WHERE uid=?").get(uid) as any).n;
+
+serve(ics(vevent(UID_A, ["SUMMARY:개인 일정"], LM_1), vevent(UID_B, ["SUMMARY:과제1 기한"], LM_1)));
+const u1 = await uclass.collect(envU, t0);
+ok("첫 수집 — 둘 다 새 행 · DTSTART가 로컬 오프셋으로 정규화된다",
+  u1.added === 2 && u1.collected === 2 && String(uidRow(UID_A)?.sa ?? "").includes("+"),
+  `${JSON.stringify(u1)} ${uidRow(UID_A)?.sa}`);
+
+// 3. 같은 UID를 다시 — 중복 행이 아니라 갱신이다(UNIQUE가 diff 기준이자 멱등 키다).
+serve(ics(vevent(UID_A, ["SUMMARY:개인 일정 (제목 변경)"], LM_1), vevent(UID_B, ["SUMMARY:과제1 기한"], LM_1)));
+const u2 = await uclass.collect(envU, t0, true);
+ok("같은 UID를 다시 넣으면 갱신이지 중복이 아니다 · 원문이 갱신된다",
+  u2.added === 0 && uidCount(UID_A) === 1 && uidRow(UID_A)?.su === "개인 일정 (제목 변경)",
+  `${JSON.stringify(u2)} ${uidRow(UID_A)?.su}`);
+
+// 4. `state`는 사용자의 것이다 — 원천이 바뀌었다고 되돌리지 않는다.
+raw.prepare("UPDATE collected_items SET state='dismissed' WHERE uid=?").run(UID_A);
+serve(ics(vevent(UID_A, ["SUMMARY:개인 일정 (또 변경)"], "20260820T090000Z"), vevent(UID_B, ["SUMMARY:과제1 기한"], LM_1)));
+const u3 = await uclass.collect(envU, t0, true);
+ok("last_modified가 바뀌면 갱신되고 state는 안 바뀐다",
+  u3.changed === 1 && uidRow(UID_A)?.lm === "20260820T090000Z" && uidRow(UID_A)?.st === "dismissed",
+  `${JSON.stringify(u3)} ${JSON.stringify(uidRow(UID_A))}`);
+
+// 5. ★ 3·4의 짝. 창이 `-5일 ~ +365일`이라 **지난 마감은 저절로 목록에서 빠진다** —
+//    그걸 삭제로 읽으면 어제 한 과제가 오늘 사라진다.
+serve(ics(vevent(UID_B, ["SUMMARY:과제1 기한"], LM_1)));          // A가 목록에서 빠졌다
+const u4 = await uclass.collect(envU, t0, true);
+ok("★ 목록에서 빠져도 행이 남는다 — 사라짐은 삭제가 아니다",
+  u4.collected === 1 && uidCount(UID_A) === 1 && uidRow(UID_A)?.st === "dismissed",
+  `${JSON.stringify(u4)} A=${uidCount(UID_A)}`);
+
+// 6. 토큰이 없으면 — 이 코드를 지금 배포해도 아무것도 안 바뀐다.
+const u5 = await uclass.collect(env, t0, true);
+ok("토큰이 없으면 조용히 건너뛴다 — 예외를 안 던진다",
+  u5.skipped === "no_token" && u5.added === 0, JSON.stringify(u5));
+
+// 8. 빈도 — cron은 30분마다 돌지만 마감은 분 단위로 생기지 않는다.
+const fetchesBefore = icalFetches;
+const u6 = await uclass.collect(envU, t0);           // force 없이 · 방금 수집했다
+ok("30분마다 fetch하지 않는다 — 마지막 수집에서 6시간 안이면 건너뛴다",
+  u6.skipped === "too_soon" && icalFetches === fetchesBefore,
+  `${JSON.stringify(u6)} fetches ${fetchesBefore}→${icalFetches}`);
+
+// 7. ★ 5의 짝. 원천이 밖에 있어 실패가 흔하다 — 그것이 자동 마감을 멈추면 안 된다.
+//    빈도 게이트를 비워야 실제로 fetch까지 간다(안 비우면 이 검사가 공회전한다).
+raw.prepare("DELETE FROM settings WHERE key='uclass_last_collect_at'").run();
+globalThis.fetch = (async () => { throw new TypeError("uclass down"); }) as typeof fetch;
+// ⚠️ **여기서 그냥 부르면 변이가 러너를 죽인다** — `.catch`를 떼면 던짐이 그대로 올라와
+//    요약도 개수도 안 남는다(T-35에서 같은 자리를 물렸다). 던짐을 **빨간불로 번역**한다.
+const acU: any = await autoClose(envU, t0).catch((e: any) => ({ threw: String(e?.message ?? e) }));
+ok("★ 수집이 던져도 autoClose가 끝까지 간다",
+  !acU.threw && acU.uclass?.skipped === "error" && acU.as_of === t0.d && typeof acU.closed === "number",
+  acU.threw ? `autoClose가 던졌다 — .catch가 없다: ${acU.threw}` : JSON.stringify(acU));
+ok("실패가 조용히 사라지지 않는다 — 사유가 settings에 남고 URL은 안 실린다", (() => {
+  const e = raw.prepare("SELECT value AS v FROM settings WHERE key='uclass_last_error'").get() as any;
+  return !!e?.v && String(e.v).includes("uclass down") && !String(e.v).includes("authtoken");
+})());
+globalThis.fetch = realFetchU;
 
 // ── 결과 ─────────────────────────────────────────────────────
 console.log(`\n${"=".repeat(46)}\n통과 ${passN} · 실패 ${fails.length}`);

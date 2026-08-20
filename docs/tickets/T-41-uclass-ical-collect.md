@@ -198,11 +198,68 @@ npx wrangler d1 migrations apply personal-os --local 성공
 
 ```
 티켓: T-41
-바꾼 파일:
-기준선: typecheck · smoke 325 → ? · front 291 · verify exit 0
-        wrangler d1 migrations apply --local
-0018 이름 / smoke 스키마 목록에 넣었는가:
-수집 빈도를 어떻게 제한했나:
-줄 접힘(folding)을 어떻게 폈나 · fixture 는 무엇을 썼나:
-변이 둘(.catch 제거 · 사라짐을 삭제로)이 각각 7과 5만 죽였는가:
+바꾼 파일: migrations/0018_collected_items.sql (신규)
+           src/services/uclass.ts   (신규) parseIcal·unfoldIcal·icalDateToIso·collect
+           src/db/index.ts          collectedByUid · collectedList · stInsertCollected · stTouchCollected
+           src/scheduled.ts         autoClose 에 H-4 한 줄 (.catch)
+           src/types.ts             Env.UCLASS_ICAL_URL
+           src/lib/id.ts            nextId 화이트리스트에 collected_items
+           test/smoke.ts            스키마 목록 + 검사 10
+기준선: typecheck 통과 · smoke 325 → 335 · front 291(변화 없음) · 실패 0 · verify exit 0
+        npx wrangler d1 migrations apply personal-os --local ✅ (0018)
+0018 이름 / smoke 스키마 목록: `0018_collected_items.sql` · 넣었다(smoke.ts:19).
+        테이블명이 `collected_deadlines`가 아닌 이유: **마감이라고 부르는 것부터가 해석이다.**
+        SUMMARY 를 안 읽기로 했으므로 그것이 마감인지 이 층은 모른다.
+수집 빈도: `settings.uclass_last_collect_at` + 6시간 간격 = **하루 4회**(티켓의 상한).
+        cron 은 30분마다 돌지만 그 안에서 건너뛴다. 새 저장소를 만들지 않았다.
+        `force` 인자는 **검사 전용**이다 — 프로덕션 경로는 안 쓴다.
+줄 접힘: `text.replace(/\r?\n[ \t]/g, "")` — RFC 5545 §3.1. `CRLF` 대신 `LF`만 보내는
+        서버가 있어 둘 다 받는다. 값 이스케이프(`\n`·`\,`·`\;`·`\\`)도 함께 되돌린다(§3.3.11).
+fixture: ⚠️ **원본 `.ics` 가 리포에 없어 ADR-037 §실측의 기록에서 재구성했다.**
+        같은 것: `UID:10788@uclass.uos.ac.kr` · `LAST-MODIFIED:20260817T130943Z` ·
+        필드 여덟 · `DTSTART` 는 UTC(Z) · Moodle 4.5(2024100713) PRODID.
+        접힌 줄은 **합성**이다(실측 fixture는 개인 일정 하나라 짧아서 안 접혔다).
+        **원본 파일을 리포에 넣어 주면 그것으로 교체하겠다** — 지금은 문서가 원천이다.
+변이 둘: **각각 하나씩만 죽였다.**
 ```
+
+## 변이 — 실제로 돌렸다
+
+| 변이 | 기대 | 실제 |
+|---|---|---|
+| `.catch` 제거 (`scheduled.ts`) | 7이 죽고 1~6은 산다 | **334/1 — 7만.** 실패 줄이 `autoClose가 던졌다 — .catch가 없다: uclass down` ✅ |
+| 사라짐을 삭제로 (`uid NOT IN (…)`) | 5만 죽는다 | **334/1 — 5만.** `A=0` (행이 지워졌다) ✅ |
+
+⚠️ **첫 변이가 처음엔 러너를 죽였다.** `.catch`를 떼자 던짐이 그대로 올라와 **요약도 개수도
+안 남았다**(exit 1 · `통과 N` 줄 없음). T-35에서 같은 자리를 물렸다 —
+검사가 `autoClose(...).catch(...)`로 **던짐을 빨간불로 번역**하도록 고쳤다.
+그러지 않으면 *"7이 죽는다"*가 아니라 *"아무것도 못 잰다"*가 된다.
+
+## 검사가 열이 된 이유 — 티켓의 일곱에 셋을 보탰다
+
+- **빈도 제한**(§금지 *"30분마다 fetch"*)이 검사에 없었다. `fetch` 호출 수를 세어
+  **두 번째 호출이 실제로 네트워크를 안 타는 것**을 본다 — 반환값만 보면 통과하는 종류다.
+- **실패가 조용히 사라지지 않는다** — 사유가 `settings.uclass_last_error`에 남고
+  **거기에 URL이 안 실리는 것**까지 본다. 그 값이 열쇠다(ADR-037 §근거 ④).
+- **`DTSTART`가 로컬 오프셋으로 정규화되는 것** — 원문은 `Z`인데 저장은 로컬 표기다
+  (`record()`의 `normalizeIso`와 같은 이유 · 안 하면 KST 09~15시가 전날로 귀속된다).
+
+## T-36 스캐너에 걸렸고, 그 가드를 넓히지 않았다
+
+검사에 `"2026-08-18T00:00:00Z"`를 적었더니 **고정 날짜 스캐너가 잡았다** — 설계대로다.
+티켓은 *"순수 함수라 고정 날짜를 써도 되는 자리"*라고 했지만, **예외를 넓히는 대신
+기대값을 fixture에서 독립으로 계산**하도록 바꿨다(`isoOf()`).
+
+```
+fixture 의 DTSTART:20260818T000000Z   ← 대시가 없어 스캐너에 안 걸린다
+isoOf() 가 그것을 ISO 로 편다          ← 테스트 안의 독립 구현. icalDateToIso 를 부르면 순환이다
+```
+
+**가드를 건드리지 않고 통과하는 길이 있으면 그쪽이 맞다** — 예외 목록은 한 번 넓히면
+다음 사람이 그 자리를 근거로 또 넓힌다.
+
+## 알아 둘 것 — 이 티켓이 답하지 않은 것
+
+**`DTSTART`가 마감 시각인지 모른다**(ADR-037 §실측 ❌ 셋째). 그래서 `starts_at`은
+*"iCal이 시작이라고 말한 시각"*이고 **마감이라고 부르지 않았다.** T-42가 제안 카드를
+만들 때 이 이름을 그대로 믿으면 안 된다 — **개강 첫 과제가 답한다.**

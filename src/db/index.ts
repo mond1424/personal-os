@@ -485,6 +485,52 @@ export const meHistory = (env: Env, limit: number) =>
   q(env, "SELECT field, old_value, new_value, source, changed_at FROM me_history ORDER BY changed_at DESC, id DESC LIMIT ?")
     .bind(limit).all<{ field: string; old_value: string | null; new_value: string; source: string; changed_at: string }>();
 
+// ── collected_items (0018) — 학사 일정 수집 원장 (T-41 · ADR-037) ──
+// **해석하지 않는다.** summary·description은 원문 그대로다 — 형식을 아직 모르기 때문이다.
+export interface CollectedItemRow {
+  id: string; uid: string; source: string; summary: string; description: string | null;
+  starts_at: string | null; ends_at: string | null; last_modified: string | null;
+  first_seen_at: string; last_seen_at: string;
+  state: "new" | "accepted" | "dismissed"; event_id: string | null; created_at: string;
+}
+
+export const collectedByUid = (env: Env, uid: string) =>
+  q(env, "SELECT * FROM collected_items WHERE uid = ?").bind(uid).first<CollectedItemRow>();
+
+export const collectedList = (env: Env, limit = 100) =>
+  q(env, "SELECT * FROM collected_items ORDER BY starts_at, id LIMIT ?")
+    .bind(limit).all<CollectedItemRow>();
+
+export const stInsertCollected = (
+  env: Env,
+  c: {
+    id: string; uid: string; source: string; summary: string; description: string | null;
+    starts_at: string | null; ends_at: string | null; last_modified: string | null; at: string;
+  },
+) => q(env, `INSERT INTO collected_items
+    (id, uid, source, summary, description, starts_at, ends_at, last_modified,
+     first_seen_at, last_seen_at, state, created_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?,'new',?)`)
+  .bind(c.id, c.uid, c.source, c.summary, c.description, c.starts_at, c.ends_at,
+    c.last_modified, c.at, c.at, c.at);
+
+/**
+ * 다시 본 것 — 원문을 갱신하고 `last_seen_at`을 민다.
+ *
+ * ⚠️ **`state`를 건드리지 않는다.** 사용자가 이미 `dismissed`한 것이 원천에서 한 글자
+ * 바뀌었다고 다시 물어보면, 그건 갱신이 아니라 되돌리기다(T-41 §할 일 ③).
+ */
+export const stTouchCollected = (
+  env: Env,
+  c: {
+    uid: string; summary: string; description: string | null;
+    starts_at: string | null; ends_at: string | null; last_modified: string | null; at: string;
+  },
+) => q(env, `UPDATE collected_items SET
+      summary=?, description=?, starts_at=?, ends_at=?, last_modified=?, last_seen_at=?
+    WHERE uid=?`)
+  .bind(c.summary, c.description, c.starts_at, c.ends_at, c.last_modified, c.at, c.uid);
+
 // settings
 export const settingsAll = (env: Env) =>
   q(env, "SELECT key, value FROM settings ORDER BY key").all<{ key: string; value: string }>();

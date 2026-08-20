@@ -3,6 +3,7 @@
 import * as db from "./db";
 import { closeDay } from "./services/daily";
 import { finalizeIgnored } from "./services/guard";
+import { collect as collectUclass } from "./services/uclass";
 import { loadTime } from "./lib/time";
 import type { Env, TimeCtx } from "./types";
 
@@ -37,9 +38,17 @@ export async function autoClose(env: Env, t: TimeCtx) {
   //      마감과 독립이다 — 여기서 던지면 자동 마감이 통째로 멈춘다.
   const ign = await finalizeIgnored(env, t).catch(() => ({ ignored: 0 }));
 
+  // H-4) 학사 마감 수집 (T-41 · ADR-037). **H-3과 같은 이유로 독립이다** —
+  //      원천이 밖에 있어 실패가 흔하고(토큰 만료·서버 점검·네트워크),
+  //      여기서 던지면 그 시각의 자동 마감이 통째로 멈춘다.
+  //      **실패 사유는 `settings.uclass_last_error`에 남는다** — 조용히 사라지지 않는다.
+  //      토큰이 없으면 `skipped: 'no_token'`으로 끝난다(배포해도 아무것도 안 바뀐다).
+  const col = await collectUclass(env, t)
+    .catch((e: any) => ({ skipped: "error", error: String(e?.message ?? e).slice(0, 120) }));
+
   return {
     closed: open.results.length, orphaned: orphans.results.length,
-    guard_ignored: ign.ignored, as_of: t.d,
+    guard_ignored: ign.ignored, uclass: col, as_of: t.d,
   };
 }
 
