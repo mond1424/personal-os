@@ -74,6 +74,9 @@
 | POST `/api/guard/events/:id/react` | `{reaction, reason?, reacted_at?}` | `{id, reaction, reacted_at}` · 두 번째는 409 | `guard.react` |
 | POST `/api/guard/events/:id/outcome` | `{outcome}` | `{id, outcome, outcome_at}` · 재확정 409 | `guard.setOutcome` |
 | GET `/api/guard/pending-outcome` | — | outcome 미확정 rows(+event_title) | `guard.pendingOutcome` |
+| GET `/api/collected/pending` | — | `[{id, source, summary, starts_at}]` · **`state='new'`이고 `starts_at`이 `[t.now, +7일]`인 것만**(T-42 결정 ①). 창 밖·과거·`dismissed`·`starts_at IS NULL`은 안 준다. **`description`은 안 싣는다** — 카드가 원문 한 줄만 쓴다 | `collected.pending` |
+| POST `/api/collected/:id/accept` | — | `{id, event_id, state:'accepted', duplicate}` · `events` 행 하나를 만든다(`title` = `summary` **원문 그대로** · `date`·`time` = `starts_at`). **보호 규칙은 안 붙인다**. ⚠️ **멱등** — 이미 `accepted`면 `events`를 또 만들지 않고 `duplicate:true`로 있던 id를 준다(순차 한정) | `collected.accept` |
+| POST `/api/collected/:id/dismiss` | — | `{id, state:'dismissed'}` · **다시 묻지 않는다** — `last_modified`가 바뀌어도 그대로다(T-41의 touch가 `state`를 안 건드린다) | `collected.dismiss` |
 | GET `/api/guard/modes` | — | `{modes[]+downgrade, active, protecting}` · 판정을 **조회 시 계산**해 싣는다(T-19) | `guard.modes` |
 | PUT `/api/guard/modes/active` | `{key, reason?}` | `{active, downgrade, reason}` · 하향은 보호 중 409 · 사유 없으면 400 | `guard.setMode` |
 | GET `/api/guard/watch-apps?source` | — | rows | `guard.listWatchApps` |
