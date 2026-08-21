@@ -1476,24 +1476,35 @@ ok("★ 스캐너가 살아 있다 — 합성 소스에서 세 값을 실제로 
 
 // ── T-41 · 학사 마감 수집 (0018 · ADR-037) ──────────────────────
 console.log("\n[T-41] iCal 수집 — 해석하지 않고 원문을 쌓는다");
-// fixture는 ADR-037 §실측이 적어 둔 필드 구성 그대로 **재구성**한 것이다(원본 .ics는 리포에 없다).
-// **파싱은 순수 함수라 고정 날짜가 허용되는 자리**다(T-36이 정의한 예외) —
-// 오히려 고정이어야 형식을 달력과 무관하게 검사한다.
-const ICS_HEAD = ["BEGIN:VCALENDAR", "VERSION:2.0",
-  "PRODID:-//Moodle Pty Ltd//NONSGML Moodle Version 2024100713//EN",
-  "METHOD:PUBLISH", "CALSCALE:GREGORIAN"];
-const vevent = (uid: string, summaryLines: string[], lastMod: string) => [
-  "BEGIN:VEVENT", `UID:${uid}`, ...summaryLines, "DESCRIPTION:", "CLASS:PUBLIC",
-  `LAST-MODIFIED:${lastMod}`, `DTSTAMP:${lastMod}`,
-  "DTSTART:20260818T000000Z", "DTEND:20260818T000000Z", "END:VEVENT"];   // 실측대로 UTC(Z)
-const ics = (...evs: string[][]) => [...ICS_HEAD, ...evs.flat(), "END:VCALENDAR"].join("\r\n");
+// ★ **fixture는 실측으로 받은 원본 파일 그 자체다** (2026-08-17 · 330바이트 · 줄끝 전부 CRLF).
+//    사본을 test/ 아래로 뜨지 않는다 — 두 벌이 되면 갈라지고, 갈라진 쪽이 원본 행세를 한다.
+//    **파싱은 순수 함수라 고정 날짜가 허용되는 자리**다(T-36이 정의한 예외) —
+//    오히려 고정이어야 형식을 달력과 무관하게 검사한다.
+const ICS_RAW = readFileSync(join(here, "../docs/samples/uclass-icalexport-20260817.ics"), "utf8");
+const CRLF = "\r\n";
 
-const UID_A = "10788@uclass.uos.ac.kr";   // 실측에서 받은 그 UID (ADR-037 §근거 ②)
+const UID_A = "10788@uclass.uos.ac.kr";   // 원본의 UID (ADR-037 §근거 ②)
 const UID_B = "10999@uclass.uos.ac.kr";
-const LM_1 = "20260817T130943Z";          // 실측 LAST-MODIFIED
-// ⚠️ **접힌 줄은 합성이다.** 실측 fixture(개인 일정 하나)는 짧아서 안 접혔는데,
-//    긴 SUMMARY는 75옥텟에서 반드시 접혀 온다. 기대값을 fixture에서 **계산**해
-//    둘이 갈라지지 않게 한다 — 손으로 적으면 그 자체가 또 하나의 추측이다.
+const LM_1 = "20260817T130943Z";          // 원본의 LAST-MODIFIED
+const DTSTART_Z = "20260818T130900Z";     // 원본의 DTSTART (UTC)
+
+// 원본을 **잘라서** 쓴다 — 머리(METHOD가 PRODID 앞이고 CALSCALE이 없다)와 꼬리를 그대로 둔 채
+// VEVENT 블록만 복제·치환한다. 그래야 둘 이상을 만드는 검사도 원본 형식 위에서 돈다.
+const VEV_0 = ICS_RAW.indexOf("BEGIN:VEVENT");
+const VEV_1 = ICS_RAW.indexOf("END:VEVENT") + "END:VEVENT".length;
+const ICS_HEAD = ICS_RAW.slice(0, VEV_0);   // BEGIN:VCALENDAR … VERSION:2.0 CRLF
+const ICS_TAIL = ICS_RAW.slice(VEV_1);      // CRLF END:VCALENDAR CRLF
+const VEVENT = ICS_RAW.slice(VEV_0, VEV_1);
+
+const vevent = (uid: string, summaryLine: string, lastMod: string) => VEVENT
+  .replace(`UID:${UID_A}`, `UID:${uid}`)
+  .replace("SUMMARY:test", summaryLine)
+  .replace(`LAST-MODIFIED:${LM_1}`, `LAST-MODIFIED:${lastMod}`);
+const ics = (...evs: string[]) => ICS_HEAD + evs.join(CRLF) + ICS_TAIL;
+
+// ⚠️ **접힌 줄은 합성이다.** 원본은 `SUMMARY:test` 넉 자라 안 접혔는데, 긴 SUMMARY는
+//    75옥텟에서 반드시 접혀 온다. 기대값을 fixture에서 **계산**해 둘이 갈라지지 않게 한다 —
+//    손으로 적으면 그 자체가 또 하나의 추측이다.
 const FOLD_1 = "SUMMARY:양자역학 과제 2 4월 18일 23:00 기한 — 제목이 길면 ";
 const FOLD_2 = " 이렇게 접혀서 온다";
 const FOLDED_JOINED = FOLD_1.slice("SUMMARY:".length) + FOLD_2.slice(1);
@@ -1501,17 +1512,22 @@ const FOLDED_JOINED = FOLD_1.slice("SUMMARY:".length) + FOLD_2.slice(1);
 // 기대값을 **fixture에서 독립으로 계산**한다. `icalDateToIso`를 그대로 부르면 순환이고,
 // 대시 있는 리터럴을 적으면 T-36의 고정 날짜 스캐너가 잡는다(그게 맞다 — 그 가드를 넓히지 않는다).
 // 여기 날짜가 서버 시계와 만날 일은 없다: 이 값은 fixture에서 나와 fixture로 돌아간다.
-const DTSTART_Z = "20260818T000000Z";
 const isoOf = (c: string) =>
   `${c.slice(0, 4)}-${c.slice(4, 6)}-${c.slice(6, 8)}T${c.slice(9, 11)}:${c.slice(11, 13)}:${c.slice(13, 15)}Z`;
 
-const ip1 = uclass.parseIcal(ics(vevent(UID_A, ["SUMMARY:개인 일정"], LM_1)));
-ok("VEVENT 하나를 파싱한다 — UID·SUMMARY·DTSTART·LAST-MODIFIED",
-  ip1.length === 1 && ip1[0]?.uid === UID_A && ip1[0]?.summary === "개인 일정"
+// **원본 파일을 손대지 않고 그대로** 파싱한다 — 위 조립이 원본과 어긋나면 여기서 갈린다.
+const ip1 = uclass.parseIcal(ICS_RAW);
+ok("원본 .ics 를 그대로 파싱한다 — UID·SUMMARY·DTSTART·LAST-MODIFIED",
+  ip1.length === 1 && ip1[0]?.uid === UID_A && ip1[0]?.summary === "test"
+  && ip1[0]?.description === null
   && ip1[0]?.dtstart === isoOf(DTSTART_Z) && ip1[0]?.lastModified === LM_1,
   JSON.stringify(ip1));
+// 조립한 것이 원본과 같은지 — 이게 어긋나면 아래 검사들이 **원본이 아닌 것**을 보고 있는 것이다.
+ok("★ 잘라 붙인 것이 원본 바이트와 같다 (아래 검사들이 원본 위에서 돈다)",
+  ics(vevent(UID_A, "SUMMARY:test", LM_1)) === ICS_RAW,
+  `${ics(vevent(UID_A, "SUMMARY:test", LM_1)).length} vs ${ICS_RAW.length}`);
 
-const ip2 = uclass.parseIcal(ics(vevent(UID_A, [FOLD_1, FOLD_2], LM_1)));
+const ip2 = uclass.parseIcal(ics(vevent(UID_A, FOLD_1 + CRLF + FOLD_2, LM_1)));
 ok("줄 접힘(RFC 5545)을 편다 — 긴 SUMMARY가 이어 붙는다",
   ip2[0]?.summary === FOLDED_JOINED, JSON.stringify(ip2[0]?.summary));
 
@@ -1526,14 +1542,14 @@ const uidRow = (uid: string) => raw.prepare(
 const uidCount = (uid: string) =>
   (raw.prepare("SELECT COUNT(*) AS n FROM collected_items WHERE uid=?").get(uid) as any).n;
 
-serve(ics(vevent(UID_A, ["SUMMARY:개인 일정"], LM_1), vevent(UID_B, ["SUMMARY:과제1 기한"], LM_1)));
+serve(ics(vevent(UID_A, "SUMMARY:개인 일정", LM_1), vevent(UID_B, "SUMMARY:과제1 기한", LM_1)));
 const u1 = await uclass.collect(envU, t0);
 ok("첫 수집 — 둘 다 새 행 · DTSTART가 로컬 오프셋으로 정규화된다",
   u1.added === 2 && u1.collected === 2 && String(uidRow(UID_A)?.sa ?? "").includes("+"),
   `${JSON.stringify(u1)} ${uidRow(UID_A)?.sa}`);
 
 // 3. 같은 UID를 다시 — 중복 행이 아니라 갱신이다(UNIQUE가 diff 기준이자 멱등 키다).
-serve(ics(vevent(UID_A, ["SUMMARY:개인 일정 (제목 변경)"], LM_1), vevent(UID_B, ["SUMMARY:과제1 기한"], LM_1)));
+serve(ics(vevent(UID_A, "SUMMARY:개인 일정 (제목 변경)", LM_1), vevent(UID_B, "SUMMARY:과제1 기한", LM_1)));
 const u2 = await uclass.collect(envU, t0, true);
 ok("같은 UID를 다시 넣으면 갱신이지 중복이 아니다 · 원문이 갱신된다",
   u2.added === 0 && uidCount(UID_A) === 1 && uidRow(UID_A)?.su === "개인 일정 (제목 변경)",
@@ -1541,7 +1557,7 @@ ok("같은 UID를 다시 넣으면 갱신이지 중복이 아니다 · 원문이
 
 // 4. `state`는 사용자의 것이다 — 원천이 바뀌었다고 되돌리지 않는다.
 raw.prepare("UPDATE collected_items SET state='dismissed' WHERE uid=?").run(UID_A);
-serve(ics(vevent(UID_A, ["SUMMARY:개인 일정 (또 변경)"], "20260820T090000Z"), vevent(UID_B, ["SUMMARY:과제1 기한"], LM_1)));
+serve(ics(vevent(UID_A, "SUMMARY:개인 일정 (또 변경)", "20260820T090000Z"), vevent(UID_B, "SUMMARY:과제1 기한", LM_1)));
 const u3 = await uclass.collect(envU, t0, true);
 ok("last_modified가 바뀌면 갱신되고 state는 안 바뀐다",
   u3.changed === 1 && uidRow(UID_A)?.lm === "20260820T090000Z" && uidRow(UID_A)?.st === "dismissed",
@@ -1549,7 +1565,7 @@ ok("last_modified가 바뀌면 갱신되고 state는 안 바뀐다",
 
 // 5. ★ 3·4의 짝. 창이 `-5일 ~ +365일`이라 **지난 마감은 저절로 목록에서 빠진다** —
 //    그걸 삭제로 읽으면 어제 한 과제가 오늘 사라진다.
-serve(ics(vevent(UID_B, ["SUMMARY:과제1 기한"], LM_1)));          // A가 목록에서 빠졌다
+serve(ics(vevent(UID_B, "SUMMARY:과제1 기한", LM_1)));            // A가 목록에서 빠졌다
 const u4 = await uclass.collect(envU, t0, true);
 ok("★ 목록에서 빠져도 행이 남는다 — 사라짐은 삭제가 아니다",
   u4.collected === 1 && uidCount(UID_A) === 1 && uidRow(UID_A)?.st === "dismissed",
