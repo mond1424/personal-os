@@ -77,6 +77,7 @@
 | GET `/api/collected/pending` | — | `[{id, source, summary, starts_at}]` · **`state='new'`이고 `starts_at`이 `[t.now, +7일]`인 것만**(T-42 결정 ①). 창 밖·과거·`dismissed`·`starts_at IS NULL`은 안 준다. **`description`은 안 싣는다** — 카드가 원문 한 줄만 쓴다 | `collected.pending` |
 | POST `/api/collected/:id/accept` | — | `{id, event_id, state:'accepted', duplicate}` · `events` 행 하나를 만든다(`title` = `summary` **원문 그대로** · `date`·`time` = `starts_at`). **보호 규칙은 안 붙인다**. ⚠️ **멱등** — 이미 `accepted`면 `events`를 또 만들지 않고 `duplicate:true`로 있던 id를 준다(순차 한정) | `collected.accept` |
 | POST `/api/collected/:id/dismiss` | — | `{id, state:'dismissed'}` · **다시 묻지 않는다** — `last_modified`가 바뀌어도 그대로다(T-41의 touch가 `state`를 안 건드린다) | `collected.dismiss` |
+| GET `/api/collected/status` | — | `{configured, last_collect_at, last_result, last_error_at, last_seen_count, counts{new,accepted,dismissed}, next_earliest_at}` · **`pending`과 가른 이유는 시야가 다르기 때문**(7일 창 vs 원장 전체) — 섞으면 어느 쪽 0인지 못 읽는다. ★ **`last_seen_count`가 "돌았지만 0건"(=0)과 "한 번도 안 돌았다"(=null)를 가른다**(T-43). ⚠️ **URL·토큰은 안 나간다** — `configured`는 있다/없다만 | `collected.status` |
 | GET `/api/guard/modes` | — | `{modes[]+downgrade, active, protecting}` · 판정을 **조회 시 계산**해 싣는다(T-19) | `guard.modes` |
 | PUT `/api/guard/modes/active` | `{key, reason?}` | `{active, downgrade, reason}` · 하향은 보호 중 409 · 사유 없으면 400 | `guard.setMode` |
 | GET `/api/guard/watch-apps?source` | — | rows | `guard.listWatchApps` |
@@ -84,7 +85,7 @@
 | DELETE `/api/guard/watch-apps/:source/:identifier` | — | `{deleted}` | `guard.removeWatchApp` |
 | GET `/api/health` | — | `{ok, date, now}` | (인라인) |
 | POST `/api/admin/auto-close` | — | `{closed, orphaned, guard_ignored, uclass, as_of}` | `scheduled.autoClose` |
-| — | | ↑ `uclass`(T-41)는 학사 iCal 수집 결과다: `{skipped:'no_token'\|'too_soon'\|'error'\|null, collected, added, changed}`. **던지지 않는다** — `guard_ignored`와 같은 이유로 `.catch`로 삼키고 실패 사유는 `settings.uclass_last_error`에 남는다. 토큰(`UCLASS_ICAL_URL`)이 없으면 `no_token`으로 끝나 아무 일도 안 한다 | |
+| — | | ↑ `uclass`(T-41)는 학사 iCal 수집 결과다: `{skipped:'no_token'\|'too_soon'\|'error'\|null, collected, added, changed}`. **던지지 않는다** — `guard_ignored`와 같은 이유로 `.catch`로 삼키고 실패 사유는 `settings.uclass_last_error`에 남는다. 토큰(`UCLASS_ICAL_URL`)이 없으면 `no_token`으로 끝나 아무 일도 안 한다. **성공하면 `uclass_last_collect_at`·`uclass_last_seen_count`(VEVENT 수)를 쓰고 error를 지운다**(T-43). **2xx여도 `BEGIN:VCALENDAR`가 없으면 `not_calendar`로 실패**시킨다 — 로그인 HTML이 '0건 성공'으로 남으면 방학과 구별이 안 된다 | |
 
 > **라우트 순서 주의** — 리터럴 경로를 와일드카드보다 **앞**에 둔다. 실제로 두 번 물렸다:
 > `/api/analyses/context-*`는 `/api/analyses/:id`보다 앞 · `/api/lm/{sections,import-me,item/:id}`는 `/api/lm/:section`보다 앞.
@@ -234,7 +235,8 @@
 **엔티티 단건** — `taskStats(env, id)` · `taskEntries(env, id)`(+`day_status`) · `taskEntryAt(env, id, date)` · `waitExtensions(env, id)`
 **삭제 가드/실행** — `closedEntryDates(env, taskId)`(막는 날짜 이름) · `guardEventCount(env, taskId)` · `stDeleteExtensions` · `stDeleteEntries` · `stDeleteTask(env, id)` · `stDeletePeriod(env, id)`
 **Me** — `meAll(env)` · `meGet(env, field)` · `stMeHistory(env, field, oldV, newV, source, now, reason?)` · `stMeUpsert(env, field, value, now)` · `meHistory(env, limit)`
-**settings** — `settingsAll(env)` · `stSettingPut(env, key, value)`
+**collected_items(0018)** — `collectedByUid(env, uid)`(UNIQUE가 diff 기준이자 멱등 키) · `collectedGet(env, id)` · `collectedList(env, limit)` · `collectedPending(env, from, to)`(`state='new'` + 창 안 + `starts_at NOT NULL`) · `stInsertCollected` · `stTouchCollected`(**`state`는 안 건드린다**) · `stAcceptCollected`(`AND state <> 'accepted'`로 멱등) · `stDismissCollected` · `collectedCountsByState(env)`(T-43 · **없는 state는 행이 안 나온다** — 0은 세는 쪽이 채운다)
+**settings** — `settingsAll(env)` · `stSettingPut(env, key, value)` · 수집 상태 키는 `uclass_last_collect_at`·`uclass_last_error`·`uclass_last_seen_count`(**이름의 주인은 `services/uclass.ts`의 export 상수** — 읽는 쪽이 문자열을 다시 적으면 그 순간 두 벌이다)
 **analyses/summary** — `analysesList(env)` · `analysisGet(env, id)` · `weeklySummaryGet(env, key)` · `weeklySummaryFull(env, key)` · `mechDaily(env, key)`
 **컨텍스트 범위 조회** — `dailyRange` · `logsRange` · `feelingsRange` · `memosRange` (각 `(env, start, end)`) · `analysesRecentFull(env, n)` · `stInsertAnalysis(env, id, prompt, pass1, pass2, meta, now)`
 **Life Model(0012)** — `lmItems(env, section)` · `lmItemGet` · `lmSections`(섹션별 개수) · `stInsertLmItem` · `stUpdateLmItem`(version은 트리거) · `stDeleteLmItem` · `lmSchemaActive(env, section)` · `lmSchemasAll`

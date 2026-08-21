@@ -9,8 +9,17 @@ import { JSDOM, VirtualConsole } from "jsdom";
 const here = dirname(fileURLToPath(import.meta.url));
 const BASE = process.argv[2] ?? "http://localhost:8788";
 const html = readFileSync(join(here, "../public/index.html"), "utf8");
+// ⚠️ **`\r?\n`이다.** LF만 받으면 **CRLF로 체크아웃된 트리에서 이 치환이 통째로 빗나가고**,
+//    `API_BASE`가 상대 경로("/api")로 남아 node fetch가 URL을 못 만든다. 그 결과는
+//    *"부팅 실패 — 서버가 켜져 있는지 확인하세요"* 라서 **서버 탓처럼 보인다**(실제로 그렇게 보였다).
+//    Windows에서 `git stash`·`checkout` 한 번이면 재현된다 — autocrlf가 파일을 CRLF로 다시 쓴다.
 const apiJs = readFileSync(join(here, "../public/api.js"), "utf8")
-  .replace(/const API_BASE =[\s\S]*?;\n/, `const API_BASE = ${JSON.stringify(BASE + "/api")};\n`);
+  .replace(/const API_BASE =[\s\S]*?;\r?\n/, `const API_BASE = ${JSON.stringify(BASE + "/api")};\n`);
+// **치환이 빗나가면 여기서 이름을 말하고 죽는다.** 안 그러면 20초 뒤에 엉뚱한 곳을 가리킨다(T-06).
+if (!apiJs.includes(JSON.stringify(BASE + "/api"))) {
+  console.error("✗ api.js의 API_BASE 치환이 빗나갔다 — 선언 모양이 바뀌었거나 줄끝이 예상 밖이다.");
+  process.exit(1);
+}
 const appJs = readFileSync(join(here, "../public/app.js"), "utf8");
 
 const errors = [];
@@ -37,6 +46,21 @@ for (const code of [apiJs, appJs]) {
 w.document.dispatchEvent(new w.Event("DOMContentLoaded"));
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+/**
+ * 조건이 참이 될 때까지 — **상한을 두고** 기다린다.
+ *
+ * 고정 `sleep(200)`은 상한이 아니라 **추측**이다: 그 사이에 실 API 왕복이 끼면 느린 실행에서
+ * 거짓 실패가 난다(T-42 ④가 실제로 그랬다 — 같은 코드가 실행마다 갈렸다).
+ * 빠른 실행에서는 첫 검사에서 바로 지나가므로 전체 시간은 오히려 준다.
+ */
+const until = async (fn, ms = 3000, step = 25) => {
+  const started = Date.now();
+  for (;;) {
+    if (fn()) return true;
+    if (Date.now() - started >= ms) return false;
+    await sleep(step);
+  }
+};
 let passN = 0; const fails = [];
 const ok = (name, cond, detail = "") => {
   if (cond) { passN++; console.log(`  ✓ ${name}`); }
@@ -439,7 +463,10 @@ await ev(`(async()=>{
 })()`);
 w.toggleSet(true); await sleep(200);
 const rows = [...$("#set-list").querySelectorAll(".srow")].map((r) => r.textContent);
-ok("설정 11행 (AI 연결 통합)", rows.length === 11, String(rows.length));
+// ⚠️ **검사를 고쳤다** — T-43이 설정 맨 아래에 수집 상태 한 줄을 더한다(11 → 12).
+//    이 검사는 "행이 조용히 늘거나 줄지 않는다"를 세는 것이므로, 늘린 티켓이 숫자를 옮긴다.
+ok("설정 12행 (AI 연결 통합 + 수집 상태)", rows.length === 12, String(rows.length));
+ok("맨 아래가 수집 상태 한 줄이다", rows[rows.length - 1]?.includes("학사 캘린더"), rows.join(" | "));
 ok("Low 모델 표시", rows.some((r) => r.includes("Low") && r.includes("haiku")), rows.join(" | "));
 ok("High 모델 표시", rows.some((r) => r.includes("High") && r.includes("claude")), rows.join(" | "));
 ok("AI 연결 행 · 토큰 위", rows.findIndex((r) => r.includes("AI 연결")) < rows.findIndex((r) => r.includes("앱 접근 토큰")), rows.join(" | "));
@@ -1530,7 +1557,9 @@ ok("③ '전부 추가' 버튼이 없다",
   !/전부|모두/.test($("#sh-coll").textContent || ""), $("#sh-coll").textContent?.slice(0, 60));
 
 $("#coll-list [data-cid='t42-a'] [data-act='add']").click();
-await sleep(200);
+// ⚠️ 여기 200ms 고정이었다. 처리 뒤 `refreshToday()`가 **실 API를 한 번 왕복**하므로
+//    바쁜 기계에서 문구가 아직 안 바뀐 채로 검사가 돌았다(같은 코드가 4번 중 3번 빨간불).
+await until(() => txt("#td-coll-text").includes("1건"));
 ok("④ 하나를 처리하면 남은 수가 준다 — 카드가 1건으로",
   ev(`window.__t42.sent.join("|")`) === "add:t42-a" && txt("#td-coll-text").includes("1건"),
   `${ev(`window.__t42.sent.join("|")`)} / ${txt("#td-coll-text")}`);
@@ -1557,6 +1586,73 @@ await ev(`(async()=>{
   Api.collectedDismiss = window.__t42.old[2];
   closeAll();
 })()`);
+
+console.log("\n[수집 상태 한 줄 — 실패는 숨지 않는다]");
+// ★ **위 두 카드와 반대다.** T-33·T-42는 none과 error가 화면에서 **같아야** 했다 —
+//   사용자가 할 수 있는 일이 없으니 잔소리가 되기 때문이다. 여기는 할 일이 있다(토큰 재입력).
+//   그래서 검사도 반대 모양이다: **어느 상태에서도 줄이 사라지지 않는다**를 센다.
+// 시각은 **지금에서 상대로** 만든다 — 고정 날짜는 언젠가 반드시 현재가 된다(함정 12).
+const t43At = (hoursAgo) => new Date(Date.now() - hoursAgo * 3600_000).toISOString();
+const t43Set = async (st) => ev(`(async()=>{
+  const old = Api.collectedStatus;
+  Api.collectedStatus = ${st === null ? `async () => { throw new Error("t43 boom"); }` : `async () => (${JSON.stringify(st)})`};
+  try { await renderMe(); } finally { Api.collectedStatus = old; }
+})()`);
+const t43Row = () => $("#set-collect");
+const t43 = () => {
+  const r = t43Row();
+  return r
+    ? { state: r.dataset.state, text: r.textContent || "", display: r.style.display || "",
+        alert: r.classList.contains("srow-alert") }
+    : { state: "GONE", text: "", display: "GONE", alert: false };
+};
+const t43Base = { configured: true, counts: { new: 3, accepted: 1, dismissed: 0 } };
+
+await t43Set({ ...t43Base, last_collect_at: t43At(3), last_result: "ok", last_seen_count: 12 });
+const t43Ok = t43();
+ok("① 정상이면 조용한 한 줄 — 마지막 확인 시각과 건수",
+  t43Ok.state === "ok" && t43Ok.text.includes("3시간 전 확인")
+  && t43Ok.text.includes("12건 중 새로 3건") && !t43Ok.alert, JSON.stringify(t43Ok));
+
+// ★ 이 티켓의 본체가 화면에서 갈리는 자리. **0건도 "확인했다"고 말한다.**
+await t43Set({ ...t43Base, counts: { new: 0, accepted: 0, dismissed: 0 },
+  last_collect_at: t43At(1), last_result: "ok", last_seen_count: 0 });
+const t43Zero = t43();
+await t43Set({ ...t43Base, counts: { new: 0, accepted: 0, dismissed: 0 },
+  last_collect_at: null, last_result: null, last_seen_count: null });
+const t43Never = t43();
+ok("★② 돌았지만 0건과 한 번도 안 돌았음이 화면에서 다르다",
+  t43Zero.state === "ok" && t43Zero.text.includes("0건 중 새로 0건")
+  && t43Never.state === "never" && t43Never.text.includes("아직 확인 전")
+  && t43Zero.text !== t43Never.text,
+  `${t43Zero.text} vs ${t43Never.text}`);
+
+await t43Set({ ...t43Base, last_collect_at: t43At(9), last_result: "http_403",
+  last_error_at: t43At(1), last_seen_count: 12 });
+const t43Err = t43();
+ok("③ 실패하면 사유와 할 일이 그대로 뜬다",
+  t43Err.state === "error" && t43Err.text.includes("연결 실패 (http_403)")
+  && t43Err.text.includes("주소를 다시 넣어"), JSON.stringify(t43Err));
+// ★ ①과 ③의 짝 — **T-33 패턴의 반대다.** 둘 다 보이고, 눈에 띄는 정도만 다르다.
+//   "안 뜬다"를 기대하는 구현이 여기서 죽는다.
+ok("★③ 실패를 숨기지 않는다 — 정상과 같은 자리에 있고 강조만 다르다",
+  t43Err.display !== "none" && t43Err.display === t43Ok.display
+  && t43Err.alert === true && t43Ok.alert === false,
+  `${t43Err.display}/${t43Err.alert} vs ${t43Ok.display}/${t43Ok.alert}`);
+
+await t43Set({ ...t43Base, configured: false, last_collect_at: null, last_result: null, last_seen_count: null });
+const t43None = t43();
+await t43Set(null);                       // 상태 조회 자체가 실패 — 옛 배포엔 라우트가 없다
+const t43Boom = t43();
+ok("④ 미설정·조회 실패에도 줄이 사라지지 않는다",
+  t43None.state === "none" && t43None.text.includes("설정 안 됨")
+  && t43Boom.state === "unknown" && t43Boom.display !== "none",
+  `${JSON.stringify(t43None)} / ${JSON.stringify(t43Boom)}`);
+// 다섯 상태가 **전부 서로 다른 이름**을 단다 — 하나라도 겹치면 그 둘은 화면에서 구별되지 않는다.
+const t43States = [t43Ok, t43Zero, t43Never, t43Err, t43None, t43Boom].map((s) => s.state);
+ok("★ 상태 이름이 겹치지 않는다 (ok·never·error·none·unknown)",
+  new Set(t43States).size === 5 && !t43States.includes("GONE"), t43States.join("/"));
+await ev(`(async()=>{ await renderMe(); })()`);   // 실제 서버 값으로 되돌린다
 
 console.log("\n[세 번 밀린 일의 출구 — 팝업 · 2주 상한 해제]");
 // 판단(`carryCandidate`·`maybeCarryPrompt`)이 리스너 밖 순수 함수라 여기서 **직접 부른다**(T-34의 그 자리).

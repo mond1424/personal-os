@@ -91,6 +91,8 @@ const Api = {
   collectedPending: () => _req("GET", "/collected/pending"),
   collectedAccept: (id) => _req("POST", `/collected/${id}/accept`),
   collectedDismiss: (id) => _req("POST", `/collected/${id}/dismiss`),
+  // 수집이 돌았는가 (T-43) — pending의 빈 배열이 '안 돌았다'인지 '창이 비었다'인지 가른다
+  collectedStatus: () => _req("GET", "/collected/status"),
   guardModes: () => _req("GET", "/guard/modes"),
   guardSetMode: (key, reason) => _req("PUT", "/guard/modes/active",
     reason === undefined ? { key } : { key, reason }),

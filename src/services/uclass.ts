@@ -10,12 +10,25 @@ import { nextId } from "../lib/id";
 import { normalizeIso } from "../lib/time";
 import type { Env, TimeCtx } from "../types";
 
-/** 수집 간격 — 하루 4회. **마감은 분 단위로 생기지 않는다.** cron은 30분마다 돈다. */
-const COLLECT_INTERVAL_MS = 6 * 3600_000;
+/**
+ * 수집 간격 — 하루 4회. **마감은 분 단위로 생기지 않는다.** cron은 30분마다 돈다.
+ *
+ * `export`인 이유: T-43의 `next_earliest_at`이 이 값으로 계산된다. **두 벌을 두지 않는다** —
+ * 화면이 자기 간격을 들고 있으면 여기를 바꾼 날 화면만 옛 값을 말한다.
+ */
+export const COLLECT_INTERVAL_MS = 6 * 3600_000;
 
-/** 마지막 수집 시각 · 마지막 실패. `settings`에 둔다 — 새 저장소를 만들 이유가 없다. */
-const K_LAST = "uclass_last_collect_at";
-const K_ERROR = "uclass_last_error";
+/**
+ * 마지막 수집 시각 · 마지막 실패 · 그때 목록에 있던 VEVENT 수.
+ * `settings`에 둔다 — 새 저장소를 만들 이유가 없다.
+ *
+ * ★ **`K_SEEN`이 "돌았지만 0건"과 "안 돌았다"를 가른다**(T-43). 둘 다 화면에서
+ * *아무것도 없음*으로 보이는데 대응이 정반대다 — 앞은 정상(방학)이고 뒤는 토큰을 다시 넣어야 한다.
+ * `export`인 이유는 위와 같다: 키 이름을 읽는 쪽이 문자열을 다시 적으면 그 순간 두 벌이다.
+ */
+export const K_LAST = "uclass_last_collect_at";
+export const K_ERROR = "uclass_last_error";
+export const K_SEEN = "uclass_last_seen_count";
 
 /** 파싱 결과 한 건. **여기 없는 필드는 저장도 안 한다** — 쓰지 않는 것을 나르지 않는다. */
 export interface IcalEvent {
@@ -132,6 +145,10 @@ export async function collect(
     // 2xx가 아니면 본문은 달력이 아니다. 코드까지 남긴다 — 401(토큰 만료)과 503의 대응이 다르다.
     if (!res.ok) throw new Error(`http_${res.status}`);
     text = await res.text();
+    // ★ **2xx가 달력이라는 뜻은 아니다.** 만료된 세션은 로그인 HTML을 200으로 준다 —
+    //   그것을 파싱하면 VEVENT 0건이고 **성공으로 기록된다.** 그러면 `last_seen_count=0`이
+    //   "방학이라 비었다"와 구별되지 않아 T-43이 가르려는 것이 바로 거기서 무너진다.
+    if (!text.includes("BEGIN:VCALENDAR")) throw new Error("not_calendar");
   } catch (e: any) {
     // ⚠️ **URL을 사유에 싣지 않는다.** 그 값 자체가 열쇠다(ADR-037 §근거 ④).
     await note(env, K_ERROR, `${t.now} ${String(e?.message ?? e).slice(0, 120)}`);
@@ -164,6 +181,8 @@ export async function collect(
   //   **어제 한 과제가 오늘 사라진다.** `last_seen_at`이 안 밀린 것으로만 안다.
 
   await note(env, K_LAST, t.now);
+  // **0도 값이다.** 목록이 비어 있었다는 사실은 안 적으면 "안 돌았다"와 같아진다(T-43).
+  await note(env, K_SEEN, String(events.length));
   await note(env, K_ERROR, "");
   return { skipped: null, collected: events.length, added, changed };
 }

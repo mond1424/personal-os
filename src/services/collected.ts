@@ -7,6 +7,7 @@
 //   그대로 보여주고 그대로 `events.title`에 넣는다. 다듬는 순간 그것이 해석이고, 개강 첫날 틀린다.
 import * as db from "../db";
 import * as events from "./events";
+import * as uclass from "./uclass";
 import { isoNow } from "../lib/time";
 import { ApiError, type Env, type TimeCtx } from "../types";
 
@@ -35,6 +36,57 @@ export async function pending(env: Env, t: TimeCtx) {
   return rows.results.map((r) => ({
     id: r.id, source: r.source, summary: r.summary, starts_at: r.starts_at,
   }));
+}
+
+/**
+ * 수집이 돌았는지 사람이 볼 수 있게 한다 (T-43).
+ *
+ * ★ **T-33의 §금지와 충돌하지 않는다 — 구별이 여기 있다.**
+ *   T-33이 실패를 숨기라 한 근거는 *"사용자가 할 수 있는 일이 없다"*였다(Guard 조회 실패).
+ *   **수집 실패는 할 일이 있다** — 토큰이 만료됐으면 다시 넣어야 한다.
+ *   **행동이 가능한 실패는 보인다.** 이 문단이 없으면 다음 사람이 T-33을 근거로 이 화면을 지운다.
+ *
+ * ⚠️ **URL·토큰을 싣지 않는다.** 그 값 자체가 열쇠다(ADR-037 §근거 ④) — 상태만이다.
+ *   `configured`는 **있다/없다**만 말한다.
+ *
+ * `pending`에 섞지 않고 엔드포인트를 가른 이유: `pending`은 7일 창이고 이것은 원장 전체다.
+ * 한 응답에 두 시야를 담으면 **읽는 쪽이 어느 쪽 0인지 모른다** — 그게 이 티켓의 증상이었다.
+ */
+export async function status(env: Env, t: TimeCtx) {
+  const s = Object.fromEntries(
+    (await db.settingsAll(env)).results.map((r) => [r.key, r.value]),
+  );
+  const lastAt = s[uclass.K_LAST] || null;
+
+  // T-41이 `${시각} ${사유}` 한 줄로 남긴다. 시각에 공백이 없으므로 첫 공백이 경계다.
+  const err = (s[uclass.K_ERROR] ?? "").trim();
+  const cut = err.indexOf(" ");
+  const errAt = err && cut > 0 ? err.slice(0, cut) : null;
+  const reason = err ? (cut > 0 ? err.slice(cut + 1) : err) : null;
+
+  // ★ **`last_seen_count`가 이 티켓의 본체다.** 없으면(한 번도 안 돌았으면) `null`이지 0이 아니다 —
+  //   0은 *"목록이 비어 있었다"*이고 그것은 방학의 정상이다.
+  const seenRaw = s[uclass.K_SEEN];
+  const seen = seenRaw != null && seenRaw !== "" && Number.isFinite(Number(seenRaw))
+    ? Number(seenRaw) : null;
+
+  const counts = { new: 0, accepted: 0, dismissed: 0 };
+  for (const row of (await db.collectedCountsByState(env)).results) {
+    if (row.state in counts) counts[row.state as keyof typeof counts] = row.n;
+  }
+
+  const lastMs = Date.parse(lastAt ?? "");
+  return {
+    configured: !!env.UCLASS_ICAL_URL?.trim(),
+    last_collect_at: lastAt,
+    // 한 번도 안 돌았으면 `null`. 마지막 시도가 실패였으면 그 사유(성공하면 T-41이 지운다).
+    last_result: reason ?? (lastAt ? "ok" : null),
+    last_error_at: errAt,
+    last_seen_count: seen,
+    counts,
+    next_earliest_at: Number.isFinite(lastMs)
+      ? isoNow(lastMs + uclass.COLLECT_INTERVAL_MS, t.offsetMin) : null,
+  };
 }
 
 /**

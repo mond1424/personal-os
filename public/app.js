@@ -2048,12 +2048,17 @@ async function renderMe() {
   // Life Model 섹션은 덧붙은 화면이다 — 하나가 실패해도 Me 본문을 인질로 잡지 않는다.
   // lmSchema는 활성 행이 없으면 404를 던진다(lifemodel.ts). v2 전환·비활성화 중에
   // Promise.all이 그대로 거절되면 Me 탭이 통째로 안 그려진다.
-  const [me, hist, guard, guardModes, goalsSchema, goals, educationSchema, education, periods] = await Promise.all([
-    Api.me(), Api.meHistory(), Api.guardEvents(), Api.guardModes(),
-    Api.lmSchema("goals").catch(() => null), Api.lmItems("goals").catch(() => []),
-    Api.lmSchema("education").catch(() => null), Api.lmItems("education").catch(() => []),
-    Api.periods().catch(() => S.periods),
-  ]);
+  const [me, hist, guard, guardModes, goalsSchema, goals, educationSchema, education, periods, collectSt] =
+    await Promise.all([
+      Api.me(), Api.meHistory(), Api.guardEvents(), Api.guardModes(),
+      Api.lmSchema("goals").catch(() => null), Api.lmItems("goals").catch(() => []),
+      Api.lmSchema("education").catch(() => null), Api.lmItems("education").catch(() => []),
+      Api.periods().catch(() => S.periods),
+      // T-43. **`.catch`는 옛 배포를 위한 것**이다 — 이 라우트가 없는 Worker가 살아 있으면
+      // 404가 오고, 그것이 Me 탭을 통째로 인질로 잡으면 안 된다(위 문단과 같은 이유).
+      Api.collectedStatus().catch(() => null),
+    ]);
+  S.collectStatus = collectSt;
   S.me = me;
   S.guardModes = guardModes;
   S.goalsSchema = goalsSchema;
@@ -2109,7 +2114,53 @@ async function renderMe() {
     : key === "ai" ? 'onclick="openAi()"'
     : key ? `onclick="openSetting('${key}')"` : 'style="opacity:.5"';
   $("#set-list").innerHTML = rows.map(([k, v, key]) =>
-    `<button class="srow" ${act(key)}>${k}<em>${esc(v)}</em></button>`).join("");
+    `<button class="srow" ${act(key)}>${k}<em>${esc(v)}</em></button>`).join("")
+    + collectStatusRow(S.collectStatus);
+}
+
+/* 학사 캘린더 수집 상태 — 설정 안 한 줄 (T-43) ────────────────
+ *
+ * ★ **T-33의 §금지와 충돌하지 않는다.** T-33이 실패를 숨기라 한 근거는
+ * *"사용자가 할 수 있는 일이 없다"*였다(Guard 조회 실패는 기록만 늘린다).
+ * **수집 실패는 할 일이 있다 — 토큰을 다시 넣어야 한다.** 행동이 가능한 실패는 보인다.
+ * 이 문단이 없으면 다음 사람이 T-33을 근거로 이 줄을 지운다.
+ *
+ * **그래서 여기는 안 숨는다.** 제안 카드(`#td-coll`)는 없으면 사라지는 것이 맞지만,
+ * 이 줄이 사라지면 *"수집이 죽은 채로 학기가 지나간다"*가 그대로 돌아온다.
+ * 정상일 때는 조용한 한 줄이고 **실패일 때만** 눈에 띈다(§금지 3행).
+ *
+ * ★ **"마감"·"제출"을 쓰지 않는다** — T-42와 같은 이유다. 여기는 수집이 언제 돌았는지만 말한다.
+ */
+function collectAgo(iso) {
+  const ms = Date.now() - Date.parse(iso);
+  if (!Number.isFinite(ms)) return "";
+  const min = Math.floor(ms / 60000);
+  if (min < 1) return "방금";
+  if (min < 60) return `${min}분 전`;
+  const hr = Math.floor(min / 60);
+  return hr < 24 ? `${hr}시간 전` : `${Math.floor(hr / 24)}일 전`;
+}
+
+function collectStatusLine(st) {
+  if (!st) return { state: "unknown", text: "상태를 못 읽었어요" };
+  if (!st.configured) return { state: "none", text: "설정 안 됨" };
+  // 마지막 시도가 실패였다 — 성공하면 서버가 사유를 지운다. **사유를 그대로 보여준다**:
+  // `http_401`(토큰 만료)과 `not_calendar`(로그인 페이지)는 사용자가 할 일이 같지만,
+  // 우리가 문장으로 뭉뚱그리면 다음에 다른 사유가 왔을 때 그것도 같은 문장이 된다.
+  if (st.last_result && st.last_result !== "ok")
+    return { state: "error", bad: true, text: `연결 실패 (${st.last_result}) · 주소를 다시 넣어 주세요` };
+  if (!st.last_collect_at) return { state: "never", text: "아직 확인 전" };
+  // ★ **0건과 '안 돌았다'가 여기서 갈린다.** 0이면 그대로 "0건"이라 쓴다 — 방학의 정상이다.
+  //   `null`은 T-43 이전에 수집한 것이라 건수 기록이 없는 경우다(있는 척하지 않는다).
+  const seen = st.last_seen_count == null
+    ? "건수 기록 전" : `${st.last_seen_count}건 중 새로 ${st.counts?.new ?? 0}건`;
+  return { state: "ok", text: `${collectAgo(st.last_collect_at)} 확인 · ${seen}` };
+}
+
+function collectStatusRow(st) {
+  const v = collectStatusLine(st);
+  return `<div class="srow${v.bad ? " srow-alert" : ""}" id="set-collect" data-state="${v.state}">`
+    + `학사 캘린더<em>${esc(v.text)}</em></div>`;
 }
 
 function toggleSet(on) { $("#me-main").style.display = on ? "none" : ""; $("#me-set").style.display = on ? "" : "none"; }

@@ -273,6 +273,11 @@ app.get("/api/guard/pending-outcome", async (c) => c.json(await guard.pendingOut
 // 수집한 학사 일정을 제안으로 꺼낸다 (T-42 · ADR-030 본체).
 // **자동으로 events에 넣지 않는다** — 오수집이 캘린더를 오염시킨다. 제안까지가 상한이다.
 app.get("/api/collected/pending", async (c) => c.json(await collected.pending(c.env, c.get("t"))));
+/**
+ * 수집이 돌았는지 (T-43). **`pending`과 가른다** — 7일 창의 0과 원장 전체의 0은 다른 말이다.
+ * ⚠️ URL·토큰은 안 나간다. `configured`가 있다/없다만 말한다.
+ */
+app.get("/api/collected/status", async (c) => c.json(await collected.status(c.env, c.get("t"))));
 /** 멱등 — 두 번 눌러도 `events`는 하나다. */
 app.post("/api/collected/:id/accept", async (c) =>
   c.json(await collected.accept(c.env, c.get("t"), c.req.param("id"))));

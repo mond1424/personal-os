@@ -556,6 +556,15 @@ export const stAcceptCollected = (env: Env, id: string, eventId: string) =>
 export const stDismissCollected = (env: Env, id: string) =>
   q(env, "UPDATE collected_items SET state='dismissed' WHERE id=?").bind(id);
 
+/**
+ * state별 개수 (T-43). **파생을 저장하지 않는다**(원칙 1) — 조회 시 센다.
+ *
+ * 없는 state는 **행이 안 나온다**(0을 만들어 주지 않는다). 세는 쪽이 0을 채운다.
+ */
+export const collectedCountsByState = (env: Env) =>
+  q(env, "SELECT state, COUNT(*) AS n FROM collected_items GROUP BY state")
+    .all<{ state: string; n: number }>();
+
 // settings
 export const settingsAll = (env: Env) =>
   q(env, "SELECT key, value FROM settings ORDER BY key").all<{ key: string; value: string }>();

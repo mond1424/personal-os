@@ -336,6 +336,9 @@ details.fold[open] summary::before{transform:rotate(90deg)}
 .srow{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:15px 2px;
   border-bottom:1px solid var(--line2);width:100%;font-size:14px}
 .srow em{font-style:normal;color:var(--faint);font-size:12.5px}
+/* 수집 실패만 눈에 띈다 (T-43). 정상일 때는 위의 조용한 `--faint` 그대로다.
+   색은 변수만 쓴다 — `--brick`은 다크 짝이 이미 있어 여기서 새로 만들 것이 없다. */
+.srow-alert em{color:var(--brick);font-weight:700}
 
 /* ── nav ────────────────────────────────── */
 nav{position:absolute;left:0;right:0;bottom:0;height:64px;display:grid;grid-template-columns:repeat(5,1fr);

@@ -1662,6 +1662,96 @@ ok("★ 카드 문구가 DTSTART의 뜻을 넘겨짚지 않는다 — '마감'·
 ok("★ 스캐너가 살아 있다 — '마감'이 든 문구를 실제로 잡는다",
   !noVerdict("새로 들어온 마감 3건") && !noVerdict("") && noVerdict("새로 들어온 일정 3건"));
 
+// ── T-43 · 수집이 돌았는지 사람이 볼 수 있다 ────────────────────
+console.log("\n[T-43] 상태 — '돌았지만 0건'과 '안 돌았다'를 가른다");
+// **토큰이 있는 env로 부른다.** 기본 `api()`는 `UCLASS_ICAL_URL`이 없는 env를 쓰므로
+// 그것으로만 검사하면 ④(URL 유출 없음)가 **없는 것을 안 실었다고 말하는 공회전**이 된다.
+// 본문을 **문자열 그대로** 들고 온다 — 유출 검사는 파싱한 객체가 아니라 나간 바이트를 봐야 한다.
+const apiU = async (path: string) => {
+  const res = await worker.fetch(new Request(`http://local${path}`), envU, {} as ExecutionContext);
+  const text = await res.text();
+  let json: any = null;
+  try { json = JSON.parse(text); } catch { /* no body */ }
+  return { status: res.status, text, json };
+};
+const rowsN = (state: string) =>
+  (raw.prepare("SELECT COUNT(*) AS n FROM collected_items WHERE state=?").get(state) as any).n;
+
+// 1. 한 번도 안 돌았다 — T-41이 아무것도 안 남긴 상태를 만든다.
+raw.prepare("DELETE FROM settings WHERE key LIKE 'uclass_%'").run();
+const st1 = (await apiU("/api/collected/status")).json;
+// ⚠️ **건수는 여기서 안 본다.** 넣어 뒀더니 `last_seen_count`를 빼는 변이가 ①까지 죽였다 —
+//    그러면 어느 결함이 무엇을 죽였는지 못 읽는다. null과 0의 대비는 아래 ★짝의 몫이다.
+ok("① 한 번도 안 돌았으면 last_collect_at이 없다 (다음 수집 시각도 없다)",
+  st1.last_collect_at === null && st1.last_result === null && st1.next_earliest_at === null,
+  JSON.stringify(st1));
+
+// 2. ★ 1의 짝이자 이 티켓의 본체. **실제로 한 바퀴 돌린다** — settings에 손으로 값을 넣으면
+//    "수집 경로가 건수를 남기는가"를 안 보고 "status가 읽는가"만 보게 된다.
+serve(ics());                                   // 원본 형식 그대로 · VEVENT가 하나도 없다
+const u7 = await uclass.collect(envU, t0, true);
+const st2 = (await apiU("/api/collected/status")).json;
+ok("★② 돌았고 0건이면 last_collect_at이 있고 last_seen_count가 0이다",
+  u7.collected === 0 && st2.last_collect_at === t0.now
+  && st2.last_seen_count === 0 && st2.last_result === "ok",
+  `${JSON.stringify(u7)} ${JSON.stringify(st2)}`);
+ok("★ ①과 ②가 실제로 갈린다 — null과 0이 같은 값이 아니다",
+  st1.last_seen_count === null && st2.last_seen_count === 0,
+  `${st1.last_seen_count} vs ${st2.last_seen_count}`);
+// 간격은 `uclass.ts`가 주인이다. **여기 6시간을 못 박아 둔다** — 바뀌면 빨간불이 되고,
+// 그때 화면이 자기 간격을 따로 들고 있지 않은지 다시 보게 된다(T-05가 450분에 쓴 방법).
+ok("② next_earliest_at = 마지막 수집 + 6시간",
+  st2.next_earliest_at === isoNow(Date.parse(t0.now) + 6 * 3600_000, t0.offsetMin),
+  st2.next_earliest_at);
+
+// 3. 실패 사유. **성공 시각은 안 밀린다** — 그래야 "마지막으로 성공한 게 언제냐"가 남는다.
+globalThis.fetch = (async () => new Response("nope", { status: 403 })) as typeof fetch;
+await uclass.collect(envU, t0, true).catch(() => {});
+const st3 = (await apiU("/api/collected/status")).json;
+ok("③ 실패하면 last_result에 사유가 들어간다 · 마지막 성공 시각은 그대로다",
+  st3.last_result === "http_403" && st3.last_error_at === t0.now
+  && st3.last_collect_at === st2.last_collect_at, JSON.stringify(st3));
+
+// 3′. ★ 3의 변형 — **2xx가 달력이라는 뜻이 아니다.** 만료된 세션은 로그인 HTML을 200으로 준다.
+//     이걸 안 막으면 그 응답이 `last_seen_count=0`인 **성공**으로 기록돼 ②와 구별되지 않는다.
+const beforeHtml = rowsN("new") + rowsN("accepted") + rowsN("dismissed");
+globalThis.fetch = (async () => new Response("<html>login</html>", { status: 200 })) as typeof fetch;
+await uclass.collect(envU, t0, true).catch(() => {});
+const st3b = (await apiU("/api/collected/status")).json;
+ok("★③′ 200이어도 달력이 아니면 실패다 — 로그인 HTML이 '0건 성공'으로 안 남는다",
+  st3b.last_result === "not_calendar" && st3b.last_collect_at === st2.last_collect_at
+  && rowsN("new") + rowsN("accepted") + rowsN("dismissed") === beforeHtml,
+  JSON.stringify(st3b));
+globalThis.fetch = realFetchU;
+
+// 4. **없는 것을 세는 검사.** URL 자체가 열쇠다(ADR-037 §근거 ④).
+const st4 = await apiU("/api/collected/status");
+const leaks = (s: string) => /authtoken|SMOKE|uclass\.example/i.test(s);
+ok("④ 응답에 URL·토큰이 없다 — configured는 있다/없다만 말한다",
+  st4.status === 200 && st4.json.configured === true && !leaks(st4.text),
+  st4.text.slice(0, 200));
+ok("★ 스캐너가 살아 있다 — 토큰이 실린 응답이면 실제로 잡는다",
+  leaks(`{"url":"${envU.UCLASS_ICAL_URL}"}`) && !leaks(JSON.stringify({ configured: true })));
+
+// 5. counts는 조회 시 센다(원칙 1). T-42가 하나를 accepted로 만들어 뒀으므로 0이 아니다.
+ok("⑤ counts가 원장을 그대로 센다 — 파생을 저장하지 않는다",
+  st4.json.counts.new === rowsN("new") && st4.json.counts.accepted === rowsN("accepted")
+  && st4.json.counts.dismissed === rowsN("dismissed") && st4.json.counts.accepted > 0,
+  `${JSON.stringify(st4.json.counts)} vs new=${rowsN("new")} acc=${rowsN("accepted")} dis=${rowsN("dismissed")}`);
+
+// 6. 시크릿이 없는 env — 화면의 '설정 안 됨'이 여기서 갈린다.
+ok("⑥ 토큰이 없으면 configured=false",
+  (await api("GET", "/api/collected/status")).json.configured === false);
+
+// 7. 화면 문구도 스캐너로 센다 — **"눈으로 확인한다"는 확인 절차가 아니다**(AGENT-CHAIN §5).
+//    T-42의 `noVerdict`를 그대로 쓴다. 블록이 비면(슬라이스가 빗나가면) 거짓이라 조용히 안 지나간다.
+const collBlock = cardSrc.slice(
+  cardSrc.indexOf("function collectAgo"), cardSrc.indexOf("function toggleSet"));
+ok("⑦ 상태 한 줄이 DTSTART의 뜻을 넘겨짚지 않는다 — '마감'·'제출'이 없다",
+  noVerdict(collBlock), `${collBlock.length}자`);
+ok("⑦ 상태 한 줄이 URL·토큰을 화면에 쓰지 않는다",
+  collBlock.length > 0 && !/url|token|authtoken/i.test(collBlock), `${collBlock.length}자`);
+
 // ── 결과 ─────────────────────────────────────────────────────
 console.log(`\n${"=".repeat(46)}\n통과 ${passN} · 실패 ${fails.length}`);
 if (fails.length) { console.log("실패:\n  - " + fails.join("\n  - ")); process.exit(1); }
