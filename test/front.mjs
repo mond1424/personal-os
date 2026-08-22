@@ -26,6 +26,12 @@ const errors = [];
 const vc = new VirtualConsole();
 vc.on("jsdomError", (e) => errors.push(String(e.message)));
 vc.on("error", (...a) => errors.push(a.join(" ")));
+// 페이지 안에서 난 **처리되지 않은 거절**은 여기서 받지 않으면 node가 프로세스를 통째로 죽인다 —
+// 그러면 통과/실패 요약이 아예 안 찍혀 **숫자를 잃는다.** 실패가 어디였는지도 안 남는다.
+// (T-44 변이 D에서 실제로 그랬다: `renderToday`가 던지자 러너가 raw 스택만 남기고 끝났다.)
+// **이름을 남기고 계속 간다** — 아래 '콘솔 오류 없음'이 그것을 센다(T-06의 방향).
+process.on("unhandledRejection", (e) =>
+  errors.push("처리되지 않은 거절: " + (e && e.message ? e.message : String(e))));
 
 // 브라우저와 동일하게 <script> 태그로 주입한다 (eval은 전역 렉시컬 스코프가 갈린다)
 const dom = new JSDOM(html.replace(/<script src="[^"]+"><\/script>/g, ""), {
@@ -129,6 +135,52 @@ ok("Feelings 눈금 10칸", $("#feel-s").querySelectorAll(".likert .lk").length 
 ok("Log 렌더", $("#td-logs").querySelectorAll(".lrow").length >= 1);
 ok("Score 차트 14칸", $("#bchart").querySelectorAll(".bcol").length === 14, String($("#bchart").querySelectorAll(".bcol").length));
 ok("대기 상시 행", $("#today-wait").style.display !== "none");
+
+// ── T-44 · ADR-040 — 마감 화면이 먼저 말한다 ──────────────────────────────
+// ★ **금지어 목록의 자리는 `app.js` 하나다.** 검사는 그것을 읽어서 스캔한다 —
+//   검사가 자기 목록을 들고 있으면 두 벌이 되고, **갈라진 쪽이 통과시킨다**.
+const t44Banned = ev("CLOSE_JUDGING_WORDS");
+const t44Scan = (s) => t44Banned.filter((word) => String(s).includes(word));
+// 순수 함수라 직접 부른다(carryCandidate·handleBack과 같은 자리) — 재료를 합성해 갈래를 전부 태운다.
+const t44Say = (done, todo, wait) => ev(`closeSummaryText(${JSON.stringify({
+  done: Array.from({ length: done }, (_, i) => ({ id: `d${i}` })),
+  todo: Array.from({ length: todo }, (_, i) => ({ id: `t${i}` })),
+  reassign: Array.from({ length: wait }, (_, i) => ({ id: `r${i}` })),
+})})`);
+
+const t44Mixed = t44Say(3, 2, 1), t44Other = t44Say(5, 4, 0);
+ok("① 한 것·남은 것·재배정 대기가 실제 숫자로 나온다",
+  t44Mixed.includes("3") && t44Mixed.includes("2") && t44Mixed.includes("1")
+  && t44Other.includes("5") && t44Other.includes("4") && !t44Other.includes("3"),
+  `${t44Mixed} / ${t44Other}`);
+ok("① 화면 한 줄이 실제 S.today 재료로 조립된다 (렌더 경로에 붙어 있다)",
+  txt("#close-summary").length > 0
+  && txt("#close-summary") === ev("closeSummaryText(S.today)")
+  && txt("#close-summary").includes(String(ev("S.today.todo.length"))),
+  txt("#close-summary"));
+
+// ② 빈 날 — **순수 함수만이 아니라 렌더 경로까지** 본다. 화면이 백지로 돌아가는 것이 이 티켓이 없앤 것이다.
+ev(`window.__t44Real = { done: S.today.done, todo: S.today.todo, reassign: S.today.reassign };
+    S.today.done = []; S.today.todo = []; S.today.reassign = [];
+    renderCloseSummary();`);
+const t44EmptyLine = txt("#close-summary");
+ev(`S.today.done = window.__t44Real.done; S.today.todo = window.__t44Real.todo;
+    S.today.reassign = window.__t44Real.reassign; renderCloseSummary();`);
+ok("② ★ 아무것도 없는 날에도 화면이 말한다 (침묵은 고장과 구별이 안 된다)",
+  t44EmptyLine.length > 0 && t44EmptyLine === t44Say(0, 0, 0) && txt("#close-summary").length > 0,
+  `빈 날 "${t44EmptyLine}" · 복구 "${txt("#close-summary")}"`);
+
+// ③ 평가하지 않는다 — 갈래 전부를 app.js의 목록으로 스캔한다(없는 것을 세는 검사).
+const t44Lines = [t44Say(0, 0, 0), t44Say(3, 2, 1), t44Say(3, 0, 0), t44Say(0, 2, 0),
+  t44Say(0, 0, 2), t44Say(9, 9, 9), txt("#close-summary")];
+const t44Hits = t44Lines.flatMap((s) => t44Scan(s).map((word) => `${word}@${s}`));
+ok("③ 평가어가 없다 — 모든 갈래를 app.js의 금지어 목록으로 스캔", t44Hits.length === 0, t44Hits.join(" / "));
+
+// ④ ★ ③의 스캐너가 살아 있는가. 목록을 비우면 ③은 초록인 채 **여기만** 죽는다.
+const t44Fake = "오늘 3개 했고 2개 남았어요. 잘했어요 · 평소보다 적어요 · 힘내요.";
+ok("④ ★ ③의 스캐너가 합성 평가 문구를 실제로 잡는다",
+  Array.isArray(t44Banned) && t44Banned.length > 0 && t44Scan(t44Fake).length >= 3,
+  `목록 ${t44Banned.length}개 · 적중 [${t44Scan(t44Fake).join(",")}]`);
 
 console.log("\n[Calendar]");
 w.switchTab("cal"); await sleep(1200);
@@ -1392,12 +1444,31 @@ ok("웹은 판정을 다시 하지 않는다 — 창 길이가 app.js에 없다 
 w.switchTab("today"); await sleep(900);
 await ev("renderCalendar()");
 const closeCalendarCalls = ev("window.__calendarCalls.length");
+
+// ⑤ (T-44) **요약이 던져도 마감은 끝까지 간다** — 기록의 봉인이 우선이다(T-33 §금지 1행과 같은 자리).
+//    확인 모달까지만 보면 "안 닫히는 마감"을 못 잡으므로 **실제 마감 경로에 태운다.**
+//    `#bchart`를 비우고 재렌더하는 것이 핵심이다: 옛 막대가 남아 있으면
+//    렌더가 요약에서 죽어도 14칸이 그대로 보여 검사가 거짓 통과한다.
+ev(`(() => { window.__t44Orig = closeSummaryText;
+             window.closeSummaryText = () => { throw new Error("t44 — 요약이 던진다"); }; })()`);
+$("#bchart").innerHTML = "";
+let t44RenderAlive = true;
+try { await w.refreshToday(); } catch { t44RenderAlive = false; }   // 삼키지 않으면 렌더가 여기서 죽는다
+await sleep(200);
+const t44PastSummary = $("#bchart").querySelectorAll(".bcol").length === 14;   // 요약 뒤 단계가 돌았다
+const t44SilentLine = txt("#close-summary") === "";                            // 요약만 비었다
 $("#btn-close").click(); await sleep(300);
 $("#cf-yes").click(); await sleep(1500);
 await ev("renderCalendar()");
 ok("마감 뒤 캐시 무효화 · 다음 렌더 재요청",
   ev("window.__calendarCalls.length") === closeCalendarCalls + 1,
   `${closeCalendarCalls}→${ev("window.__calendarCalls.length")}`);
+const t44Closed = await until(() => ev(`!!(S.today.daily && S.today.daily.status === "closed")`), 3000);
+ok("⑤ ★ 요약이 던져도 마감이 끝까지 간다 (요약 실패가 봉인을 막지 않는다)",
+  t44RenderAlive && t44PastSummary && t44SilentLine && t44Closed,
+  `render ${t44RenderAlive} · 이후단계 ${t44PastSummary} · 빈줄 ${t44SilentLine} · closed ${t44Closed}`);
+ev(`window.closeSummaryText = window.__t44Orig;`);
+await w.refreshToday(); await sleep(200);
 
 console.log("\n[뒤로가기 — 맨 위 하나만 닫는다]");
 // jsdom엔 Capacitor가 없다. 그래서 판단(`handleBack`)이 리스너 밖에 있어야 검사가 붙는다.

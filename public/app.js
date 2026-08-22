@@ -426,6 +426,7 @@ function renderToday() {
 
   renderFeelings();
   renderLogs();
+  renderCloseSummary();   // 점수 앞 한 줄 (T-44) — 던져도 아래 마감 배선을 막지 않는다
   renderScore();
 
   const closed = T.daily && T.daily.status === "closed";
@@ -658,6 +659,71 @@ async function loadNotice() {
     }
   } catch { /* 무시 */ }
   $("#td-notice").style.display = "none";
+}
+
+/* ── 마감 요약 — 화면이 먼저 말한다 (T-44 · ADR-040) ───────────────────
+ * 마감이 밀리는 원인은 입력 비용이 아니다(`closeDay`는 score도 feelings도 요구하지 않는다).
+ * **백지라서 밀린다** — 시스템이 그날을 이미 아는데 아무 말도 안 한다.
+ *
+ * 재료는 `S.today`에 **이미 와 있다**: 서버를 부르지 않는다.
+ * 부르면 마감이 네트워크에 걸리고, AI를 부르면 매일 도는 것에 비용·지연이 붙는다(ADR-024와 같은 방향).
+ *
+ * ★ **판단하지 않는다 — 센 것만 말한다.** 평가어를 쓰는 순간 점수가 그 말에 오염되고,
+ *   이 앱은 거울이지 심판이 아니다(§6.3의 이탈이 잔소리에서 온다는 것과 같은 자리).
+ */
+
+/**
+ * 마감 요약에 **있어서는 안 되는 말**. ★ 이 목록의 자리는 여기 하나다 —
+ * `front.mjs`의 스캐너가 이것을 읽어서 검사한다(두 벌이 되면 갈라지고, **갈라진 쪽이 통과시킨다**).
+ *
+ * 셋으로 나뉜다: ① 칭찬·질책 ② 비교(어제보다·평소보다 — 비교는 평가로 미끄러진다) ③ 독려.
+ * 세는 말(`3개`·`남았어요`)은 여기 없고, 그것이 이 목록이 지키는 선이다.
+ */
+const CLOSE_JUDGING_WORDS = [
+  "잘하", "잘했", "잘 했", "훌륭", "대단", "멋지", "최고", "뿌듯", "알차",
+  "아쉬", "부족", "충분", "게으", "실망", "나쁘", "안타깝", "저조", "못했",
+  "평소", "보다 많", "보다 적", "적어요", "많아요", "줄었", "늘었",
+  "힘내", "화이팅", "파이팅", "노력", "열심", "괜찮아",
+];
+
+/**
+ * 그날을 한 문장으로. **순수 함수라 `front.mjs`가 직접 부른다**(T-34·carryCandidate와 같은 자리).
+ *
+ * ★ **어떤 재료에서도 빈 문자열을 돌려주지 않는다.** 아무것도 안 담긴 날도 사실이고,
+ *   *침묵은 고장과 구별이 안 된다* — 마감 화면이 백지로 돌아가는 것이 이 티켓이 없앤 바로 그것이다.
+ *
+ * '이월'이라는 말은 쓰지 않는다: 같은 화면의 TODO 행이 `defer_count`를 **`N회 이월`**로
+ * 이미 부르고 있어서, `reassign`까지 이월이라 하면 한 화면에서 한 단어가 두 가지를 뜻하게 된다.
+ * 재배정 대기는 화면이 이미 쓰는 이름 그대로 쓴다.
+ */
+function closeSummaryText(T) {
+  const done = ((T && T.done) || []).length;
+  const todo = ((T && T.todo) || []).length;
+  const wait = ((T && T.reassign) || []).length;   // 지난 날 Missed 확정 — 재배정 대기
+
+  let s;
+  if (done && todo) s = `오늘 ${done}개 했고 ${todo}개 남았어요.`;
+  else if (done) s = `오늘 ${done}개 했고 남은 것이 없어요.`;
+  else if (todo) s = `오늘 한 것이 없어요. 남은 것 ${todo}개.`;
+  else if (wait) s = `오늘 담긴 할 일이 없어요.`;
+  else s = `오늘 담긴 할 일이 없는 날이에요.`;   // ★ 여기서도 말한다
+
+  if (wait) s += ` 재배정 대기 ${wait}개.`;
+  return s;
+}
+
+/** ★ **요약이 죽어도 마감은 살아 있어야 한다** — 기록의 봉인이 우선이다(T-33 §금지 1행과 같은 자리).
+ *  그래서 이 한 줄은 `renderToday`의 흐름을 끊지 않는다: 여기서 삼키지 않으면
+ *  아래 마감 버튼 상태 배선이 통째로 안 돈다. */
+function renderCloseSummary() {
+  const el = $("#close-summary");
+  if (!el) return;
+  try {
+    el.textContent = closeSummaryText(S.today);
+  } catch (e) {
+    el.textContent = "";
+    console.warn("마감 요약 실패 — 마감은 그대로 동작한다", e);
+  }
 }
 
 /* Score 막대 — 최근 2주 + 오늘 칸 탭·드래그 */
