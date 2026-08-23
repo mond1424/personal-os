@@ -82,6 +82,11 @@ ok("Todo 2건 (A·C)", today.todo.length === 2);
 ok("대기 상시 행 n=1 · 1일째", today.waiting.n === 1 && today.waiting.max_age === 1);
 ok("활성 기간 칩에 mint", today.periods.some((p: any) => p.id === MINT));
 ok("daily 행 아직 없음 (건너뛴 날 = 행 없음)", today.daily === null);
+// T-45 ② — ①의 짝. **발동이 없어도 집계는 온다**: `null`(못 읽었다)이 아니라 0이다.
+// 여기가 그 자리인 이유: 이 지점의 `guard_events`는 아직 비어 있다(발동 기록은 [9]에서 시작한다).
+ok("② 발동이 0이면 집계가 0을 준다 (없는 게 아니라 0)",
+  !!today.guard && today.guard.fired === 0 && today.guard.last_at === null && today.guard.ignored === 0,
+  JSON.stringify(today.guard));
 
 ok("Log 추가 201", (await api("POST", "/api/logs", { text: "곡선 통일 결정." })).status === 201);
 ok("빈 Log 400", (await api("POST", "/api/logs", { text: "  " })).status === 400);
@@ -708,6 +713,43 @@ ok("유예 안쪽 발동은 NULL 유지", !!freshRow && freshRow.reaction === nu
 // 멱등 — 이미 ignored인 행을 두 번 건드려 409가 나면 안 된다
 ok("재실행 시 같은 행을 다시 확정하지 않음",
   (await api("POST", "/api/admin/auto-close")).json.guard_ignored === 0);
+
+// (7.7) 마감 요약이 읽는 개입 집계 (T-45) — `today`에 얹는다. 새 호출을 만들지 않는다.
+// **상대로 잰다**(before → after). 앞 블록들이 오늘 귀속으로 만든 행 수를 세어 두면
+// 그 수가 바뀔 때마다 이 검사가 거짓 실패한다 — 고정 날짜와 같은 종류의 함정이다.
+const g45 = async () => (await api("GET", "/api/today")).json.guard;
+const g45Before = await g45();
+// ③ 귀속일 경계 — **오늘 새벽 02:00은 어제 것이다.** 집계는 `on_date`를 그대로 쓰므로 안 들어온다.
+const g45Dawn = await api("POST", "/api/guard/events", {
+  cause: "watch:bedtime", level: 2, client_id: "t45-dawn", fired_at: `${D}T02:00:00+09:00`,
+});
+const g45AfterDawn = await g45();
+ok("③ 오늘 새벽 발동은 어제로 귀속 — 오늘 집계에 안 들어간다",
+  g45Dawn.json.on_date === D_1 && g45AfterDawn.fired === g45Before.fired,
+  `on_date ${g45Dawn.json.on_date} · ${g45Before.fired}→${g45AfterDawn.fired}`);
+// ① 지금 발동한 것은 오늘 것이다 — 수가 하나 늘고 `last_at`이 MAX를 따른다.
+const g45Now = await api("POST", "/api/guard/events", {
+  cause: "watch:bedtime", level: 2, client_id: "t45-now", fired_at: t0.now,
+});
+const g45AfterNow = await g45();
+const g45ExpectLast = g45Before.last_at && g45Before.last_at > t0.now ? g45Before.last_at : t0.now;
+ok("① 발동이 있으면 집계가 실제 수를 준다 · last_at은 마지막 발동",
+  g45Now.json.on_date === D && g45AfterNow.fired === g45Before.fired + 1
+  && g45AfterNow.last_at === g45ExpectLast,
+  `${g45Before.fired}→${g45AfterNow.fired} · last ${g45AfterNow.last_at}`);
+// ④ ignored도 센다 — 다만 **문장으로는 말하지 않는다**(유예 36시간이라 마감 시점엔 늘 0이고,
+//    말하는 순간 주어가 사용자가 된다). 집계 자체는 맞아야 관측이 가능하다.
+await api("POST", "/api/guard/events", {
+  cause: "watch:bedtime", level: 2, client_id: "t45-ign", fired_at: t0.now, reaction: "ignored",
+});
+const g45AfterIgn = await g45();
+ok("④ ignored도 집계된다 (응답에만 — 문장에는 안 쓴다)",
+  g45AfterIgn.ignored === g45AfterNow.ignored + 1 && g45AfterIgn.fired === g45AfterNow.fired + 1,
+  `ignored ${g45AfterNow.ignored}→${g45AfterIgn.ignored}`);
+// ⑤ 화면에 낼 수 없는 값은 **응답에 아예 안 싣는다** — level·ai_verdict는 사용자에게 뜻이 없다.
+ok("⑤ 집계는 fired·last_at·ignored 셋뿐 — level·ai_verdict를 안 보낸다",
+  JSON.stringify(Object.keys(g45AfterIgn).sort()) === JSON.stringify(["fired", "ignored", "last_at"]),
+  JSON.stringify(Object.keys(g45AfterIgn)));
 
 // (8) 감시 목록 — PC 확장 자리 (ADR-022)
 ok("watch app 추가 201",

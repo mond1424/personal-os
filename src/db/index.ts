@@ -746,6 +746,25 @@ export const guardEventsPendingOutcome = (env: Env) =>
           ORDER BY g.fired_at DESC LIMIT 20`)
     .all<GuardEventRow & { event_title: string | null; event_date: string | null }>();
 
+/**
+ * 그날 개입 집계 — 마감 요약이 읽는다 (T-45). **세는 것이지 새 칸을 만들지 않는다**(원칙 1).
+ *
+ * 귀속일은 `on_date`다: 기록 시점에 `attributionOfIso`가 확정한 값이라 **경계를 바꿔도 과거가
+ * 안 움직인다**(ADR-011). 여기서 `fired_at`을 다시 자르면 그 계약이 깨진다 — 어제 새벽 발동이
+ * 오늘 집계로 옮겨 온다.
+ *
+ * 집계 함수라 `GROUP BY`가 없고, 그래서 **빈 날에도 행이 하나 온다**: `fired 0` · `last_at NULL`.
+ * `SUM`은 빈 집합에서 NULL이므로 호출부가 0으로 접는다 — "없는 것"이 아니라 0이다.
+ *
+ * `level`·`ai_verdict`는 **고르지 않는다.** 사용자에게 Level 3/4는 뜻이 없고 `approve`·`deny`는
+ * T-38이 관측용으로 만든 것이다 — 화면에 낼 수 없는 값은 애초에 응답에 안 싣는다.
+ */
+export const guardDayTally = (env: Env, onDate: string) =>
+  q(env, `SELECT COUNT(*) AS fired, MAX(fired_at) AS last_at,
+                 SUM(CASE WHEN reaction = 'ignored' THEN 1 ELSE 0 END) AS ignored
+            FROM guard_events WHERE on_date = ?`)
+    .bind(onDate).first<{ fired: number; last_at: string | null; ignored: number | null }>();
+
 /** ADR-024 지출 통제 ③ — model_high 일일 상한 판정용. */
 export const guardAiCallsOn = (env: Env, onDate: string) =>
   q(env, "SELECT COUNT(*) AS n FROM guard_events WHERE on_date = ? AND ai_used = 1")

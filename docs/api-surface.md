@@ -14,7 +14,7 @@
 
 | 메서드 · 경로 | 요청 body | 응답(요약) | 담당 |
 |---|---|---|---|
-| GET `/api/today` | — | Today 조립(todo·done·reassign·waiting·overdue·events·periods·feelings·logs) | `daily.assembleToday` |
+| GET `/api/today` | — | Today 조립(todo·done·reassign·waiting·overdue·events·periods·feelings·logs·guard) · `guard = {fired, last_at, ignored}` 또는 집계 실패 시 `null` (T-45) | `daily.assembleToday` |
 | POST `/api/logs` | `{text, ts?}` | `{date}` (201) | `daily.addLog` |
 | PATCH `/api/logs/:id` | `{ts?, text?}` | `{id, date}` | `daily.editLog` |
 | PUT `/api/daily/feelings` | `{values: Record<string,number>}` | `{date, fields}` | `daily.setFeelings` |

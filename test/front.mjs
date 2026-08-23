@@ -160,12 +160,14 @@ ok("① 화면 한 줄이 실제 S.today 재료로 조립된다 (렌더 경로�
   txt("#close-summary"));
 
 // ② 빈 날 — **순수 함수만이 아니라 렌더 경로까지** 본다. 화면이 백지로 돌아가는 것이 이 티켓이 없앤 것이다.
-ev(`window.__t44Real = { done: S.today.done, todo: S.today.todo, reassign: S.today.reassign };
-    S.today.done = []; S.today.todo = []; S.today.reassign = [];
+// `guard`도 함께 비운다 — T-45의 조각이 붙으면 이 검사가 재는 것이 흐려진다(여기는 **T-44 문장**만 본다).
+ev(`window.__t44Real = { done: S.today.done, todo: S.today.todo, reassign: S.today.reassign, guard: S.today.guard };
+    S.today.done = []; S.today.todo = []; S.today.reassign = []; S.today.guard = null;
     renderCloseSummary();`);
 const t44EmptyLine = txt("#close-summary");
 ev(`S.today.done = window.__t44Real.done; S.today.todo = window.__t44Real.todo;
-    S.today.reassign = window.__t44Real.reassign; renderCloseSummary();`);
+    S.today.reassign = window.__t44Real.reassign; S.today.guard = window.__t44Real.guard;
+    renderCloseSummary();`);
 ok("② ★ 아무것도 없는 날에도 화면이 말한다 (침묵은 고장과 구별이 안 된다)",
   t44EmptyLine.length > 0 && t44EmptyLine === t44Say(0, 0, 0) && txt("#close-summary").length > 0,
   `빈 날 "${t44EmptyLine}" · 복구 "${txt("#close-summary")}"`);
@@ -181,6 +183,61 @@ const t44Fake = "오늘 3개 했고 2개 남았어요. 잘했어요 · 평소보
 ok("④ ★ ③의 스캐너가 합성 평가 문구를 실제로 잡는다",
   Array.isArray(t44Banned) && t44Banned.length > 0 && t44Scan(t44Fake).length >= 3,
   `목록 ${t44Banned.length}개 · 적중 [${t44Scan(t44Fake).join(",")}]`);
+
+// ── T-45 — 마감 요약이 Guard도 말한다 ────────────────────────────────────
+// **주어 스캐너의 목록은 `CLOSE_USER_SUBJECT_MARKS` 하나**이고 여기서 읽는다.
+// ⚠️ `CLOSE_JUDGING_WORDS`와 **별개다**: 그쪽은 어휘, 이쪽은 주어. 겹치지 않는 것을 ⑦이 센다.
+const t45Marks = ev("CLOSE_USER_SUBJECT_MARKS");
+const t45Scan = (s) => t45Marks.filter((m) => String(s).includes(m));
+// 날짜는 `S.today.date`에서 상대로 잡는다 — 고정 날짜는 **언젠가 반드시 현재가 된다**(함정 12).
+const t45At = (hhmm) => `${ev("S.today.date")}T${hhmm}:00+09:00`;
+const t45Say = (done, todo, guard) => ev(`closeSummaryText(${JSON.stringify({
+  done: Array.from({ length: done }, (_, i) => ({ id: `d${i}` })),
+  todo: Array.from({ length: todo }, (_, i) => ({ id: `t${i}` })),
+  reassign: [], guard,
+})})`);
+
+// ★ 기대값을 **함수를 거치지 않고** 적는다. `t44Say(3,2,0)`으로 잡으면 조각이 새는 변이에서
+//   기준선까지 같이 오염돼 **④가 죽고 ⑤가 산다** — 실제로 그렇게 나왔다(T-43 ①과 같은 자리).
+//   날짜가 아니라 문장이라 함정 12와 무관하다: T-44 ①이 이 문구를 따로 못 박고 있다.
+const t45Base = "오늘 3개 했고 2개 남았어요.";
+const t45Two = t45Say(3, 2, { fired: 2, last_at: t45At("02:10"), ignored: 0 });
+const t45One = t45Say(0, 0, { fired: 1, last_at: t45At("23:40"), ignored: 0 });
+// **자리와 재료를 본다 — 문구를 통째로 박지 않는다.** 주어만 바꾼 변이가 여기까지 죽이면
+// 어느 결함이 무엇을 죽였는지 못 읽는다(주어는 ⑥이 센다 · T-43·T-44에서 같은 자리를 고쳤다).
+ok("④ 개입이 있으면 T-44 문장 뒤에 조각이 붙는다 (앞이 아니다)",
+  t45Two.startsWith(`${t45Base} `) && t45Two.includes("새벽 2시") && t45Two.includes("두 번")
+  && t45One.startsWith("오늘 담긴 할 일이 없는 날이에요. ")
+  && t45One.includes("밤 11시") && t45One.includes("한 번"),
+  `${t45Two} / ${t45One}`);
+
+// ⑤ ★ ④의 짝. 셋 다 조각이 없어야 한다: 개입 0 · 집계 실패(null) · **옛 배포**(키 자체가 없음).
+const t45Zero = t45Say(3, 2, { fired: 0, last_at: null, ignored: 0 });
+const t45Null = t45Say(3, 2, null);
+const t45Old = ev(`closeSummaryText(${JSON.stringify({
+  done: [{ id: "d0" }, { id: "d1" }, { id: "d2" }], todo: [{ id: "t0" }, { id: "t1" }], reassign: [],
+})})`);
+ok("⑤ ★ 개입이 0이면 조각이 없다 — T-44 문장만 남는다 (없는 것을 말하지 않는다)",
+  t45Zero === t45Base && t45Null === t45Base && t45Old === t45Base,
+  `0 "${t45Zero}" · null "${t45Null}" · 옛배포 "${t45Old}"`);
+
+// ⑥ 주어가 시스템이다 — 갈래 전부 + 실제 화면 줄을 스캔한다.
+const t45Lines = [t45Two, t45One, t45Zero, t45Base,
+  t45Say(0, 2, { fired: 5, last_at: t45At("01:05"), ignored: 2 }),
+  t45Say(3, 0, { fired: 1, last_at: t45At("13:00"), ignored: 0 }),
+  t45Say(0, 0, { fired: 3, last_at: t45At("19:30"), ignored: 1 }),
+  txt("#close-summary")];
+const t45Hits = t45Lines.flatMap((s) => t45Scan(s).map((m) => `${m}@${s}`));
+ok("⑥ ★ 주어가 시스템이다 — 사용자를 서술하는 표현이 없다", t45Hits.length === 0, t45Hits.join(" / "));
+
+// ⑦ ★ ⑥의 스캐너가 살아 있는가. 평가어가 하나도 없는 문장들이라 ③의 목록으로는 안 잡힌다 —
+//    그것이 두 목록을 **합치면 안 되는** 이유이고, 여기서 그 분리를 함께 센다.
+const t45Fake = "어젯밤 늦게 주무셨네요. 새벽 2시까지 깨어 있었어요. 두 번은 답을 안 하셨어요.";
+const t45Overlap = t45Marks.filter((m) => t44Banned.includes(m));
+ok("⑦ ★ ⑥의 스캐너가 합성 사용자 서술을 잡는다 · 어휘 목록과 별개다",
+  t45Marks.length > 0 && t45Scan(t45Fake).length >= 3 && t45Overlap.length === 0
+  && t44Scan(t45Fake).length === 0,
+  `주어 적중 [${t45Scan(t45Fake).join(",")}] · 어휘 적중 [${t44Scan(t45Fake).join(",")}] · 겹침 [${t45Overlap.join(",")}]`);
 
 console.log("\n[Calendar]");
 w.switchTab("cal"); await sleep(1200);
@@ -1444,6 +1501,26 @@ ok("웹은 판정을 다시 하지 않는다 — 창 길이가 app.js에 없다 
 w.switchTab("today"); await sleep(900);
 await ev("renderCalendar()");
 const closeCalendarCalls = ev("window.__calendarCalls.length");
+
+// ⑧ (T-45) **집계가 던져도 T-44 문장과 마감 버튼이 살아 있다.**
+//    조각 하나가 사용자가 넣은 것까지 데려가면 안 된다 — 그래서 ⑤와 따로 센다.
+ev(`(() => { window.__t45Orig = guardFragment;
+             window.guardFragment = () => { throw new Error("t45 — 집계가 던진다"); }; })()`);
+$("#bchart").innerHTML = "";
+let t45RenderAlive = true;
+try { await w.refreshToday(); } catch { t45RenderAlive = false; }
+await sleep(200);
+const t45Line = txt("#close-summary");
+const t45BtnAlive = !$("#btn-close").disabled && $("#bchart").querySelectorAll(".bcol").length === 14;
+$("#btn-close").click(); await sleep(300);
+const t45Confirm = $("#confirm").classList.contains("on");
+$("#cf-no").click(); await sleep(200);
+ok("⑧ ★ 집계가 던져도 T-44 문장과 마감 버튼이 살아 있다",
+  t45RenderAlive && t45BtnAlive && t45Confirm
+  && t45Line.length > 0 && !t45Line.includes("알렸어요") && t45Line === ev("closeSummaryText(S.today)"),
+  `render ${t45RenderAlive} · btn ${t45BtnAlive} · 모달 ${t45Confirm} · 줄 "${t45Line}"`);
+ev(`window.guardFragment = window.__t45Orig;`);
+await w.refreshToday(); await sleep(200);
 
 // ⑤ (T-44) **요약이 던져도 마감은 끝까지 간다** — 기록의 봉인이 우선이다(T-33 §금지 1행과 같은 자리).
 //    확인 모달까지만 보면 "안 닫히는 마감"을 못 잡으므로 **실제 마감 경로에 태운다.**

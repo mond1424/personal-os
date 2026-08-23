@@ -9,7 +9,7 @@ const WAIT_LIMIT = 21; // 1.4 대기 최대 체류
 
 /** Today 탭 한 화면의 조인 조립 (7장) — 파생은 전부 여기서 계산, 저장 없음. */
 export async function assembleToday(env: Env, t: TimeCtx) {
-  const [todo, done, reassign, waiting, todayEvents, daily, feelings, logs, periods] = await Promise.all([
+  const [todo, done, reassign, waiting, todayEvents, daily, feelings, logs, periods, guardTally] = await Promise.all([
     db.todayTodo(env, t.d),
     db.todayDone(env, t.d),
     db.reassignQueue(env, t.d),
@@ -19,6 +19,10 @@ export async function assembleToday(env: Env, t: TimeCtx) {
     db.feelingsAt(env, t.d),
     db.logsAt(env, t.d),
     db.periodsAt(env, t.d), // 오늘을 포함하는 활성 기간 → 헤더 칩
+    // 마감 요약이 읽는 개입 집계 (T-45). **호출을 늘리지 않는다** — 화면이 이미 부르는 응답에 얹는다.
+    // ⚠️ 여기만 `.catch`가 붙는다: 집계는 **보조**이고, 그것이 죽었다고 Today 전체가 죽으면
+    //    마감 자체를 못 한다(§금지 8행). 실패는 `null`로 접고 화면이 조각을 뺀다.
+    db.guardDayTally(env, t.d).catch(() => null),
   ]);
   // 대기 일수 = 귀속일 기준 경과 + 1 ("n일째"). 경계 이전의 새벽 연장도 어긋나지 않는다.
   const waitRows = waiting.results
@@ -47,6 +51,17 @@ export async function assembleToday(env: Env, t: TimeCtx) {
     overdue, // 21일 초과 → 차단 팝업 대상 (최장 순)
     feelings: feelings.results,
     logs: logs.results,
+    /**
+     * 그날 Guard가 한 일 (T-45). **사용자 입력과 무관하게 매일 생기는 유일한 재료다.**
+     *
+     * `null`은 **집계를 못 읽었다**는 뜻이고 `fired: 0`은 **개입이 없었다**는 뜻이다 —
+     * 화면에서는 둘 다 침묵이지만(결정 ②) 응답에서는 갈라 둔다(T-43이 세운 자리).
+     * `ignored`는 싣되 **문장으로 말하지 않는다**: `finalizeIgnored`의 유예가 36시간이라
+     * 마감 시점엔 구조적으로 늘 0이고, 말하는 순간 주어가 사용자가 된다(결정 ①).
+     */
+    guard: guardTally
+      ? { fired: guardTally.fired, last_at: guardTally.last_at, ignored: guardTally.ignored ?? 0 }
+      : null,
   };
 }
 
