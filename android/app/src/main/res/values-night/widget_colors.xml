@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- android/app/src/main/res/values-night/widget_colors.xml — 어두운 쪽 (T-46).
+
+     `values/widget_colors.xml`의 **짝이다. 이름이 하나라도 빠지면 그 색만 밝은 값으로
+     남고**, 다크 모드에서 그 부분이 배경에 묻는다. 검사가 그 차집합을 센다.
+
+     값은 웹 셸의 다크 짝과 맞춘다 — `public/style.css`의 paper·ink 변수(다크 쪽). -->
+<resources>
+    <color name="widget_add_task_bg">#1A1713</color>
+    <color name="widget_add_task_ink">#EDE7DA</color>
+</resources>

@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- android/app/src/main/res/values/widget_colors.xml — 밝은 쪽 (T-46).
+
+     ★ **`values-night/widget_colors.xml`과 이름이 정확히 짝이어야 한다.**
+        한쪽에만 있는 이름은 그 모드에서 **없는 것이 아니라 밝은 쪽 값이 그대로 쓰인다** —
+        위젯이 아무 소리 없이 흰 배경에 흰 글자가 된다. 함정 5(다크 짝)의 안드로이드판이고
+        `test/front.mjs`가 **한쪽에만 있는 이름을 센다.**
+
+     값은 웹 셸과 맞춘다 — `public/style.css`의 paper·ink 변수.
+     ⚠️ XML 주석 안에는 하이픈 둘을 못 쓴다(aapt가 거부한다) — 그래서 변수 이름을 접두사 없이 적는다. -->
+<resources>
+    <color name="widget_add_task_bg">#FBFAF7</color>
+    <color name="widget_add_task_ink">#26221C</color>
+</resources>

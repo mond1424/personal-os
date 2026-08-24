@@ -1901,6 +1901,158 @@ await ev(`(async()=>{
   closeAll();
 })()`);
 
+// ── T-46 · ADR-041 — 홈 위젯 "+" → 딥링크 → 할 일 추가 입력창 ───────────────
+//
+// 위젯 자체는 jsdom이 못 본다(RemoteViews·Kotlin). 여기서 볼 수 있는 것은 **딥링크가
+// 도착한 뒤**이고, 그 앞은 스캐너와 §확인 절차가 나눠 진다 — 감추지 않고 나눠 적는다.
+console.log("\n[위젯 딥링크 — 찬 시작·더운 시작]");
+
+/** 셸을 새로 띄운다 — `Capacitor.Plugins.App`을 **스크립트 주입 전에** 심는다.
+ *  `boot()`가 그때 `globalThis.Capacitor`를 읽으므로 나중에 심으면 아무 배선도 안 걸린다. */
+const t46Boot = async (fakeApp) => {
+  const errs = [];
+  const vcx = new VirtualConsole();
+  vcx.on("jsdomError", (e) => errs.push(String(e.message)));
+  const domx = new JSDOM(html.replace(/<script src="[^"]+"><\/script>/g, ""), {
+    runScripts: "dangerously", pretendToBeVisual: true, virtualConsole: vcx, url: BASE + "/",
+  });
+  const wx = domx.window;
+  wx.fetch = (u, o) => fetch(u, o);
+  wx.HTMLElement.prototype.setPointerCapture = () => {};
+  wx.HTMLElement.prototype.scrollTo = () => {};
+  wx.Capacitor = { Plugins: { App: fakeApp } };
+  for (const code of [apiJs, appJs]) {
+    const s = wx.document.createElement("script");
+    s.textContent = code;
+    wx.document.body.appendChild(s);
+  }
+  wx.document.dispatchEvent(new wx.Event("DOMContentLoaded"));
+  const up = await until(() => { try { return !!wx.eval("S.today"); } catch { return false; } }, 20_000);
+  return { errs, up, $: (s) => wx.document.querySelector(s), heard: fakeApp.heard };
+};
+/** `@capacitor/app` 흉내. `heard`는 **무엇을 듣기로 했는지** 기록한다(더운 시작의 증거). */
+const t46App = (getLaunchUrl) => {
+  const heard = [];
+  return { heard, getLaunchUrl, addListener: (n) => { heard.push(n); return { remove() {} }; } };
+};
+
+// ① 위젯이 앱을 띄웠다 — 도착하면 입력창이 **이미** 열려 있다.
+const t46Cold = await t46Boot(t46App(async () => ({ url: "personalos://add-task" })));
+const t46ColdOpen = await until(() => t46Cold.$("#sh-add").classList.contains("on"), 5000);
+ok("① 위젯 딥링크로 뜨면 할 일 추가 입력창이 이미 열려 있다 (찬 시작)",
+  t46Cold.up && t46ColdOpen && t46Cold.$("#phone").dataset.tab === "today"
+  && !t46Cold.$("#boot").classList.contains("on"),
+  `up=${t46Cold.up} sheet=${t46ColdOpen} tab=${t46Cold.$("#phone").dataset.tab}`);
+// 같은 부팅에서 **더운 시작 리스너도 걸렸는가.** 찬 시작만 배선한 구현을 여기서 가른다.
+ok("같은 부팅에서 appUrlOpen 리스너도 걸렸다 — 절반만 배선하지 않았다",
+  (t46Cold.heard || []).includes("appUrlOpen"), JSON.stringify(t46Cold.heard));
+
+// ② ★ ①의 짝. 딥링크 없이 그냥 실행한 앱 — **Today가 그대로 뜨고 입력창은 안 열린다.**
+//    이게 없으면 *"딥링크가 없으면 흰 화면"* 인 구현도 ①을 통과한다.
+const t46Plain = await t46Boot(t46App(async () => undefined));
+await sleep(400);   // 늦게 열리는 것까지 본다 — 음성 판정이라 고정 대기가 필요하다
+ok("② ★ 딥링크가 없으면 Today가 그대로 뜬다 — 입력창을 열지 않는다",
+  t46Plain.up && !t46Plain.$("#boot").classList.contains("on")
+  && t46Plain.$("#phone").style.display !== "none"     // 셸이 살아 있는가 — '흰 화면'의 가장 흔한 모양
+  && /^\d+$/.test((t46Plain.$("#td-day").textContent || "").trim())
+  && t46Plain.$("#td-list").querySelectorAll(".trow").length >= 1
+  && !t46Plain.$("#sh-add").classList.contains("on")
+  && !t46Plain.$("#bk").classList.contains("on"),
+  `up=${t46Plain.up} day=${t46Plain.$("#td-day").textContent} `
+  + `phone=${t46Plain.$("#phone").style.display} sheet=${t46Plain.$("#sh-add").className}`);
+
+// ③ ★ ②의 짝. 딥링크 쪽이 **던져도** 앱은 뜬다 — 화면을 인질로 잡지 않는다.
+//    ①·②만 보면 *"딥링크가 죽으면 앱도 죽는 구현"* 이 둘 다 통과한다.
+//    두 갈래를 한꺼번에 본다: **여는 것**이 던질 때와 **묻는 것**(`getLaunchUrl`)이 던질 때.
+const t46Boom = await t46Boot(t46App(() => { throw new Error("getLaunchUrl 폭발"); }));
+const t46GuardRaw = await ev(`(async () => {
+  const orig = DEEPLINK_ACTIONS["add-task"];
+  DEEPLINK_ACTIONS["add-task"] = () => { throw new Error("여는 중 폭발"); };
+  const out = {};
+  try { out.open = await runDeepLink("personalos://add-task"); } catch (e) { out.open = "던졌다: " + e.message; }
+  try { out.ask  = await runDeepLink(() => { throw new Error("묻는 중 폭발"); }); } catch (e) { out.ask = "던졌다: " + e.message; }
+  DEEPLINK_ACTIONS["add-task"] = orig;
+  closeAll();
+  return JSON.stringify(out);
+})()`);
+const t46G = JSON.parse(t46GuardRaw);
+ok("③ ★ 딥링크 처리가 던져도 앱이 뜬다 — 여는 것도 묻는 것도 null로 끝난다",
+  t46G.open === null && t46G.ask === null
+  && t46Boom.up && !t46Boom.$("#boot").classList.contains("on")
+  && /^\d+$/.test((t46Boom.$("#td-day").textContent || "").trim()),
+  `${t46GuardRaw} / up=${t46Boom.up} day=${t46Boom.$("#td-day").textContent}`);
+
+// 표에 없는 것은 아무 일도 안 한다. **상속 키까지** 본다 — `in`으로 짰으면 `constructor`가 통과한다.
+const t46Known = ev(`JSON.stringify([
+  deepLinkAction("personalos://add-task"),
+  deepLinkAction("personalos://nope"),
+  deepLinkAction("personalos://constructor"),
+  deepLinkAction("https://personal-os.mai-pos.workers.dev/add-task"),
+  deepLinkAction(null),
+])`);
+ok("표에 없는 딥링크·다른 스킴은 아무것도 안 연다",
+  t46Known === JSON.stringify(["add-task", null, null, null, null]), t46Known);
+
+// ④ 찬 시작·더운 시작이 **둘 다** 배선돼 있다 — JS 한 쪽, Kotlin 한 쪽.
+//    ⚠️ 주석을 걷어내고 본다(smoke의 `ktCode`와 같은 자리): 배선을 `//`로 막는 것이
+//       검사를 지나가면, 배선을 끊는 가장 쉬운 방법이 초록이 된다.
+const t46Bare = (s) => s.split("\n").filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join("\n");
+const t46NoXml = (s) => s.replace(/<!--[\s\S]*?-->/g, " ");
+const T46_WARM = /addListener\s*\??\.?\s*\(\s*["']appUrlOpen["']/;   // 더운 시작
+const T46_COLD = /getLaunchUrl\s*\(/;                                // 찬 시작
+const t46AppBare = t46Bare(appJs);
+ok("④ 찬 시작·더운 시작이 둘 다 배선돼 있다 (JS)",
+  T46_WARM.test(t46AppBare) && T46_COLD.test(t46AppBare),
+  `warm=${T46_WARM.test(t46AppBare)} cold=${T46_COLD.test(t46AppBare)}`);
+
+const t46Kt = t46Bare(readFileSync(
+  join(here, "../android/app/src/main/java/dev/mond1424/personalos/widget/AddTaskWidget.kt"), "utf8"));
+const t46Manifest = t46NoXml(readFileSync(
+  join(here, "../android/app/src/main/AndroidManifest.xml"), "utf8"));
+ok("④ 위젯이 탭을 딥링크로 잇는다 (Kotlin — RemoteViews에 PendingIntent를 건다)",
+  /setOnClickPendingIntent\s*\(/.test(t46Kt) && /PendingIntent\.getActivity\s*\(/.test(t46Kt)
+  && /Intent\.ACTION_VIEW/.test(t46Kt) && /MainActivity::class\.java/.test(t46Kt),
+  `click=${/setOnClickPendingIntent\s*\(/.test(t46Kt)} pi=${/PendingIntent\.getActivity\s*\(/.test(t46Kt)}`);
+ok("④ Manifest가 위젯 receiver와 딥링크 스킴을 선언한다",
+  /android:name="\.widget\.AddTaskWidget"/.test(t46Manifest)
+  && /android\.appwidget\.action\.APPWIDGET_UPDATE/.test(t46Manifest)
+  && /android:resource="@xml\/widget_add_task_info"/.test(t46Manifest)
+  && /android:scheme="personalos"/.test(t46Manifest));
+
+// ★ **대장이 둘이면 갈라진다.** Kotlin이 던지는 URL을 뽑아 **살아 있는 `deepLinkAction`에 먹인다** —
+//   한쪽에서 스킴·경로를 고치면 여기서 죽는다. 두 문자열을 각자 정규식으로 보면 안 잡히는 자리다.
+const t46KtUrl = (/DEEP_LINK\s*=\s*"([^"]+)"/.exec(t46Kt) || [])[1];
+ok("★ Kotlin이 던지는 URL을 웹이 실제로 해석한다 (스킴·경로가 갈라지지 않았다)",
+  ev(`deepLinkAction(${JSON.stringify(t46KtUrl || "")})`) === "add-task", String(t46KtUrl));
+
+// ⑤ ★ ④의 짝 — **스캐너가 살아 있는가.** 스캐너가 눈멀면 ④는 배선과 무관하게 초록이 되고,
+//    "배선이 끊겼다"인지 "정규식이 낡았다"인지 구별이 안 된다. 합성 줄로 가른다 —
+//    **주석뿐이면 '안 배선됨'이어야 한다.**
+const t46Fake = t46Bare([
+  '  // capApp.addListener?.("appUrlOpen", (d) => runDeepLink(d && d.url));',
+  "  // runDeepLink(() => capApp.getLaunchUrl());",
+].join("\n"));
+ok("⑤ ★ 스캐너가 주석을 걷어낸다 — 주석뿐이면 '안 배선됨'이다",
+  !T46_WARM.test(t46Fake) && !T46_COLD.test(t46Fake)
+  && T46_WARM.test('capApp.addListener?.("appUrlOpen", f)') && T46_COLD.test("capApp.getLaunchUrl()")
+  && !T46_WARM.test('capApp.addListener?.("backButton", f)'),
+  `fake=${JSON.stringify(t46Fake)}`);
+
+// ⑥ 다크 짝 — **없는 것을 센다.** 한쪽에만 있는 이름은 그 모드에서 반대쪽 값이 그대로 쓰여
+//    아무 소리 없이 배경과 같은 색이 된다(함정 5의 안드로이드판).
+const t46Colors = (p) => new Set(
+  [...readFileSync(join(here, p), "utf8").matchAll(/<color\s+name="([^"]+)"/g)].map((m) => m[1]));
+const t46Light = t46Colors("../android/app/src/main/res/values/widget_colors.xml");
+const t46Night = t46Colors("../android/app/src/main/res/values-night/widget_colors.xml");
+const t46Orphan = [...t46Light].filter((n) => !t46Night.has(n))
+  .concat([...t46Night].filter((n) => !t46Light.has(n)));
+const t46Layout = readFileSync(join(here, "../android/app/src/main/res/layout/widget_add_task.xml"), "utf8");
+ok("⑥ values-night 색이 짝으로 있다 — 한쪽에만 있는 이름이 0이고, 레이아웃이 그 이름만 쓴다",
+  t46Light.size >= 2 && t46Orphan.length === 0
+  && [...t46Light].every((n) => new RegExp(`@color/${n}\\b`).test(t46Layout))
+  && !/(?:textColor|background)="#/.test(t46NoXml(t46Layout)),
+  `light=${[...t46Light]} night=${[...t46Night]} orphan=${t46Orphan}`);
+
 console.log("\n[부팅 · 연결 실패 복구]");
 ok("로드 후 부팅 오버레이 닫힘", !$("#boot").classList.contains("on"));
 

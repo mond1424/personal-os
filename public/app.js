@@ -350,6 +350,84 @@ function closeAll() {
   syncOverlay();
 }
 
+/* ── 위젯 딥링크 (T-46 · ADR-041) ──────────────────────────
+ *
+ *   홈 위젯 "+"  →  VIEW intent `personalos://add-task`  →  MainActivity  →  여기
+ *
+ * **판단을 리스너 밖에 둔다.** jsdom엔 Capacitor가 없어서 판단을 리스너 안에 넣으면
+ * 검사가 통째로 0이 된다 — T-33이 고치고 T-34가 다시 쓴 그 자리다.
+ *
+ * ★ **화면을 인질로 잡지 않는다.** 딥링크가 없어도, 못 읽어도, 열다가 던져도
+ *   Today가 그냥 뜬다. 위젯을 눌렀는데 입력창이 안 뜨면 아쉬운 것이지만
+ *   **앱이 안 뜨면 그건 더 나쁘다.**
+ */
+
+/** 스킴 하나만 받는다. Manifest의 `<data android:scheme="personalos" />`와 짝이다. */
+const DEEPLINK_SCHEME = "personalos:";
+
+/**
+ * 딥링크가 여는 것들. **여기 없는 경로는 아무 일도 안 한다.**
+ *
+ * 무엇을 여는지의 대장은 여기 하나다 — Manifest에 host를 안 박은 이유이기도 하다.
+ * 다음 딥링크는 이 표에 줄을 하나 더하면 되고 **APK를 다시 깔 일이 없다.**
+ */
+const DEEPLINK_ACTIONS = {
+  // 위젯 "+" — 할 일 추가 입력창이 **이미 열린 채로** 도착한다(탭 한 번. 찾아가지 않는다).
+  "add-task": () => {
+    switchTab("today", false);
+    openSheet("sh-add");
+    const el = $("#add-title");
+    if (el) { el.value = ""; el.focus(); }
+  },
+};
+
+/** URL → 무엇을 열지. 딥링크가 아니거나 모르는 경로면 `null`. */
+function deepLinkAction(url) {
+  if (typeof url !== "string") return null;
+  const m = /^([a-z][a-z0-9+.\-]*:)\/\/([^/?#]+)/i.exec(url.trim());
+  if (!m || m[1].toLowerCase() !== DEEPLINK_SCHEME) return null;
+  const name = decodeURIComponent(m[2]).toLowerCase();
+  // `hasOwnProperty`로 본다 — `in`이면 `constructor`·`toString` 같은 상속 키가 통과한다.
+  return Object.prototype.hasOwnProperty.call(DEEPLINK_ACTIONS, name) ? name : null;
+}
+
+/**
+ * 딥링크를 태운다. **어떤 경우에도 던지지 않는다.**
+ *
+ * `src`는 URL 문자열이거나 **URL을 주는 함수**다. 찬 시작은 플러그인에 물어봐야 알고
+ * **묻는 것 자체가 던질 수 있어서** 그 호출까지 이 `try` 안에 들어와야 한다 —
+ * 밖에서 부르면 이 방어가 반쪽이 되고, 부팅이 통째로 죽는 경로가 하나 남는다.
+ *
+ * @returns 무엇을 열었는지. **`null`이면 아무것도 안 했다 — Today가 그대로 뜬다.**
+ */
+async function runDeepLink(src) {
+  try {
+    const url = typeof src === "function" ? ((await src()) || {}).url : src;
+    const action = deepLinkAction(url);
+    if (!action) return null;
+    DEEPLINK_ACTIONS[action]();
+    return action;
+  } catch (e) {
+    console.warn("[deeplink] 처리 실패 — 앱은 그대로 연다:", e);
+    return null;
+  }
+}
+
+/**
+ * 찬 시작·더운 시작 **둘 다** 잇는다.
+ *
+ * ⚠️ **하나만 하면 절반이 조용히 안 된다.** 앱이 떠 있을 때만 되거나, 꺼져 있을 때만
+ *    된다 — 어느 쪽이든 사용자는 "가끔 안 되는 위젯"으로 겪는다.
+ */
+function bindDeepLink(capApp) {
+  if (!capApp) return;                      // 브라우저·PWA — 네이티브 셸이 없다
+  // 더운 시작 — 앱이 떠 있는 채로 눌렀다. Capacitor가 `onNewIntent`를 이 이벤트로 준다.
+  capApp.addListener?.("appUrlOpen", (d) => runDeepLink(d && d.url));
+  // 찬 시작 — 앱이 꺼져 있었으면 이벤트가 **리스너를 달기 전에 이미 지나갔다.**
+  // 그래서 앱을 띄운 URL을 직접 묻는다.
+  runDeepLink(() => capApp.getLaunchUrl());
+}
+
 /* ── Today ─────────────────────────────────────────────── */
 async function refreshToday() {
   S.today = await Api.today();
@@ -3374,6 +3452,11 @@ async function boot() {
   bindForegroundRefresh();
 
   await loadData();
+
+  // 위젯 딥링크 (T-46). **`loadData()` 뒤여야 한다** — 앞에 두면 아래 `switchTab`·`loadTab`이
+  // 방금 연 시트를 덮고 사용자는 "가끔 안 열리는 위젯"으로 겪는다.
+  // `loadData()`는 안에서 스스로 catch하므로 연결이 실패해도 여기까지는 온다.
+  bindDeepLink(capApp);
 
   // 데이터가 뜬 뒤에 — 네이티브 예약은 화면을 기다리게 할 이유가 없다.
   syncGuardNative();

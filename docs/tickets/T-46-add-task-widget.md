@@ -150,12 +150,81 @@ adb -s <폰IP>:5555 install -r android\app\build\outputs\apk\release\app-release
 ```
 티켓: T-46
 바꾼 파일:
-기준선: typecheck · smoke 359(변화 없음) · front 316 → ? · verify exit 0
-       Kotlin assembleRelease · cap sync
-딥링크 스킴·경로:
-찬 시작 / 더운 시작을 각각 어디서 받았나:
-딥링크 실패 시 무엇이 뜨나 (실제로 확인했는가):
-values-night 색을 어떻게 짝지었나:
-변이 넷이 각각 2·3·4·5만 죽였는가:
-⚠️ Codex 에 위임했는가 · 무엇을 직접 했는가:
+  android/app/src/main/java/dev/mond1424/personalos/widget/AddTaskWidget.kt   (신규)
+  android/app/src/main/res/xml/widget_add_task_info.xml                        (신규)
+  android/app/src/main/res/layout/widget_add_task.xml                          (신규)
+  android/app/src/main/res/values/widget_colors.xml                            (신규)
+  android/app/src/main/res/values-night/widget_colors.xml                      (신규 · 이 리포 첫 values-night)
+  android/app/src/main/res/values/strings.xml                                  (문자열 3)
+  android/app/src/main/AndroidManifest.xml                                     (receiver + VIEW intent-filter)
+  public/app.js                                                                (딥링크 4개 · boot 배선 1줄)
+  test/front.mjs                                                               (검사 11)
+기준선: typecheck 통과 · smoke 359(변화 없음) · front 316 → 327 · 실패 0 · verify exit 0
+       Kotlin assembleRelease BUILD SUCCESSFUL (서명 SHA-256 검증 통과) · npx cap sync android 성공
 ```
+
+**딥링크 스킴·경로** — `personalos://add-task`.
+Capacitor의 `custom_url_scheme`(`dev.mond1424.personalos`)을 쓰지 않았다. 그건 플러그인 콜백용이고,
+**위젯이 던지는 것과 섞이면 나중에 무엇이 무엇을 열었는지 못 가린다.**
+Manifest의 `<data>`에는 **스킴만** 적고 host를 안 적었다 — 무엇을 여는지의 대장은
+`app.js`의 `DEEPLINK_ACTIONS` 하나이고, 그래야 **다음 딥링크에 APK를 다시 깔 일이 없다.**
+
+**찬 시작 / 더운 시작** — 둘 다 `bindDeepLink(capApp)` 한 함수 안이다(`app.js`).
+- 더운 시작: `capApp.addListener("appUrlOpen", …)` — Capacitor가 `MainActivity.onNewIntent`를 이 이벤트로 준다.
+  `MainActivity`가 `singleTask`라 새 인스턴스가 안 뜬다.
+- 찬 시작: `runDeepLink(() => capApp.getLaunchUrl())` — 앱이 꺼져 있었으면 **리스너를 달기 전에
+  이벤트가 이미 지나갔다.** Capacitor는 그 URL을 `Bridge.intentUri`에 잡아 두고 이걸로 준다.
+- 호출 자리는 **`await loadData()` 뒤**다. 앞에 두면 그 뒤의 `switchTab`·`loadTab`이 방금 연 시트를
+  덮어서 *"가끔 안 열리는 위젯"* 이 된다.
+
+**딥링크 실패 시 무엇이 뜨나** — **Today가 그냥 뜬다.** 가드는 `runDeepLink`의 `try/catch` **하나**다.
+찬 시작의 `getLaunchUrl()` 호출까지 그 안에 들어가도록 **URL 대신 함수를 받게** 만들었다 —
+밖에서 부르면 부팅이 통째로 죽는 경로가 하나 남는다.
+확인: 검사 ③이 `getLaunchUrl`이 던지는 셸을 **실제로 새로 띄워** Today가 뜨는 것을 보고,
+같은 검사가 *여는 것*이 던질 때와 *묻는 것*이 던질 때 둘 다 `null`로 끝나는 것을 본다.
+
+**values-night 색** — `values/widget_colors.xml` ↔ `values-night/widget_colors.xml`의 **이름을 짝지었다**
+(`widget_add_task_bg`·`widget_add_task_ink`, 값은 `style.css`의 paper·ink와 그 다크 짝).
+검사 ⑥은 **없는 것을 센다**: 한쪽에만 있는 이름의 개수가 0인지, 그리고 레이아웃이 색 리터럴(`#…`)을
+안 쓰는지. APK에서도 확인했다 — `aapt2 dump resources`가 `() #fffbfaf7` / `(night) #ff1a1713`을 함께 보고한다.
+
+**변이 넷** (각각 `npm run front` 실측):
+
+| 변이 | 결과 |
+|---|---|
+| 딥링크 없을 때 Today를 안 그린다(`if (!action)`에서 셸을 숨김) | **326/1 — ②만** |
+| 딥링크 처리에서 `try/catch`를 뗀다 | 325/2 — **③** + `콘솔 오류 없음` |
+| 더운 시작 리스너를 주석 처리한다 | 325/2 — **④(JS)** + `같은 부팅에서 appUrlOpen 리스너도 걸렸다` |
+| 스캐너를 눈멀게 한다(`t46Bare = s => s`) | **326/1 — ④는 초록 · ⑤만** |
+
+둘째·셋째가 하나가 아니라 둘을 죽인 것은 **검사가 약해서가 아니라 짝이 하나 더 있어서**다:
+`try/catch`를 떼면 삼킨 예외가 처리되지 않은 거절로 새어 러너의 `콘솔 오류 없음`에도 잡히고,
+더운 시작을 주석 처리하면 **스캐너(정적)와 실제 부팅(동적)이 함께** 빨간불이 된다.
+스캐너만 있는 것보다 나은 상태라 그대로 뒀다.
+
+**⚠️ Codex 위임** — **하지 않았다. 전부 직접 했다.**
+Manifest·딥링크 배선이 위임 금지였고 나머지(위젯 Provider·레이아웃·색·검사)가 그 배선과
+같은 짝이라, 갈라서 넘기면 경계가 `AndroidManifest.xml` 한 파일 안을 지나간다.
+
+### 티켓 범위 밖 / 티켓과 다르게 한 것
+
+- **`res/values/strings.xml`에 문자열 3개**를 넣었다(범위표에 `values*/`가 있어 그 안이지만
+  기존 파일이라 적어 둔다). 위젯 라벨·글리프·설명이고 리터럴을 레이아웃에 박지 않기 위해서다.
+- **`res/drawable/`을 안 만들었다.** "아이콘"을 벡터 대신 **`+` 글리프 TextView**로 했다 —
+  드로어블 두 개(아이콘·둥근 배경)를 범위 밖에 만들지 않으려는 선택이고, Android 12+는
+  위젯을 launcher가 알아서 둥글게 자른다.
+- **`receiver`를 `exported="true"`로 뒀다.** `APPWIDGET_UPDATE`는 system_server가 보내는 것이라
+  보내는 uid가 다르다. `false`면 `onUpdate`가 안 와서 위젯이 `initialLayout` 그대로 뜨고
+  **눌러도 아무 일이 없다** — 이 티켓이 답하려는 질문이 통째로 무의미해지는 실패라 걸지 않았다.
+- **`BROWSABLE`을 안 넣었다.** 넣으면 아무 웹페이지나 이 앱을 열 수 있다.
+  `DEFAULT`만으로 §확인 절차의 `adb ... am start`는 그대로 된다.
+- **아직 못 본 것**: 위젯이 홈 목록에 뜨는지 · 실제 탭 · 다크에서 보이는지.
+  jsdom은 RemoteViews를 못 본다 — **판정은 아래 §확인 절차다.**
+
+### 물린 것 두 개 (다음에 같은 자리에서 죽지 않도록)
+
+- **XML 주석 안에 하이픈 둘(`--`)을 못 쓴다.** `--paper` 같은 CSS 변수명을 주석에 적었다가
+  `mergeReleaseResources`가 거부했다. 접두사를 뺀 이름으로 적었다.
+- **Kotlin 블록 주석은 중첩된다.** KDoc 안에 `/api/widget/` + `*`를 적으니 그 자리에서
+  주석이 새로 열려 **파일 끝까지 안 닫혔다**(`Syntax error: Unclosed comment`).
+  두 함정 모두 `npm run verify`가 못 잡는다 — **`assembleRelease`만이 잡는다.**

@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- android/app/src/main/res/layout/widget_add_task.xml
+     홈 1×1 "할 일 추가" 위젯 (T-46 · ADR-041).
+
+     ⚠️ RemoteViews다 — 여기서 쓸 수 있는 것은 제한된 뷰뿐이고 `EditText`는 없다.
+        위젯에서 바로 입력받을 수 없다는 것이 ADR-041이 "버튼 하나"로 시작한 이유 중 하나다.
+
+     ⚠️ 색은 전부 `@color/…`다. 리터럴을 박으면 `values-night/`가 일을 안 해서
+        다크 모드에서 글자가 배경에 묻는다 — 함정 5(색은 변수로)의 안드로이드판이다.
+
+     ★ 루트에 id가 있어야 한다. `setOnClickPendingIntent`가 그것을 잡는다 —
+        id가 없으면 위젯 전체가 아니라 아무것도 안 눌린다. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_add_task_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:gravity="center"
+    android:padding="4dp"
+    android:background="@color/widget_add_task_bg"
+    android:contentDescription="@string/widget_add_task_label">
+
+    <TextView
+        android:id="@+id/widget_add_task_glyph"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="@string/widget_add_task_glyph"
+        android:textColor="@color/widget_add_task_ink"
+        android:textSize="30sp"
+        android:includeFontPadding="false" />
+
+    <TextView
+        android:id="@+id/widget_add_task_label"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="3dp"
+        android:text="@string/widget_add_task_label"
+        android:textColor="@color/widget_add_task_ink"
+        android:textSize="11sp"
+        android:maxLines="1" />
+</LinearLayout>
