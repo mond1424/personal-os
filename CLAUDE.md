@@ -113,7 +113,7 @@ npm run deploy
 3. **jsdom 제스처는 좌표를 `MouseEvent` 생성자로** — 나중에 붙이면 `dx=NaN`→'세로' 오판→검사 거짓 통과.
 4. **`boot()` 중복 실행 가드(`booted`)** — DOMContentLoaded 두 번이면 스와이프 한 번에 탭 두 칸. 지우지 말 것.
 5. **색은 CSS 변수만** — 다크 대응은 항상 짝(`[data-theme="dark"]` + `@media prefers-color-scheme:dark`).
-6. **마감된 날은 트리거가 동결** — logs·feelings·schedule_entries·daily 수정/삭제 불가(일정은 추가만). 프론트는 `day_status`로 판단, 추측하면 409.
+6. **마감된 날은 트리거가 동결** — logs·feelings·schedule_entries·daily 수정/삭제 불가. **추가까지 막힌다** — `logs`·`feelings`·`schedule_entries` 셋 다 `*_frozen_ins`가 있다. 마감된 날에도 **추가되는 것은 `events`(캘린더 일정)와 memo 둘뿐**이고, 그 둘엔 `_ins` 트리거가 아예 없다 — 여기 '일정'은 `events`이지 `schedule_entries`(task의 예정)가 아니다. **T-47이 이 한 글자에 물렸다**(검사 픽스처가 마감된 날에 예정을 넣으려다 죽었다). 프론트는 `day_status`로 판단, 추측하면 409.
 7. **`wait_extensions` FK + `0005`** — 삭제는 '마감 기록 있을 때만' 차단. task 삭제 순서 = 연장이력→항목→task.
 8. **`e2e.mjs`는 격리 임시 D1** — 실 `.wrangler/state` 불변. **`spawnSync ETIMEDOUT`이 뜨면 진짜 hang이다** — `front.mjs`가 성공 경로에서 종료하지 않아 안전망 SIGKILL이 유일한 종료 수단이던 결함을 T-06이 없앴다(그전엔 193건 전부 통과해도 `exit 1`이었다). 러너의 모든 대기에 상한이 있으므로 **실패는 어디서 막혔는지 이름을 말한다.**
 9. **압축 해제·작업은 `worker\` 바로 아래** — 한 겹 더 들어가면 `No migrations to apply`.

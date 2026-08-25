@@ -79,7 +79,13 @@ Claude Code는 ADR급 판단을 스스로 확정하지 않고 위로 올린다.
 | `docs/tickets/*.md` | Cowork 발행 · Claude Code 분해 | Codex는 읽기만 |
 | `CLAUDE.md` · `AGENTS.md` · 이 문서 | Cowork | 제안만 |
 | `src/` · `public/` · `android/` · `test/` · `migrations/` | **티켓 락 보유자** | 손대지 않는다 |
+| `README0722.md` | Claude Code | 제안만 |
 | git (commit · push) | Claude Code | 하지 않는다 |
+
+⚠️ **`CLAUDE.md` §함정과 `README0722.md` §함정은 한 벌인데 주인이 다르다.**
+요약이 원본을 가리킨다고 적혀 있으므로 **한쪽만 고치면 그 순간 문서가 거짓말을 한다** —
+T-47이 실제로 그 상태를 만들었다(요약은 맞고 원본이 틀린 하루).
+**한쪽을 고쳐야 하면 다른 쪽 주인에게 올린다.** 자기 것만 고치고 끝내지 않는다.
 
 **"손대지 않는다"는 능력이 아니라 규율이다.** 위층은 아래층의 파일을 고칠 수 있다 —
 고치지 않기로 한 것이다. 한 번 예외를 두면 락이 무의미해지고,

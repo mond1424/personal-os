@@ -117,7 +117,7 @@ npm run deploy
 3. **jsdom 제스처 검사는 좌표를 `MouseEvent` 생성자로 실어야 한다.** 나중에 `clientX`를 붙이면 `undefined`로 남아 `dx`가 `NaN`이 되고, 어떤 제스처든 '세로'로 판정돼 **검사가 거짓 통과**한다.
 4. **`boot()`에 중복 실행 가드(`booted`)가 있다.** `DOMContentLoaded`가 두 번 오는 환경에서 바인딩이 두 겹 걸려 스와이프 한 번에 탭이 두 칸 넘어간다. 지우지 말 것.
 5. **색은 CSS 변수만.** 다크 대응이 항상 짝으로 필요하다 (`:root[data-theme="dark"]` + `@media (prefers-color-scheme:dark)` 둘 다).
-6. **마감된 날은 트리거가 동결한다.** `daily.status='closed'`면 그 날의 logs·feelings·schedule_entries·daily는 수정·삭제 불가(일정은 **추가만** 가능·수정/삭제 불가). 프론트는 서버가 주는 `day_status`로 미리 판단하고, 추측하면 409로 드러난다.
+6. **마감된 날은 트리거가 동결한다.** `daily.status='closed'`면 그 날의 logs·feelings·schedule_entries·daily는 수정·삭제 불가이고, **추가까지 막힌다** — `logs`·`feelings`·`schedule_entries` 셋 다 `*_frozen_ins`를 가진다. 마감된 날에도 **추가되는 것은 `events`(캘린더 일정)와 memo 둘뿐**이고, 그 둘엔 `_ins` 트리거가 아예 없다. 여기 '일정'은 `events`이지 `schedule_entries`(task의 예정)가 아니다 — **T-47이 이 한 글자에 물렸다**(검사 픽스처가 마감된 날에 예정을 넣으려다 죽었다). 프론트는 서버가 주는 `day_status`로 미리 판단하고, 추측하면 409로 드러난다.
 7. **`wait_extensions`는 `tasks(id)`를 FK로 참조한다.** `0005`가 삭제 잠금을 '마감 기록이 있을 때'로 좁혔다. task 삭제는 **연장 이력 → 항목 → task 순서**로 지운다.
 8. **`e2e.mjs`는 임시 D1로 격리 실행**한다. 실 `.wrangler/state`를 안 건드린다. **`spawnSync ETIMEDOUT`이 뜨면 진짜 hang이다 — 무시하지 않는다.** 전엔 "무해한 정리 단계 경고"라고 적혀 있었는데, 실제로는 `front.mjs`가 성공 경로에서 종료하지 않아(rAF 타이머가 남는다) 안전망 SIGKILL이 **유일한 종료 수단**이던 결함이었다. 193건이 전부 통과해도 `npm run front`가 `exit 1`이었고, 종료 코드를 믿는 셸·에이전트에는 매번 실패로 보였다. T-06이 `process.exit(0)`으로 없앴다. 이제 러너의 모든 대기(마이그레이션·헬스·시드·front)에 상한이 있어 **실패는 어디서 막혔는지 이름을 말한다.** (front는 실서버+jsdom이라 간헐 플레이크가 있을 수 있다 — 재실행으로 확인.)
 9. **압축 해제·작업은 `worker\` 바로 아래.** 한 겹 더 들어가면 마이그레이션이 `No migrations to apply`로 조용히 넘어간다.
