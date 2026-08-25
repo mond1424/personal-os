@@ -1551,6 +1551,9 @@ function startPick(p) {
   $("#pick-note").textContent = p.mode === "defer"
     ? (p.far ? "(멀리 — 2주 상한 없음)" : "(2주 이내)")
     : "(앞날 아무 날짜나)";
+  // ★ 미루기에만 출구를 둔다 (T-47 ②). 대기 → 첫 일정(`schedule`)은 미룬 것이 아니라
+  //   처음 잡는 것이라 대안이 다르다 — 거기서 "이 일 보기"는 되돌릴 것이 없다.
+  $("#pick-open").style.display = p.mode === "defer" ? "" : "none";
   $("#pick-banner").classList.add("on");
   applyPickDim();
 }
@@ -1567,6 +1570,20 @@ function exitPick() {
   applyPickDim();
 }
 function cancelPick() { const o = S.pick.origin; exitPick(); switchTab(o); }
+
+/* ★ 미루기 말고도 나갈 문 (T-47 ② · ADR-042) — 고르던 그 일의 상세 시트를 연다.
+ * **pick을 끝내지 않는다.** `openTask`는 `closeAll()`을 부르지 않고 시트만 올리므로
+ * 배너가 그대로 살아 있고, 시트를 닫으면(뒤로가기 ①) 캘린더로 돌아와 계속 고를 수 있다 —
+ * *"역시 미루자"* 가 한 단계도 안 는다. */
+function openPickTask() { if (S.pick) openTask(S.pick.id); }
+
+/* ★ 대상이 사라지면 날짜 선택 모드를 푼다 (T-47 ③ — 이 티켓의 핵심).
+ * 시트에서 완료·취소·삭제가 성공했는데 `S.pick`이 남으면 **다음 탭이 없는 일을 미룬다**:
+ * 404가 조용히 뜨거나, 더 나쁘게는 엉뚱한 일이 옮겨간다. ②를 만들면서 이걸 빼면
+ * 버그를 하나 새로 만드는 것이다.
+ * **id로 가른다** — 고르는 중인 것과 다른 일을 처리했다면 그 pick은 여전히 유효하다.
+ * `cancelPick`을 쓰는 이유: 대상이 없어진 캘린더에 남기지 않고 **떠나온 탭으로 돌려보낸다**. */
+function releasePick(id) { if (S.pick && S.pick.id === id) cancelPick(); }
 
 function assignDate(k) {
   const p = S.pick;
@@ -1655,7 +1672,7 @@ async function renderWorks() {
   $("#defer-list").innerHTML = deferring.map((r) =>
     `<button class="trow" style="width:100%" onclick="openTask('${r.id}')"><span class="tk"></span>
       <span class="tbody"><span class="tt">${esc(r.title)}<span class="warn">!</span></span>
-        <span class="tmeta">${r.defer_count}회 이월 · 첫 예정 ${md(r.first_date)}</span></span></button>`).join("") ||
+        <span class="tmeta">${r.defer_count > 0 ? `${r.defer_count}회 이월` : "지난 예정"} · 첫 예정 ${md(r.first_date)}</span></span></button>`).join("") ||
     `<div class="trow"><span class="tbody"><span class="tmeta">이월 중인 task가 없어요</span></span></div>`;
 
   // 기간별
@@ -1818,6 +1835,7 @@ function bindTaskSheet() {
       try {
         await Api.deleteTask(t.id);
         closeAll();
+        releasePick(t.id);          // 대상이 사라졌다 — 날짜 선택 모드를 남기지 않는다 (T-47 ③)
         toast("삭제했어요", "warn");
         syncAll();
         if ($("#phone").dataset.tab === "cal") renderCalendar();
@@ -1835,6 +1853,7 @@ function bindTaskSheet() {
 async function execCancel(t, reason) {
   const res = await Api.cancelTask(t.id, reason);
   closeAll();
+  releasePick(t.id);            // 대상이 사라졌다 — 날짜 선택 모드를 남기지 않는다 (T-47 ③)
   const kn = (res.kept_dates || []).length;
   toast(kn ? `취소 — 마감된 날 기록 ${kn}일은 그대로 남아요` : "취소했어요", "warn");
   syncAll();
@@ -1845,7 +1864,8 @@ function setRateOn(id, date, k, cur) {
   run(async () => {
     const rate = rateOf(k, cur);
     // 100에 닿으면 완료 — 시트를 닫고 완료 상태로 넘긴다 (완료 버튼과 같은 결과)
-    if (rate === 100) { await Api.complete(id); toast("완료", "ok"); closeAll(); }
+    // 다이얼이 100에 닿는 것도 완료다 — 완료 버튼과 같은 결과라면 해제도 같아야 한다 (T-47 ③)
+    if (rate === 100) { await Api.complete(id); toast("완료", "ok"); closeAll(); releasePick(id); }
     else { await Api.setRate(id, date, rate); await openTask(id); }
     syncAll();
     if ($("#phone").dataset.tab === "cal") renderCalendar();
@@ -1855,6 +1875,7 @@ function completeFromSheet(id) {
   run(async () => {
     await Api.complete(id);
     closeAll();
+    releasePick(id);            // 대상이 사라졌다 — 날짜 선택 모드를 남기지 않는다 (T-47 ③)
     toast("완료", "ok");
     syncAll();
     if ($("#phone").dataset.tab === "cal") renderCalendar();

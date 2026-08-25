@@ -1794,6 +1794,77 @@ ok("⑦ 상태 한 줄이 DTSTART의 뜻을 넘겨짚지 않는다 — '마감'�
 ok("⑦ 상태 한 줄이 URL·토큰을 화면에 쓰지 않는다",
   collBlock.length > 0 && !/url|token|authtoken/i.test(collBlock), `${collBlock.length}자`);
 
+// ── T-47 · '이월 중'은 미룬 것만이 아니다 (ADR-042) ──────────────
+console.log("\n[T-47] Works 이월 중 — 지난 예정이 그대로 남은 것도 잡는다");
+// 지난 날짜로 새 예정을 잡는 것은 API가 400으로 막는다(그게 맞다). 실사용에서 이 상태는
+// **오늘이었던 예정이 그냥 지나가며** 생긴다 — 원장에 직접 그 모양을 만든다.
+// ⚠️ 날짜는 전부 `D` 상대다(함정 12). id도 `D-40`에서 뽑아 고정 날짜를 안 남긴다.
+const t47Task = (n: number, title: string) => {
+  const id = `${addDays(D, -40).replace(/-/g, "")}-${String(900 + n).padStart(3, "0")}`;
+  raw.prepare("INSERT INTO tasks (id, title, wait_anchor_at, created_at) VALUES (?, ?, ?, ?)")
+    .run(id, title, t0.now, t0.now);
+  return id;
+};
+const t47Entry = (id: string, date: string) =>
+  raw.prepare("INSERT INTO schedule_entries (task_id, date, created_at) VALUES (?, ?, ?)")
+    .run(id, date, t0.now);
+// ⚠️ **마감된 날엔 예정을 추가하는 것조차 트리거가 막는다**(실측 — 함정 6의 '일정은 추가만'은
+//    `events` 얘기다). 어느 과거 날이 마감돼 있는지는 위 시나리오가 늘 때마다 달라지므로
+//    **고정 오프셋을 박지 않고 원장에 묻는다** — 박아 두면 절이 하나 늘 때 조용히 폭발한다.
+const t47Open = [...Array(20).keys()].map((i) => addDays(D, -(i + 4)))
+  .find((d) => (raw.prepare("SELECT status FROM daily WHERE date = ?").get(d) as any)?.status !== "closed");
+ok("픽스처 — 마감되지 않은 과거 날을 찾았다 (지난 예정을 둘 자리)", !!t47Open, String(t47Open));
+
+const t47Past = t47Task(1, "지난 예정 그대로 — 미룬 적 없다");   // 실측된 그 사건(20260817-001)
+t47Entry(t47Past, t47Open!);
+// 경계(`latest_date = D`)는 **오늘 예정이 있는, 실사용에서 가장 흔한 상태**다.
+// 그런데 smoke는 [4]에서 오늘을 이미 마감했고 마감된 날엔 INSERT가 막힌다 —
+// 열린 앞날에 넣고 날짜만 오늘로 옮긴다(UPDATE 동결 트리거는 `OLD.date`를 보므로
+// 열린 날에서 출발하면 통과한다). **경계를 포기하면 `<`를 `<=`로 바꾸는 변이가 안 잡히고,
+// 그러면 오늘 할 일이 전부 '이월 중'이 된다.**
+const t47Today = t47Task(2, "오늘 예정만");                       // 경계: latest_date = D
+t47Entry(t47Today, addDays(D, 6));
+raw.prepare("UPDATE schedule_entries SET date = ? WHERE task_id = ?").run(D, t47Today);
+const t47Fut = t47Task(3, "앞날 예정만");
+t47Entry(t47Fut, addDays(D, 4));
+const t47Fin = t47Task(4, "지난 예정 + 완료");
+t47Entry(t47Fin, t47Open!);
+await api("POST", `/api/tasks/${t47Fin}/complete`);
+// ⚠️ **취소를 먼저 하고 항목을 넣는다.** 반대로 하면 취소가 열린 날의 예정을 지워
+//    `latest_date`가 NULL이 되고, 그러면 이 픽스처는 **state 조건이 죽어도 통과한다**
+//    (조건을 지키지 못하는 검사). 마감된 날에 넣는 우회는 트리거가 막는다 —
+//    'schedule_entries는 마감된 날에 추가도 안 된다'가 실측이다.
+const t47Can = t47Task(5, "지난 예정 + 취소");
+await api("POST", `/api/tasks/${t47Can}/cancel`);
+t47Entry(t47Can, t47Open!);
+
+const t47List = (await api("GET", "/api/works/deferring")).json as Array<{
+  id: string; defer_count: number; first_date: string; latest_date: string;
+}>;
+const t47Has = (id: string) => t47List.some((x) => x.id === id);
+const t47Row = t47List.find((x) => x.id === t47Past);
+
+// ① 실제로 놓쳤던 것 — 다섯 섹션 어디에도 없어서 Today의 '미루기'가 유일한 문이었다.
+ok("① 지난 예정 + 미완 + 이월 0인 task가 '이월 중'에 나온다",
+  !!t47Row && t47Row.defer_count === 0, JSON.stringify(t47Row ?? t47List.map((x) => x.id)));
+// first_date는 그대로다 — 화면이 "8월 17일의 그 일"로 읽히는 근거가 그 값이다.
+ok("① 첫 예정일이 그대로 실린다 (화면이 '언제의 일'인지 말할 수 있다)",
+  t47Row?.first_date === t47Open, `${t47Row?.first_date} vs ${t47Open}`);
+// ★ ①의 짝. 조건이 다 삼켰으면 '이월 중'이 곧 '모든 미완'이 된다 — 그러면 세그먼트가 뜻을 잃는다.
+ok("★② 오늘·앞으로의 예정만 있는 task는 '이월 중'에 없다 (조건이 다 삼키지 않았다)",
+  !t47Has(t47Today) && !t47Has(t47Fut),
+  `today=${t47Has(t47Today)} fut=${t47Has(t47Fut)}`);
+// ③ state 조건이 살아 있나 — 끝난 일은 지난 예정을 남겨도 '이월 중'이 아니다.
+ok("③ 완료·취소된 task는 지난 예정이 있어도 '이월 중'에 없다",
+  !t47Has(t47Fin) && !t47Has(t47Can), `fin=${t47Has(t47Fin)} can=${t47Has(t47Can)}`);
+// ★ ①의 두 번째 짝 — **첫 변이(`defer_count > 0` 제거)를 죽이는 자리다.**
+//   미룬 것은 앞날 예정이라 `latest_date < D`가 안 잡는다. 조건 한쪽만 남으면 여기가 빨간불이 된다.
+//   tC는 [3]에서 D → D+2로 미뤘다(defer_count 1 · latest_date = D+2).
+ok("★ 미룬 일은 도착지가 앞날이어도 '이월 중'에 남는다 (조건의 두 갈래가 둘 다 산다)",
+  t47Has(tC) && t47List.find((x) => x.id === tC)!.defer_count === 1
+  && t47List.find((x) => x.id === tC)!.latest_date > D,
+  JSON.stringify(t47List.find((x) => x.id === tC)));
+
 // ── 결과 ─────────────────────────────────────────────────────
 console.log(`\n${"=".repeat(46)}\n통과 ${passN} · 실패 ${fails.length}`);
 if (fails.length) { console.log("실패:\n  - " + fails.join("\n  - ")); process.exit(1); }

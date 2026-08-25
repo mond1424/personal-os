@@ -228,7 +228,7 @@
 **G. 마감 조각** — `stUpsertMech(env, kind, key, mech, now)` · `stCloseDaily(env, d, kind, now)`
 **H. 자동 마감** — `openDatesBefore(env, d)` · `orphanEntryDates(env, d)` · `stInsertClosedDaily(env, date, now)`
 **I. 쓰기 조각** — `stInsertLog` · `getLog(env, id)` · `stUpdateLog(env, id, ts, text)` · `stUpsertFeeling(env, d, field, value, source)` · `stSetScore` · `stSetFeelingsText` · `stInsertTask(env, id, title, periodId, now)` · `stInsertEntry(env, taskId, date, now)` · `stMarkDeferred(env, taskId, from, to, now)`(`AND deferred_to IS NULL`) · `stExtendWait(env, taskId, now)` · `liveEntry(env, taskId)`(미뤄지지 않은 마지막 항목) · `stRate100At` · `stFinishTask(env, taskId, now, d)` · `stSetRate(env, taskId, date, rate)`(`AND deferred_to IS NULL`) · `stUpdateTaskMeta` · `stInsertMemo(env, id, date, ts, text, now)` · `stStaleSummary(env, kind, key)`
-**J. Works 세그먼트** — `worksScheduled(env, d)` · `worksDeferring(env)` · `worksByPeriod(env)` · `worksDone(env)`(planned_on 포함)
+**J. Works 세그먼트** — `worksScheduled(env, d)` · `worksDeferring(env, d)`(이월 중 = 미룬 것 **또는** 지난 예정 · T-47) · `worksByPeriod(env)` · `worksDone(env)`(planned_on 포함)
 **일정(event)** — `eventGet(env, id)` · `eventsAt(env, date)` · `eventsRange(env, start, end)` · `stInsertEvent(env, id, title, date, time, periodId, note, now)` · `stUpdateEvent(...)` · `stDeleteEvent(env, id)`
 **기간** — `periodCards(env)`(+달성률 뷰) · `getPeriod(env, id)` · `stInsertPeriod(env, p)` · `stUpdatePeriod(env, p)`
 **K. 일기 목록** — `diaryList(env, before, limit)`

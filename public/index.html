@@ -102,8 +102,11 @@
     <span class="seg"><button class="on" data-cv="grid">월간</button><button data-cv="list">목록</button></span>
     <button class="mnav" id="cal-next">›</button>
   </div>
+  <!-- 출구가 날짜뿐이면 지우려던 일도 미뤄진다 (T-47 ② · ADR-042).
+       ★ 완료·취소·삭제를 여기 복제하지 않는다 — 셋 다 상세 시트에 이미 있다. 한 줄이면 된다. -->
   <div class="pickbar" id="pick-banner">
-    <span>날짜를 탭해 일정 정하기 — <b id="pick-title"></b> <span class="cap" id="pick-note"></span></span>
+    <span>날짜를 탭해 일정 정하기 — <b id="pick-title"></b> <span class="cap" id="pick-note"></span>
+      <button class="linklike" id="pick-open" style="display:none" onclick="openPickTask()">· 이 일 보기</button></span>
     <button class="x" onclick="cancelPick()">취소</button>
   </div>
 

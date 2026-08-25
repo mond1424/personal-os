@@ -2053,6 +2053,94 @@ ok("⑥ values-night 색이 짝으로 있다 — 한쪽에만 있는 이름이 0
   && !/(?:textColor|background)="#/.test(t46NoXml(t46Layout)),
   `light=${[...t46Light]} night=${[...t46Night]} orphan=${t46Orphan}`);
 
+// ── T-47 · 미루기 말고도 나갈 문이 있다 (ADR-042) ─────────────────────────
+console.log("\n[T-47] 날짜 선택 모드 — 다른 출구 · 대상이 사라지면 해제");
+// **실물 task 하나로 끝까지 간다.** 가짜 id로는 ⑦에서 '대상이 사라진 자리'를 만들 수 없다 —
+// 취소가 실제로 서버에서 성공해야 ⑧이 "없는 일을 미루는가"를 물을 수 있다.
+// ⚠️ **오늘로 잡지 않는다** — 이 시점의 검사 DB는 앞 절이 오늘을 이미 마감해 뒀고,
+//    마감된 날엔 예정 추가가 409다. 내일로 잡으면 실사용의 미루기와 같은 모양이 된다.
+const t47Id = await ev(`(async () =>
+  (await Api.createTask({ title: "T-47 나갈 문", date: addDaysStr(S.today.date, 1) })).id)()`);
+const t47Start = () => ev(`startPick({ mode: "defer", id: ${JSON.stringify(t47Id)},
+  from: addDaysStr(S.today.date, 1), title: "T-47 나갈 문" })`);
+// 떠나온 탭을 Today로 둔다 — 해제가 **어디로 돌려보내는가**까지 보게 된다.
+ev(`(() => { closeAll(); S.pick = null; switchTab("today", false); })()`);
+await sleep(300);
+t47Start();
+await until(() => $("#pick-banner").classList.contains("on") && $$cur(".c").length > 0);
+
+// ④ 미루기 모드에는 출구가 하나 더 있다.
+const t47Link = $("#pick-open");
+ok("④ 미루기 모드 배너에 '이 일 보기'가 있다",
+  !!t47Link && t47Link.style.display !== "none" && t47Link.textContent.includes("이 일 보기"),
+  t47Link ? `display="${t47Link.style.display}" text="${t47Link.textContent}"` : "요소 없음");
+t47Link.dispatchEvent(new w.Event("click"));
+await until(() => $("#sh-task").classList.contains("on"));
+ok("④ 누르면 **그 일의** 상세 시트가 열린다",
+  $("#sh-task").classList.contains("on") && ev("S.sheetTask && S.sheetTask.id") === t47Id,
+  `${$("#sh-task").className} / ${ev("S.sheetTask && S.sheetTask.id")}`);
+
+// ★⑥ ④의 짝 — 시트를 열면서 pick을 끝내 버리는 구현을 잡는다.
+//    *"역시 미루자"* 가 한 단계도 안 늘어야 한다: 닫으면 캘린더이고 배너가 그대로 있다.
+const t47Back = ev("handleBack()");
+await sleep(200);
+ok("★⑥ 시트를 닫으면 pick이 살아 있다 — 캘린더로 돌아와 계속 고른다",
+  t47Back === "sheet" && !$("#sh-task").classList.contains("on")
+  && ev("!!S.pick") && ev("S.pick.id") === t47Id
+  && $("#pick-banner").classList.contains("on") && $("#phone").dataset.tab === "cal",
+  `${t47Back} / pick=${ev("S.pick && S.pick.id")} / tab=${$("#phone").dataset.tab}`);
+
+// ★⑤ ④의 짝 — 대기 → 첫 일정은 미룬 것이 아니다. 되돌릴 것이 없으니 출구도 다르다.
+ev(`(() => { exitPick(); startPick({ mode: "schedule", id: ${JSON.stringify(t47Id)},
+  title: "T-47 나갈 문" }); })()`);
+await sleep(300);
+ok("★⑤ 일정 정하기 모드에는 '이 일 보기'가 없다",
+  $("#pick-banner").classList.contains("on") && $("#pick-open").style.display === "none",
+  `display="${$("#pick-open").style.display}" note="${$("#pick-note").textContent}"`);
+
+// ⑦·⑧ — 대상이 사라진 자리. **둘이 같은 결함의 두 증상이다.**
+//   ⑦은 **보이는 것만** 본다(배너·시트·탭). 그래야 "배너만 지우고 `S.pick`은 남긴 구현"에서
+//   ⑦은 초록이고 ⑧만 죽는다 — 그 대비가 없으면 상태가 진짜 없어졌는지 알 길이 없다.
+ev(`(() => { exitPick(); switchTab("today", false); })()`);
+await sleep(300);
+t47Start();
+await until(() => $("#pick-banner").classList.contains("on") && $$cur(".c").length > 0);
+// 탭할 날짜는 **미루기 범위 안**에서 실제 그리드에 있는 것으로 고른다 —
+// 범위 밖을 고르면 `pickable`이 막아 주므로 ⑧이 해제와 무관하게 통과한다(공회전).
+// 상한·하한을 여기서 다시 계산하지 않고 **앱의 `pickable`에 직접 묻는다**(대장이 하나다).
+const t47Target = ev(`(() => [...document.querySelectorAll("#cal-track .c")]
+  .map((c) => c.dataset.d).find((d) => pickable(d)) || null)()`);
+ev("openPickTask()");
+await until(() => $("#sh-task").classList.contains("on") && ev("S.sheetTask && S.sheetTask.id") === t47Id);
+$("#tk-cancel").dispatchEvent(new w.Event("click"));
+await until(() => $("#confirm").classList.contains("on"));
+$("#cf-yes").dispatchEvent(new w.Event("click"));
+// ⚠️ **배너가 사라지기를 기다리면 안 된다** — 이미 사라져 있는 변이에서는 그 대기가 즉시 통과해
+//    취소가 끝나기도 전에 판정한다(경합). 취소 성공의 공통 신호인 **시트 닫힘**을 기다린다.
+await until(() => !$("#sh-task").classList.contains("on"), 5000);
+await sleep(300);
+ok("★⑦ 시트에서 취소가 성공하면 배너가 사라진다",
+  !$("#pick-banner").classList.contains("on") && !$("#sh-task").classList.contains("on"),
+  `banner=${$("#pick-banner").className} sheet=${$("#sh-task").className}`);
+// ⑦′ 는 **따로 센다.** ⑦에 붙여 두면 "시트를 열 때 pick을 끝내는" 변이가 ⑥과 ⑦을 함께 죽여
+// 어느 결함이 무엇을 죽였는지 못 읽는다(그 변이는 `origin`을 통째로 잃으므로 탭 복귀도 깨진다).
+ok("⑦′ 떠나온 탭으로 돌려보낸다 — 대상이 없어진 캘린더에 남기지 않는다",
+  $("#phone").dataset.tab === "today", $("#phone").dataset.tab);
+
+// ★⑧ **실제로 날짜를 탭한다.** 상태가 진짜 없어졌는지는 그것으로만 갈린다 —
+//    `S.pick`이 남아 있으면 `openDay`가 `assignDate`로 새고 미루기 확인 시트가 뜬다.
+const t47Cell = t47Target && w.document.querySelector(`#cal-track .c[data-d="${t47Target}"]`);
+if (t47Cell) t47Cell.dispatchEvent(new w.Event("click"));
+await sleep(700);
+const t47After = await ev(`Api.task(${JSON.stringify(t47Id)})`);
+ok("★⑧ pick이 풀린 뒤 날짜를 탭해도 없는 일이 안 옮겨간다",
+  !!t47Cell && !$("#sh-defer").classList.contains("on")
+  && !t47After.entries.some((e) => e.date === t47Target),
+  `target=${t47Target} cell=${!!t47Cell} deferSheet=${$("#sh-defer").classList.contains("on")}`
+  + ` entries=${JSON.stringify(t47After.entries.map((e) => e.date))}`);
+ev(`(() => { closeAll(); switchTab("today", false); })()`);
+await sleep(200);
+
 console.log("\n[부팅 · 연결 실패 복구]");
 ok("로드 후 부팅 오버레이 닫힘", !$("#boot").classList.contains("on"));
 

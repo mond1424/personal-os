@@ -286,12 +286,19 @@ export const worksScheduled = (env: Env, d: string) => q(env, `
     color: string | null; rate: number;
   }>();
 
-export const worksDeferring = (env: Env) => q(env, `
+// '이월 중' = **아직 안 끝났는데 뒤에 남은 것** — 미룬 것만이 아니다 (T-47 · ADR-042).
+// 지난 예정이 그대로 남은 task(defer_count 0)는 다섯 섹션 어디에도 없었다:
+// '예정'은 `e.date >= 오늘`이라 안 잡고, '대기'는 항목이 없는 것만이다.
+// 그래서 유일하게 보이는 문이 Today 재배정 대기의 '미루기'였고, **강요된 미루기 한 번이
+// `defer_count`에 섞였다** — ADR-036이 2주 상한을 푸는 근거이자 §6.5가 읽는 재료다.
+// ⚠️ `first_date`는 그대로 둔다 — 화면이 "8월 17일의 test"로 읽히는 근거가 그 값이다.
+// ⚠️ `latest_date`가 NULL인 대기 task는 비교가 NULL이라 안 걸린다(그쪽은 '대기'의 몫이다).
+export const worksDeferring = (env: Env, d: string) => q(env, `
   SELECT s.id, s.title, s.defer_count, s.latest_date,
          (SELECT MIN(date) FROM schedule_entries e WHERE e.task_id = s.id) AS first_date
   FROM v_task_stats s
-  WHERE s.state = 'not_finished' AND s.defer_count > 0
-  ORDER BY s.defer_count DESC`).all<{
+  WHERE s.state = 'not_finished' AND (s.defer_count > 0 OR s.latest_date < ?)
+  ORDER BY s.defer_count DESC`).bind(d).all<{
     id: string; title: string; defer_count: number;
     latest_date: string; first_date: string;
   }>();

@@ -248,7 +248,7 @@ export async function segment(env: Env, t: TimeCtx, name: string) {
       return (await db.waitingList(env)).results
         .map((w) => ({ ...w, age: diffDays(t.d, attributionOfIso(w.wait_anchor_at, t.boundary)) + 1 }))
         .sort((a, b) => b.age - a.age);
-    case "deferring": return (await db.worksDeferring(env)).results;
+    case "deferring": return (await db.worksDeferring(env, t.d)).results;
     case "periods":   return (await db.worksByPeriod(env)).results;
     case "done":      return (await db.worksDone(env)).results;
     default: throw new ApiError(404, "세그먼트: scheduled | waiting | deferring | periods | done");
