@@ -2141,6 +2141,251 @@ ok("★⑧ pick이 풀린 뒤 날짜를 탭해도 없는 일이 안 옮겨간다
 ev(`(() => { closeAll(); switchTab("today", false); })()`);
 await sleep(200);
 
+// ── T-48 · ADR-043 — 홈 "오늘 찍기" 위젯 ────────────────────────────────────
+//
+// ⚠️ **jsdom은 RemoteViews를 못 본다.** 여기서 진짜로 돌려 보는 것은 **웹이 건네는 것**이고,
+//    Kotlin 쪽은 스캐너다. 무엇이 어디에 있는지 감추지 않고 나눠 적는다:
+//      실측(§확인 절차) — 손가락으로 찍히는가 · 늘리면 켜지는가 · 마감 뒤에 되돌아오는가
+//      smoke          — 위젯 상수로 조립한 본문이 200/409를 실제로 받는가 (①·②의 서버 쪽)
+//      여기           — 문장이 한 곳에서 오는가 · 단계별로 무엇이 켜지는가 · 되돌림이 남는가
+console.log("\n[T-48] 홈 위젯 — 문장 한 곳 · 단계 · 되돌림");
+
+const t48Store = t46Bare(readFileSync(
+  join(here, "../android/app/src/main/java/dev/mond1424/personalos/widget/ScaleStore.kt"), "utf8"));
+const t48Widget = t46Bare(readFileSync(
+  join(here, "../android/app/src/main/java/dev/mond1424/personalos/widget/ScaleWidget.kt"), "utf8"));
+const t48LayoutRaw = readFileSync(
+  join(here, "../android/app/src/main/res/layout/widget_scale.xml"), "utf8");
+const t48Layout = t46NoXml(t48LayoutRaw);
+const t48Dims = t46NoXml(readFileSync(
+  join(here, "../android/app/src/main/res/values/widget_scale_dims.xml"), "utf8"));
+const t48Strings = t46NoXml(readFileSync(
+  join(here, "../android/app/src/main/res/values/strings.xml"), "utf8"));
+
+/* ① ★ **문장을 만드는 곳이 한 곳인가** (티켓 ③·⑦).
+ * 위젯이 앱과 같은 말을 하는 길은 둘뿐이다 — Kotlin에 옮겨 적거나, 만든 것을 건네받거나.
+ * 여기서 뒤쪽을 **실제로 돌려서** 본다: 웹이 네이티브에 밀어 넣는 payload의 `summary`가
+ * 살아 있는 `closeSummaryText(S.today)`와 **같은 글자**인가. */
+ev(`(() => {
+  globalThis.__wpush = [];
+  globalThis.Capacitor = { Plugins: { Widget: {
+    push: (p) => { globalThis.__wpush.push(p); return Promise.resolve({ ok: true }); },
+  } } };
+})()`);
+const t48Sent = JSON.parse(ev(`JSON.stringify(pushWidget())`));
+const t48Heard = JSON.parse(ev(`JSON.stringify(globalThis.__wpush)`));
+const t48AppLine = ev(`closeSummaryText(S.today)`);
+ok("① ★ 위젯이 받는 문장 = 앱이 그리는 문장 (만드는 곳이 한 곳이다)",
+  !!t48Sent && t48Sent.summary === t48AppLine && t48AppLine.length > 0
+  && t48Heard.length === 1 && t48Heard[0].summary === t48AppLine,
+  `보낸것="${t48Sent && t48Sent.summary}" 앱="${t48AppLine}" 횟수=${t48Heard.length}`);
+
+/* ② ★ ①의 짝 — **Kotlin이 문장을 만들지 않는다.**
+ * ①만 보면 *"건네주기도 하고 Kotlin에도 복제해 둔 구현"* 이 통과한다. 그러면 한쪽을 고칠 때
+ * 다른 쪽이 남고, 갈라진 쪽이 조용히 다른 말을 한다. `closeSummaryText`가 만드는 조각들이
+ * 네이티브 어디에도 없어야 한다 — 문자열 리소스까지 함께 본다. */
+const T48_SENTENCE_BITS = ["개 했고", "남은 것", "재배정 대기", "알렸어요", "담긴 할 일"];
+const t48Leak = T48_SENTENCE_BITS.filter((b) =>
+  t48Store.includes(b) || t48Widget.includes(b) || t48Strings.includes(b));
+ok("② ★ 네이티브에 요약 문장이 없다 — 조각 하나도 새지 않았다 (두 벌이 아니다)",
+  // 뒤 절이 **이 목록이 살아 있는지**를 센다: 지금 앱이 말하는 문장에 조각이 하나도 안 걸리면
+  // 목록이 낡은 것이고, 그러면 앞 절은 무엇을 복제해도 초록이다.
+  t48Leak.length === 0 && T48_SENTENCE_BITS.some((b) => t48AppLine.includes(b)),
+  `샌 조각=${JSON.stringify(t48Leak)} / 앱 문장="${t48AppLine}"`);
+
+/* ③ 경계는 **서버가 준다** (티켓 ⑤·⑧). 웹이 그대로 실어 보내는지 실제로 본다. */
+const t48Boundary = ev(`S.today.boundary`);
+ok("③ 경계·귀속일이 서버 응답 그대로 위젯에 간다 (코드에 시각을 안 적는다)",
+  !!t48Sent && t48Sent.boundary === t48Boundary && /^\d{2}:\d{2}$/.test(t48Boundary)
+  && t48Sent.date === ev(`S.today.date`),
+  `boundary="${t48Sent && t48Sent.boundary}" date="${t48Sent && t48Sent.date}"`);
+
+/* ③의 짝 — 네이티브에 **시각 리터럴이 하나도 없다.** `05:00`이라 적혀 있었는데 실제로는
+ * `06:00`이었던 전례가 이 검사의 이유다. 그리고 경계를 넘으면 스스로 비우는 자리가 있는가. */
+const T48_TIME_LIT = /\b\d{1,2}:\d{2}\b/;
+const t48Clears = /fun readFresh\(/.test(t48Store) && /dayOf\(/.test(t48Store)
+  && /stamped != today/.test(t48Store);
+ok("③ ★ 네이티브에 하루 경계 시각이 안 적혀 있다 · 넘으면 스스로 비운다",
+  !T48_TIME_LIT.test(t48Store) && !T48_TIME_LIT.test(t48Widget) && t48Clears,
+  `store=${T48_TIME_LIT.exec(t48Store)} widget=${T48_TIME_LIT.exec(t48Widget)} clears=${t48Clears}`);
+
+/* ④ ★ **찍힌 것처럼 보이고 안 찍히면 안 된다** (티켓 ④ · 이 티켓의 핵심).
+ * 되돌리는 것과 남기는 것이 **한 함수 안**이어야 한다 — 나누면 한쪽만 지우기가 쉬워지고,
+ * 그때 생기는 것이 *"되돌리긴 하는데 아무 표시가 없는 구현"* 이다. 그 함수 본문을 직접 본다. */
+const t48Fn = (src, name) => {
+  const i = src.indexOf(`fun ${name}(`);
+  if (i < 0) return "";
+  const rest = src.slice(i);
+  const j = rest.slice(1).search(/\n {4}(fun |private fun |val |const |data class )/);
+  return j < 0 ? rest : rest.slice(0, j + 1);
+};
+const t48Reject = t48Fn(t48Store, "reject");
+const t48Reverts = /optJSONObject\(K_PENDING\)\?\.remove\(field\)/.test(t48Reject);
+const t48Marks = /put\(K_NOTICE,/.test(t48Reject);
+const t48CalledOnFail = /else ScaleStore\.reject\(/.test(t48Widget);
+ok("④ ★ 서버가 거부하면 칠한 칸이 되돌아온다 (실패 분기가 되돌림을 부른다)",
+  t48Reject.length > 0 && t48Reverts && t48CalledOnFail,
+  `본문=${t48Reject.length}자 되돌림=${t48Reverts} 실패분기=${t48CalledOnFail}`);
+
+/* ⑤ ★ ④의 짝 — **되돌림이 조용하지 않은가.** ④만 보면 *"되돌리되 아무 표시가 없는 구현"* 이
+ * 통과한다. 위젯은 토스트를 못 띄우므로 그 표시는 **위젯 안에** 남아야 하고, feelings만 있는
+ * 최소 크기에서도 보여야 한다 — 거기서 찍은 탭이 가장 자주 되돌아온다. */
+const t48VisCalls = {};
+for (const m of t48Widget.matchAll(/setViewVisibility\(\s*R\.id\.(\w+)\s*,([^\n]*)/g)) {
+  (t48VisCalls[m[1]] = t48VisCalls[m[1]] || []).push(m[2]);
+}
+const t48Flag = (expr) =>
+  /tier\.close/.test(expr) ? "close"
+    : /tier\.log/.test(expr) ? "log"
+      : /View\.VISIBLE/.test(expr) ? "always"
+        : /View\.GONE/.test(expr) ? "never" : "dynamic";
+ok("⑤ ★ 되돌린 사실이 위젯에 남는다 — 표시가 있고, 단계와 무관하게 보인다",
+  t48Marks && (t48VisCalls.widget_scale_notice || []).length === 1
+  && t48Flag(t48VisCalls.widget_scale_notice[0]) === "dynamic"
+  && /widget_scale_notice_closed|widget_scale_notice_net/.test(t48Store),
+  `표시=${t48Marks} 가시성=${JSON.stringify(t48VisCalls.widget_scale_notice)}`);
+
+/* ⑥ 크기 3단계 — 무엇이 켜지는가. 표를 Kotlin에서 뽑아 **레이아웃의 포함 관계와 함께** 푼다.
+ * (`setViewVisibility`가 없는 뷰는 조상이 정한다 — 그것이 "요약과 score가 한 덩어리"의 뜻이다.) */
+const t48Tiers = [...t48Store.matchAll(/Tier\(name = "(\w+)", close = (true|false), log = (true|false)\)/g)]
+  .map((m) => ({ name: m[1], close: m[2] === "true", log: m[3] === "true" }));
+const t48Parent = (() => {
+  const stack = [], parent = {};
+  for (const m of t48Layout.matchAll(/<(\/?)([A-Za-z][\w.]*)((?:[^>"]|"[^"]*")*?)(\/?)>/g)) {
+    const [, closing, , attrs, self] = m;
+    if (closing) { stack.pop(); continue; }
+    const id = (/android:id="@\+?id\/(\w+)"/.exec(attrs) || [])[1] || null;
+    if (id) parent[id] = [...stack].reverse().find(Boolean) ?? null;
+    if (!self) stack.push(id);
+  }
+  return parent;
+})();
+/** 그 단계에서 이 뷰가 보이는가. `"multi"`·`"dynamic"`은 **읽을 수 없다**는 뜻이라 실패로 본다. */
+const t48Visible = (id, tier) => {
+  for (let node = id; node; node = t48Parent[node]) {
+    const calls = t48VisCalls[node];
+    if (!calls) continue;
+    if (calls.length !== 1) return "multi";
+    const f = t48Flag(calls[0]);
+    if (f === "close" || f === "log") return !!tier[f];
+    if (f === "always") return true;
+    if (f === "never") return false;
+    return "dynamic";
+  }
+  return true;   // 아무도 안 건드린다 — feelings 눈금이 여기다
+};
+const t48Show = (id) => t48Tiers.map((t) => t48Visible(id, t));
+const t48Sum = t48Show("widget_scale_summary");
+const t48Score = t48Show("widget_scale_score_0");
+const t48Log = t48Show("widget_scale_log");
+const t48Feel = t48Show("widget_scale_energy_0");
+const t48Close = t48Show("widget_scale_close");
+// ⚠️ 여기서 **요약 자체를 보지 않는다** — 요약과 score의 짝은 ⑦·⑧이 진다. 이 검사까지
+//    요약을 보면 *"요약을 모든 단계에 켜는"* 변이가 둘을 한꺼번에 죽이고, 그러면 어느 결함이
+//    무엇을 죽였는지 못 읽는다(T-47이 ⑦을 둘로 가른 것과 같은 이유).
+ok("⑥ 크기 3단계가 각각 무엇을 켜는가 — 최소는 눈금만, 중간에 마감 블록, 최대에 로그",
+  t48Tiers.length === 3
+  && JSON.stringify(t48Tiers.map((t) => t.name)) === `["min","mid","max"]`
+  && JSON.stringify(t48Feel) === "[true,true,true]"
+  && JSON.stringify(t48Close) === "[false,true,true]"
+  && JSON.stringify(t48Log) === "[false,false,true]",
+  `tiers=${JSON.stringify(t48Tiers)} feel=${t48Feel} close=${t48Close} log=${t48Log}`);
+
+/* ⑥의 짝 — **임계 dp가 레이아웃과 같은 곳에서 온다.** Kotlin은 숫자를 안 적고 dimen을 더한다.
+ * 합이 어긋나면 블록을 늘렸는데 임계가 안 따라온 것이고, 그때 잘리는 것은 아래쪽 블록이다. */
+const t48Dim = (n) => Number((new RegExp(`name="${n}">(\\d+)dp`).exec(t48Dims) || [])[1]);
+const [t48Pad, t48Line, t48Row] = ["widget_scale_pad", "widget_scale_line", "widget_scale_row"].map(t48Dim);
+ok("⑥ 임계 dp를 코드에 안 적는다 — dimen의 합이고, 합이 레이아웃과 맞다",
+  /getDimension\(R\.dimen\.widget_scale_h_base\)/.test(t48Store)
+  && !/availDp >= \d/.test(t48Store)
+  && t48Dim("widget_scale_h_base") === t48Pad * 2 + t48Line + t48Row * 3
+  && t48Dim("widget_scale_h_close") === t48Line + t48Row
+  && t48Dim("widget_scale_h_log") === t48Row,
+  `pad=${t48Pad} line=${t48Line} row=${t48Row} base=${t48Dim("widget_scale_h_base")} `
+  + `close=${t48Dim("widget_scale_h_close")} log=${t48Dim("widget_scale_h_log")}`);
+
+/* ⑦ ★ **score가 켜진 단계에는 요약도 켜져 있다** (ADR-040을 되돌리지 않는다 — 없는 것을 센다).
+ * 이 둘이 갈리는 순간이 *"빈 칸에 점수를 매기는"* 그 모양이다. */
+const t48Orphan = t48Tiers.filter((t, i) => t48Score[i] === true && t48Sum[i] !== true);
+ok("⑦ ★ score가 켜진 단계에는 요약도 켜져 있다 — 한쪽만인 단계가 0이다",
+  t48Orphan.length === 0 && t48Tiers.some((t, i) => t48Score[i] === true && t48Sum[i] === true),
+  `한쪽만=${JSON.stringify(t48Orphan.map((t) => t.name))} score=${t48Score} sum=${t48Sum}`);
+
+/* ⑧ ★ ⑦의 짝 — **feelings 단계에는 요약이 꺼져 있다.**
+ * ⑦만 보면 *"모든 단계에 요약을 켜는 구현"* 이 통과한다. 그런데 지금 몸 상태는 하루의 결산이
+ * 아니고, 매기기 전에 판단을 심지 않는 것이 T-44와 같은 방향이다. */
+ok("⑧ ★ feelings만 있는 단계엔 요약이 없다 (매기기 전에 판단을 심지 않는다)",
+  t48Sum[0] === false && t48Score[0] === false && t48Feel[0] === true
+  && t48Tiers.some((t, i) => t48Sum[i] === false),
+  `min: feel=${t48Feel[0]} sum=${t48Sum[0]} score=${t48Score[0]}`);
+
+/* ⑨ ★ **크기 분기가 던져도 위젯이 빈 화면이 되지 않는다** — 성공처럼 보이는 실패.
+ * 여기서 던지면 `updateAppWidget`이 아예 안 불려 위젯이 옛 그림이나 빈 틀로 남는다. */
+const T48_TIER_GUARD = /runCatching\s*\{[\s\S]*?\}\.getOrDefault\(ScaleStore\.TIERS\.first\(\)\)/;
+ok("⑨ ★ 크기 분기가 던져도 최소 단계로 접힌다 (빈 화면이 아니라 눈금은 남는다)",
+  T48_TIER_GUARD.test(t48Widget) && /fun tierOf\(/.test(t48Widget),
+  `guard=${T48_TIER_GUARD.test(t48Widget)}`);
+
+/* ⑩ ★ ⑨의 짝 — **스캐너가 살아 있는가.** 눈멀면 ⑨는 가드와 무관하게 초록이 되고,
+ * "가드가 없다"인지 "정규식이 낡았다"인지 구별이 안 된다. 합성 줄로 가른다. */
+const t48FakeGuarded = "runCatching { tierFor(ctx, dp) }.getOrDefault(ScaleStore.TIERS.first())";
+const t48FakeBare = "ScaleStore.tierFor(ctx, dp)";
+ok("⑩ ★ ⑨의 스캐너가 살아 있다 — 가드는 잡고, 없거나 주석뿐이면 안 잡는다",
+  T48_TIER_GUARD.test(t48FakeGuarded) && !T48_TIER_GUARD.test(t48FakeBare)
+  && !T48_TIER_GUARD.test(t46Bare("  // " + t48FakeGuarded)),
+  `guarded=${T48_TIER_GUARD.test(t48FakeGuarded)} bare=${T48_TIER_GUARD.test(t48FakeBare)}`);
+
+/* ⑪ 로그 딥링크 — **대장은 웹 하나다**(T-46이 세운 규칙). Kotlin이 던지는 URL을
+ * 살아 있는 `deepLinkAction`에 먹인다. 두 문자열을 각자 정규식으로 보면 갈라져도 둘 다 초록이다. */
+const t48KtUrl = (/LOG_DEEP_LINK\s*=\s*"([^"]+)"/.exec(t48Widget) || [])[1];
+ok("⑪ Kotlin이 던지는 로그 URL을 웹이 실제로 해석한다",
+  ev(`deepLinkAction(${JSON.stringify(t48KtUrl || "")})`) === "add-log", String(t48KtUrl));
+await ev(`runDeepLink(${JSON.stringify(t48KtUrl || "")})`);
+await sleep(200);
+ok("⑪ 로그 딥링크가 Today의 입력줄로 데려온다 (위젯 안에서는 못 친다)",
+  $("#phone").dataset.tab === "today" && w.document.activeElement === $("#log-input"),
+  `tab=${$("#phone").dataset.tab} focus=${w.document.activeElement && w.document.activeElement.id}`);
+
+/* ⑫ 다크 짝 — **없는 것을 센다.** 한쪽에만 있는 이름은 그 모드에서 반대쪽 값이 그대로 쓰여
+ * 아무 소리 없이 배경과 같은 색이 된다(함정 5의 안드로이드판).
+ * ⚠️ T-46의 `widget_colors.xml`과 **파일을 나눴다** — 그 검사가 *"여기 색은 전부 그 레이아웃이
+ *    쓴다"* 를 세므로, 한 파일에 두 위젯 색을 넣으면 T-46이 빨간불이 된다. */
+const t48Colors = (p) => new Set(
+  [...readFileSync(join(here, p), "utf8").matchAll(/<color\s+name="([^"]+)"/g)].map((m) => m[1]));
+const t48Light = t48Colors("../android/app/src/main/res/values/widget_scale_colors.xml");
+const t48Night = t48Colors("../android/app/src/main/res/values-night/widget_scale_colors.xml");
+const t48OrphanColor = [...t48Light].filter((n) => !t48Night.has(n))
+  .concat([...t48Night].filter((n) => !t48Light.has(n)));
+const t48Styles = t46NoXml(readFileSync(
+  join(here, "../android/app/src/main/res/values/styles.xml"), "utf8"));
+ok("⑫ values-night 색이 짝으로 있다 — 한쪽에만 있는 이름 0 · 리터럴 색 0",
+  t48Light.size >= 4 && t48OrphanColor.length === 0
+  && [...t48Light].every((n) => new RegExp(`@color/${n}\\b`).test(t48Layout + t48Styles))
+  && !/(?:textColor|background)="#/.test(t48Layout),
+  `light=${[...t48Light]} orphan=${t48OrphanColor}`);
+
+/* ⑬ Manifest — 선언이 빠지면 위젯이 목록에 아예 안 뜨거나, 떠도 `onUpdate`가 안 와서
+ * `initialLayout` 그대로 굳는다(T-46이 물린 자리). 그리고 **다리(plugin) 등록**이 빠지면
+ * 웹이 조용히 건너뛰고 위젯은 요약도 값도 못 받는다. */
+const t48Manifest = t46NoXml(readFileSync(
+  join(here, "../android/app/src/main/AndroidManifest.xml"), "utf8"));
+const t48Main = readFileSync(
+  join(here, "../android/app/src/main/java/dev/mond1424/personalos/MainActivity.java"), "utf8");
+ok("⑬ Manifest가 위젯을 선언하고, 다리가 등록돼 있다",
+  /android:name="\.widget\.ScaleWidget"/.test(t48Manifest)
+  && /android:resource="@xml\/widget_scale_info"/.test(t48Manifest)
+  && /android\.appwidget\.action\.APPWIDGET_UPDATE/.test(t48Manifest)
+  && !/SCALE_TAP/.test(t48Manifest)          // 우리 액션을 filter에 적으면 남이 눈금을 찍는다
+  && /registerPlugin\(WidgetPlugin\.class\)/.test(t48Main),
+  `receiver=${/android:name="\.widget\.ScaleWidget"/.test(t48Manifest)} plugin=${/registerPlugin\(WidgetPlugin\.class\)/.test(t48Main)}`);
+
+/* ⑭ 네이티브가 없는 환경(브라우저·PWA)에서 **아무 일도 안 일어난다.** 화면을 인질로 잡지 않는다. */
+ev(`(() => { delete globalThis.Capacitor; globalThis.__wpush = []; })()`);
+ok("⑭ 네이티브가 없으면 조용히 지나간다 (브라우저·PWA에서 화면이 안 죽는다)",
+  ev(`pushWidget()`) === null && ev(`globalThis.__wpush.length`) === 0);
+ev(`(() => { closeAll(); switchTab("today", false); })()`);
+await sleep(200);
+
 console.log("\n[부팅 · 연결 실패 복구]");
 ok("로드 후 부팅 오버레이 닫힘", !$("#boot").classList.contains("on"));
 

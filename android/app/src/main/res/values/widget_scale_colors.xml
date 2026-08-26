@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- android/app/src/main/res/values/widget_scale_colors.xml — 밝은 쪽 (T-48 · ADR-043).
+
+     ★ **`values-night/widget_scale_colors.xml`과 이름이 정확히 짝이어야 한다.**
+        한쪽에만 있는 이름은 그 모드에서 **없는 것이 아니라 반대쪽 값이 그대로 쓰인다** —
+        위젯이 아무 소리 없이 흰 배경에 흰 글자가 된다. `test/front.mjs`가 그 차집합을 센다.
+
+     ⚠️ **T-46의 `widget_colors.xml`과 파일을 나눴다.** 그 파일의 검사는 *"여기 있는 색 이름은
+        전부 `widget_add_task.xml`이 쓴다"* 를 세므로, 다른 위젯 색을 그 안에 넣으면
+        T-46의 검사가 빨간불이 된다. 위젯마다 자기 색 파일을 가진다.
+
+     값은 웹 셸과 맞춘다 — `public/style.css`의 paper . ink . sub . brick. -->
+<resources>
+    <color name="widget_scale_bg">#FBFAF7</color>
+    <color name="widget_scale_ink">#26221C</color>
+    <color name="widget_scale_dim">#787164</color>
+    <color name="widget_scale_warn">#C4401F</color>
+</resources>

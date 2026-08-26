@@ -1,0 +1,144 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- android/app/src/main/res/layout/widget_scale.xml
+     홈 "오늘 찍기" 위젯 (T-48 · ADR-043).
+
+     ⚠️ RemoteViews다 — 쓸 수 있는 뷰가 제한되고 `EditText`가 없다. 로그는 딥링크뿐이다.
+
+     ⚠️ 색은 전부 `@color/…`다. 리터럴을 박으면 `values-night/`가 일을 안 해서
+        다크 모드에서 글자가 배경에 묻는다(함정 5의 안드로이드판).
+
+     ★ **요약과 score는 `widget_scale_close` 안에 함께 있다.** 한쪽만 켜는 자리를 레이아웃에
+        아예 두지 않는다 — score만 보이면 빈 칸에 점수를 매기는 그 모양이고, ADR-040이
+        사흘 전에 고친 자리다(ADR-043 결정 ②). `test/front.mjs`가 이 포함 관계를 읽는다.
+
+     ★ **거부 표시(`widget_scale_notice`)는 어느 단계에도 속하지 않는다.** 최소 크기에서 찍은
+        탭이 되돌아오는 것을 못 보면 이 티켓이 없애려는 실패가 그대로 남는다(티켓 ④). -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_scale_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="@dimen/widget_scale_pad"
+    android:background="@color/widget_scale_bg">
+
+    <TextView
+        android:id="@+id/widget_scale_notice"
+        android:layout_width="match_parent"
+        android:layout_height="@dimen/widget_scale_line"
+        android:textColor="@color/widget_scale_warn"
+        android:textSize="11sp"
+        android:maxLines="1"
+        android:ellipsize="end"
+        android:visibility="gone" />
+
+    <LinearLayout
+        android:id="@+id/widget_scale_feelings"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="@dimen/widget_scale_row"
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
+            <TextView
+                android:layout_width="54dp"
+                android:layout_height="wrap_content"
+                android:text="@string/widget_scale_energy"
+                android:textColor="@color/widget_scale_dim"
+                android:textSize="11sp"
+                android:maxLines="1" />
+            <TextView android:id="@+id/widget_scale_energy_0" style="@style/WidgetScaleCell" />
+            <TextView android:id="@+id/widget_scale_energy_1" style="@style/WidgetScaleCell" />
+            <TextView android:id="@+id/widget_scale_energy_2" style="@style/WidgetScaleCell" />
+            <TextView android:id="@+id/widget_scale_energy_3" style="@style/WidgetScaleCell" />
+            <TextView android:id="@+id/widget_scale_energy_4" style="@style/WidgetScaleCell" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="@dimen/widget_scale_row"
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
+            <TextView
+                android:layout_width="54dp"
+                android:layout_height="wrap_content"
+                android:text="@string/widget_scale_stress"
+                android:textColor="@color/widget_scale_dim"
+                android:textSize="11sp"
+                android:maxLines="1" />
+            <TextView android:id="@+id/widget_scale_stress_0" style="@style/WidgetScaleCell" />
+            <TextView android:id="@+id/widget_scale_stress_1" style="@style/WidgetScaleCell" />
+            <TextView android:id="@+id/widget_scale_stress_2" style="@style/WidgetScaleCell" />
+            <TextView android:id="@+id/widget_scale_stress_3" style="@style/WidgetScaleCell" />
+            <TextView android:id="@+id/widget_scale_stress_4" style="@style/WidgetScaleCell" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="@dimen/widget_scale_row"
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
+            <TextView
+                android:layout_width="54dp"
+                android:layout_height="wrap_content"
+                android:text="@string/widget_scale_focus"
+                android:textColor="@color/widget_scale_dim"
+                android:textSize="11sp"
+                android:maxLines="1" />
+            <TextView android:id="@+id/widget_scale_focus_0" style="@style/WidgetScaleCell" />
+            <TextView android:id="@+id/widget_scale_focus_1" style="@style/WidgetScaleCell" />
+            <TextView android:id="@+id/widget_scale_focus_2" style="@style/WidgetScaleCell" />
+            <TextView android:id="@+id/widget_scale_focus_3" style="@style/WidgetScaleCell" />
+            <TextView android:id="@+id/widget_scale_focus_4" style="@style/WidgetScaleCell" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/widget_scale_close"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/widget_scale_summary"
+            android:layout_width="match_parent"
+            android:layout_height="@dimen/widget_scale_line"
+            android:textColor="@color/widget_scale_dim"
+            android:textSize="11sp"
+            android:maxLines="1"
+            android:ellipsize="end" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="@dimen/widget_scale_row"
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
+            <TextView
+                android:layout_width="54dp"
+                android:layout_height="wrap_content"
+                android:text="@string/widget_scale_score"
+                android:textColor="@color/widget_scale_dim"
+                android:textSize="11sp"
+                android:maxLines="1" />
+            <TextView android:id="@+id/widget_scale_score_0" style="@style/WidgetScaleCell" />
+            <TextView android:id="@+id/widget_scale_score_1" style="@style/WidgetScaleCell" />
+            <TextView android:id="@+id/widget_scale_score_2" style="@style/WidgetScaleCell" />
+            <TextView android:id="@+id/widget_scale_score_3" style="@style/WidgetScaleCell" />
+            <TextView android:id="@+id/widget_scale_score_4" style="@style/WidgetScaleCell" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/widget_scale_log"
+        android:layout_width="match_parent"
+        android:layout_height="@dimen/widget_scale_row"
+        android:gravity="center"
+        android:text="@string/widget_scale_log"
+        android:textColor="@color/widget_scale_ink"
+        android:textSize="12sp"
+        android:maxLines="1"
+        android:visibility="gone" />
+</LinearLayout>

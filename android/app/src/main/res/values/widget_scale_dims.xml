@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- android/app/src/main/res/values/widget_scale_dims.xml
+     "오늘 찍기" 위젯의 높이 규격 (T-48 · ADR-043).
+
+     ★ **임계 dp의 자리는 여기 하나다.** Kotlin(`ScaleStore.tierFor`)은 숫자를 적지 않고
+        아래 셋을 더해서 단계를 고른다 — 블록이 커지면 임계도 함께 움직인다.
+        기준선 숫자를 한 곳에만 두는 것과 같은 이유다.
+
+     아래 셋은 위 넷의 합이다. `test/front.mjs`가 그 합을 검사한다:
+       h_base  = pad * 2 + line + row * 3     거부 표시 한 줄 + feelings 세 줄
+       h_close = line + row                   요약 한 줄 + score 한 줄
+       h_log   = row                          로그 쓰기 버튼
+
+     ⚠️ 실제 런처가 주는 `OPTION_APPWIDGET_MIN_HEIGHT`는 기기·런처마다 다르다.
+        여기 값은 레이아웃이 **요구하는** 높이이고, 실기기 실측은 티켓 §확인 절차가 진다. -->
+<resources>
+    <dimen name="widget_scale_pad">6dp</dimen>
+    <dimen name="widget_scale_line">18dp</dimen>
+    <dimen name="widget_scale_row">34dp</dimen>
+
+    <dimen name="widget_scale_h_base">132dp</dimen>
+    <dimen name="widget_scale_h_close">52dp</dimen>
+    <dimen name="widget_scale_h_log">34dp</dimen>
+</resources>

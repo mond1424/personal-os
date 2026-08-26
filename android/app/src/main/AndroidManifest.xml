@@ -166,6 +166,30 @@
                 android:resource="@xml/widget_add_task_info" />
         </receiver>
 
+        <!-- 홈 "오늘 찍기" 위젯 (T-48 · ADR-043) — 크기를 늘리면 찍을 것이 는다.
+             T-46의 "+" 위젯과 **별개 위젯이다.** 어느 쪽이 눌리는지가 그 자체로 답이 된다.
+
+             ⚠️ `exported="true"`인 이유는 T-46과 같다 — APPWIDGET_UPDATE는 system_server가
+                보내는 protected broadcast라 uid가 우리와 다르다. `false`면 등록 . 재부팅 시
+                `onUpdate`가 안 와서 위젯이 `initialLayout` 그대로 뜨고 눌러도 아무 일이 없다.
+
+             ⚠️ **탭과 하루 경계 알람은 여기 filter를 타지 않는다.** 둘 다 `setClass`로 컴포넌트를
+                명시한 명시 인텐트라 filter 없이 이 리시버에 그대로 닿는다. filter에 우리 액션을
+                적으면 **아무 앱이나 그 액션을 던져 남의 눈금을 찍을 수 있다** — 적지 않는다.
+
+             ⚠️ Guard와 무관하다. 발동 경로(alarm . FSI . service)에 아무것도 더하지 않는다. -->
+        <receiver
+            android:name=".widget.ScaleWidget"
+            android:label="@string/widget_scale_label"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_scale_info" />
+        </receiver>
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"

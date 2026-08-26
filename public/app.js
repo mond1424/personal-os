@@ -379,6 +379,16 @@ const DEEPLINK_ACTIONS = {
     const el = $("#add-title");
     if (el) { el.value = ""; el.focus(); }
   },
+  // "오늘 찍기" 위젯의 최대 크기 — [ 로그 쓰기 ] (T-48 · ADR-043).
+  // ⚠️ `RemoteViews`에 `EditText`가 없어서 **위젯 안에서는 못 친다.** 앱의 입력줄로 데려오는 것이
+  //    Android가 주는 전부다. 시트가 아니라 Today 하단 입력줄이 그 자리다(마감된 날엔 memo가 된다).
+  // ⚠️ `scrollIntoView`를 쓰지 않는다 — `.phone`이 overflow:hidden이라 셸이 밀린다(함정 1).
+  //    입력줄은 늘 화면에 있으므로 포커스만으로 닿는다.
+  "add-log": () => {
+    switchTab("today", false);
+    const el = $("#log-input");
+    if (el) { el.value = ""; el.focus(); }
+  },
 };
 
 /** URL → 무엇을 열지. 딥링크가 아니거나 모르는 경로면 `null`. */
@@ -516,6 +526,8 @@ function renderToday() {
   // 마감 후에는 하단 입력줄이 memo 입력이 된다 (1.3 — 추가만 가능)
   $("#log-input").placeholder = closed ? "memo 추가…" : "지금 기록…";
   $("#log-send").textContent = closed ? "memo" : "기록";
+
+  pushWidget();   // 홈 위젯이 앱을 따라온다 (T-48). 네이티브가 없으면 조용히 지나간다
 }
 
 function renderFeelings() {
@@ -537,6 +549,11 @@ function renderFeelings() {
         L.querySelectorAll(".lk").forEach((x) => x.classList.remove("on"));
         b.classList.add("on");
         L.parentElement.querySelector("b").textContent = i;
+        // 화면만 고치고 `S.today`를 안 고치면 **홈 위젯이 옛 값을 그대로 든다** (T-48 ⑤).
+        const row = S.today.feelings.find((x) => x.field === field);
+        if (row) row.value = i;
+        else S.today.feelings.push({ field, value: i, source: "scale" });
+        pushWidget();
       });
       L.appendChild(b);
     }
@@ -857,6 +874,43 @@ function renderCloseSummary() {
   }
 }
 
+/* ── 홈 "오늘 찍기" 위젯에 건네주기 (T-48 · ADR-043) ────────────────────────
+ * ★ **문장을 만드는 곳은 `closeSummaryText` 하나다.** 위젯이 같은 말을 하려면 둘 중 하나인데 —
+ *   Kotlin에 옮겨 적거나, 만든 것을 건네주거나 — 앞쪽은 두 벌이 되고 갈라진 쪽이 조용히
+ *   다른 말을 한다. 그래서 **여기서 만들어 네이티브로 보낸다**(티켓 ③의 판단).
+ *
+ * 값·경계도 같은 응답(`GET /api/today`)에서 왔으므로 함께 보낸다 — 그러면 위젯이
+ * 서버를 따로 부를 이유가 없어진다. **위젯이 서버에 쓰는 것은 탭 하나뿐이다.**
+ *
+ * ⚠️ 경계 시각을 여기서도 적지 않는다 — `T.boundary`가 그대로 간다(설정값이다).
+ * ⚠️ 브라우저·PWA엔 네이티브가 없다. **조용히 지나간다** — 화면을 인질로 잡지 않는다.
+ */
+function widgetPayload(T) {
+  const values = {};
+  for (const f of (T && T.feelings) || []) values[f.field] = f.value;
+  return {
+    date: (T && T.date) || "",
+    boundary: (T && T.boundary) || "",
+    summary: closeSummaryText(T),
+    values,
+    score: (T && T.daily && T.daily.score) ?? null,
+  };
+}
+
+/** @returns 보낸 것. `null`이면 아무 데도 안 보냈다(네이티브 없음·실패). 검사가 이 반환을 본다. */
+function pushWidget() {
+  try {
+    const W = globalThis.Capacitor?.Plugins?.Widget;
+    if (!W || !S.today) return null;
+    const payload = widgetPayload(S.today);
+    Promise.resolve(W.push?.(payload)).catch((e) => console.warn("[widget] push 실패:", e));
+    return payload;
+  } catch (e) {
+    console.warn("[widget] payload 실패 — 화면은 그대로:", e);
+    return null;
+  }
+}
+
 /* Score 막대 — 최근 2주 + 오늘 칸 탭·드래그 */
 let scoreDirty = null;
 /* 막대는 즉시 그리고, 지난 점수는 도착하는 대로 채운다 (빈 칸이 잠깐 보이지 않게) */
@@ -895,7 +949,11 @@ function paintScore() {
   bw.addEventListener("pointerup", () => {
     if (scoreDirty == null) return;
     const v = scoreDirty; scoreDirty = null;
-    run(async () => { await Api.score(v); S.today.daily = { ...(S.today.daily || {}), score: v, status: (S.today.daily && S.today.daily.status) || "open" }; });
+    run(async () => {
+      await Api.score(v);
+      S.today.daily = { ...(S.today.daily || {}), score: v, status: (S.today.daily && S.today.daily.status) || "open" };
+      pushWidget();   // 홈 위젯이 앱을 따라온다 (T-48 ⑤)
+    });
   });
 }
 

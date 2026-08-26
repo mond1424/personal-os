@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- android/app/src/main/res/xml/widget_scale_info.xml
+     "오늘 찍기" 위젯 메타 (T-48 · ADR-043).
+
+     `resizeMode="horizontal|vertical"` — **크기가 커지면 찍을 것이 는다.** 늘렸을 때
+     무엇이 켜지는지는 `ScaleStore.TIERS`가 정하고, 임계는 `widget_scale_dims.xml`의 합이다.
+
+     `updatePeriodMillis="0"` — **주기 갱신을 하지 않는다.** 최소가 30분이라 하루 48번
+     깨우면서도 경계(06:00)를 30분까지 늦게 잡는다. 대신 위젯이 **자기 경계에 알람 하나**를
+     건다(`ScaleWidget.armBoundary`) — 하루 한 번이고, 시각은 서버가 준 값이다.
+
+     ⚠️ `targetCellWidth` . `targetCellHeight` . `description` . `previewLayout`은 API 31+
+        속성이다. 그 아래에서는 조용히 무시되고 `minWidth` . `minHeight`가 대신 판정한다. -->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:minWidth="250dp"
+    android:minHeight="@dimen/widget_scale_h_base"
+    android:minResizeWidth="250dp"
+    android:minResizeHeight="@dimen/widget_scale_h_base"
+    android:maxResizeWidth="360dp"
+    android:maxResizeHeight="360dp"
+    android:targetCellWidth="4"
+    android:targetCellHeight="2"
+    android:resizeMode="horizontal|vertical"
+    android:widgetCategory="home_screen"
+    android:initialLayout="@layout/widget_scale"
+    android:previewLayout="@layout/widget_scale"
+    android:description="@string/widget_scale_description"
+    android:updatePeriodMillis="0" />

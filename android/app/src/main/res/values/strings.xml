@@ -9,4 +9,25 @@
     <string name="widget_add_task_glyph">+</string>
     <string name="widget_add_task_label">할 일 추가</string>
     <string name="widget_add_task_description">홈에서 한 번 눌러 할 일 입력창을 엽니다</string>
+
+    <!-- 홈 "오늘 찍기" 위젯 (T-48 · ADR-043).
+
+         ★ **여기에 마감 요약 문장을 적지 않는다.** 그 문장은 `public/app.js`의
+           `closeSummaryText` 하나가 만들고 위젯은 받아서 그린다(티켓 ③). 아래 문구들은
+           위젯 자신의 라벨과 거부 표시일 뿐이다. -->
+    <string name="widget_scale_label">오늘 찍기</string>
+    <string name="widget_scale_description">홈에서 몸 상태와 오늘 점수를 바로 찍습니다</string>
+    <string name="widget_scale_energy">에너지</string>
+    <string name="widget_scale_stress">스트레스</string>
+    <string name="widget_scale_focus">집중</string>
+    <string name="widget_scale_score">오늘 점수</string>
+    <string name="widget_scale_log">로그 쓰기</string>
+    <string name="widget_scale_cell_on">●</string>
+    <string name="widget_scale_cell_off">○</string>
+    <string name="widget_scale_no_summary">앱을 한 번 열면 오늘 요약이 와요</string>
+
+    <!-- ★ 되돌린 사실이 **남는 자리**. 위젯은 토스트를 못 띄운다(티켓 ④). -->
+    <string name="widget_scale_notice_closed">마감된 날이라 안 들어갔어요</string>
+    <string name="widget_scale_notice_net">서버에 못 닿아서 안 들어갔어요</string>
+    <string name="widget_scale_notice_http">서버가 받지 않았어요</string>
 </resources>

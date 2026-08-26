@@ -90,6 +90,70 @@ ok("② 발동이 0이면 집계가 0을 준다 (없는 게 아니라 0)",
 
 ok("Log 추가 201", (await api("POST", "/api/logs", { text: "곡선 통일 결정." })).status === 201);
 ok("빈 Log 400", (await api("POST", "/api/logs", { text: "  " })).status === 400);
+
+/* ── T-48 · 홈 "오늘 찍기" 위젯이 실제로 보내는 본문 (ADR-043) ────────────────
+ * ★ **정규식으로 "PUT이 있다"를 세지 않는다.** Kotlin의 상수를 뽑아 **그것으로 본문을 조립해
+ *   진짜로 쏜다** — 경로·바깥 키·눈금 중 하나라도 갈라지면 여기서 죽는다.
+ *   T-46이 `DEEP_LINK`를 살아 있는 `deepLinkAction`에 먹인 것과 같은 자리다:
+ *   두 문자열을 각자 정규식으로 보면 갈라져도 둘 다 초록이다.
+ *
+ * ⚠️ **여기가 열린 날이라서** 성공 경로를 여기서 잰다. 마감 뒤(§4)에 짝이 하나 더 있다 —
+ *    거기서는 같은 본문이 409로 돌아온다. 그 둘이 위젯 ④의 두 얼굴이다.
+ * ⚠️ 아래 `Feelings 눈금`·`Score 7`이 이 절이 흔든 값을 원래대로 덮는다 — §4의 물화 검사
+ *    (`mech.feelings.energy === 6` · `mech.score === 7`)가 그 값을 읽기 때문이다.
+ */
+const ktBare = (p: string) => readFileSync(join(here, p), "utf8")
+  .split("\n").filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join("\n");
+const ktScaleStore = ktBare("../android/app/src/main/java/dev/mond1424/personalos/widget/ScaleStore.kt");
+const ktStr = (src: string, name: string) =>
+  (new RegExp(`const val ${name}\\s*=\\s*"([^"]*)"`).exec(src) || [])[1] ?? "";
+const mSteps = /val STEPS\s*=\s*intArrayOf\(([^)]*)\)/.exec(ktScaleStore);
+const W_STEPS: number[] = (mSteps?.[1] ?? "").split(",").filter((s) => s.trim()).map((s) => Number(s.trim()));
+const mFields = /val FEELING_FIELDS\s*=\s*arrayOf\(([^)]*)\)/.exec(ktScaleStore);
+const W_FIELDS: string[] = ((mFields?.[1] ?? "").match(/"[^"]+"/g) ?? []).map((x) => x.slice(1, -1));
+const W_PATH_F = ktStr(ktScaleStore, "PATH_FEELINGS");
+const W_PATH_S = ktStr(ktScaleStore, "PATH_SCORE");
+const W_SCORE_FIELD = ktStr(ktScaleStore, "FIELD_SCORE");
+const W_BODY_F = ktStr(ktScaleStore, "BODY_FEELINGS");
+const W_BODY_S = ktStr(ktScaleStore, "BODY_SCORE");
+
+/** 뽑아 온 것이 비면 **거기서 알아채야 한다** — 빈 값으로 조용히 굴러가면 아래가 전부 무의미해진다. */
+const wF = (i: number): string => W_FIELDS[i] ?? "(지표 없음)";
+const wS = (i: number): number => W_STEPS[i] ?? -1;
+
+/** 위젯이 조립하는 본문 그대로. 상수 하나가 바뀌면 아래 왕복이 전부 따라 바뀐다. */
+const wBody = (field: string, value: number): Record<string, unknown> =>
+  field === W_SCORE_FIELD ? { [W_BODY_S]: value } : { [W_BODY_F]: { [field]: value } };
+
+ok("[T-48] 위젯 눈금이 다섯 칸(2·4·6·8·10) · 지표 셋이다",
+  JSON.stringify(W_STEPS) === "[2,4,6,8,10]" && W_FIELDS.length === 3,
+  `${JSON.stringify(W_STEPS)} / ${JSON.stringify(W_FIELDS)}`);
+
+// ★ 다섯 칸을 하나씩 눌러 본다 — 보낸 값이 그대로 담기는가.
+const wSeen: number[] = [];
+for (const step of W_STEPS) {
+  const r = await api("PUT", W_PATH_F, wBody(wF(0), step));
+  if (r.status !== 200) { wSeen.push(-r.status); continue; }
+  const t = (await api("GET", "/api/today")).json;
+  wSeen.push(t.feelings.find((f: any) => f.field === wF(0))?.value ?? -1);
+}
+ok("[T-48] ★ 다섯 칸이 그대로 담긴다 (위젯 본문으로 PUT → 되읽기)",
+  JSON.stringify(wSeen) === JSON.stringify(W_STEPS), JSON.stringify(wSeen));
+
+// 세 지표와 score는 **경로도 본문 모양도 다르다.** 한 경로만 맞아도 통과하지 않게 셋 다 본다.
+const wCodes = [
+  (await api("PUT", W_PATH_F, wBody(wF(1), wS(1)))).status,
+  (await api("PUT", W_PATH_F, wBody(wF(2), wS(3)))).status,
+  (await api("PUT", W_PATH_S, wBody(W_SCORE_FIELD, wS(2)))).status,
+];
+const wAfter = (await api("GET", "/api/today")).json;
+const wVal = (f: string) => wAfter.feelings.find((x: any) => x.field === f)?.value ?? null;
+ok("[T-48] 세 지표와 score가 각자 제 경로로 간다",
+  JSON.stringify(wCodes) === "[200,200,200]"
+  && wVal(wF(1)) === wS(1) && wVal(wF(2)) === wS(3)
+  && wAfter.daily?.score === wS(2),
+  `${JSON.stringify(wCodes)} / ${wVal(wF(1))}·${wVal(wF(2))}·${wAfter.daily?.score}`);
+
 ok("Feelings 눈금", (await api("PUT", "/api/daily/feelings", { values: { energy: 6, stress: 4 } })).status === 200);
 ok("Feelings 범위 검증", (await api("PUT", "/api/daily/feelings", { values: { energy: 11 } })).status === 400);
 ok("Score 7", (await api("PUT", "/api/daily/score", { score: 7 })).status === 200);
@@ -154,6 +218,16 @@ ok("mech: score·feelings 물화", mech.score === 7 && mech.feelings.energy === 
 ok("마감 후 Log 추가 → 409 번역", (await api("POST", "/api/logs", { text: "소급" })).status === 409);
 ok("마감 후 Score 수정 → 409", (await api("PUT", "/api/daily/score", { score: 9 })).status === 409);
 ok("마감 후 다이얼 → 동결 409", (await api("PUT", `/api/tasks/${tA}/rate`, { date: D, rate: 90 })).status === 409);
+
+/* ★ T-48의 짝 — **거부는 상상이 아니다** (ADR-043 결정 ③).
+ * 위 [2]에서 200을 받은 **그 본문 그대로** 다시 쏜다. 마감된 날에는 `feelings_frozen_ins`가
+ * **추가까지** 막아 409가 온다(함정 6 — '마감된 날에도 추가되는 것'은 events와 memo뿐이다).
+ * 위젯은 토스트를 못 띄우므로, 이 409를 안 되돌리면 **그 하루의 마지막 탭이 조용히 사라진다.**
+ * 여기서 세는 것은 "서버가 정말 거부하는가"이고, "위젯이 되돌리는가"는 front가 센다. */
+ok("[T-48] ★ 마감된 날엔 위젯 feelings 본문도 409 (추가까지 막힌다)",
+  (await api("PUT", W_PATH_F, wBody(wF(0), wS(0)))).status === 409);
+ok("[T-48] ★ score 경로도 같다 — 되돌릴 자리가 두 경로 다 있다",
+  (await api("PUT", W_PATH_S, wBody(W_SCORE_FIELD, wS(4)))).status === 409);
 
 // ── 5. memo — 어느 날짜에든(3단계) + summary stale ──────────────
 console.log("\n[5] memo — 어느 날짜에든 + stale");

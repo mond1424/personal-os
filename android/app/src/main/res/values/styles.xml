@@ -30,4 +30,21 @@
         <item name="android:statusBarColor">#1A1713</item>
         <item name="android:navigationBarColor">#1A1713</item>
     </style>
+
+    <!-- "오늘 찍기" 위젯의 눈금 한 칸 (T-48 · ADR-043).
+         스무 칸이 같은 규격이라 스타일로 한 번만 적는다 — 레이아웃에 스무 벌을 두면
+         한 칸만 다르게 고쳐지는 자리가 스무 개 생긴다.
+
+         ★ 채움과 빔을 **글자**로 가른다(동그라미 두 종류). 색으로 가르면 런타임에
+           `setTextColor`를 불러야 하고, 그 순간 색이 XML 밖으로 나가 `values-night`가
+           일을 안 한다(함정 5의 안드로이드판). -->
+    <style name="WidgetScaleCell">
+        <item name="android:layout_width">0dp</item>
+        <item name="android:layout_height">match_parent</item>
+        <item name="android:layout_weight">1</item>
+        <item name="android:gravity">center</item>
+        <item name="android:textColor">@color/widget_scale_ink</item>
+        <item name="android:textSize">17sp</item>
+        <item name="android:includeFontPadding">false</item>
+    </style>
 </resources>
