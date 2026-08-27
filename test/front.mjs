@@ -2386,6 +2386,95 @@ ok("⑭ 네이티브가 없으면 조용히 지나간다 (브라우저·PWA에�
 ev(`(() => { closeAll(); switchTab("today", false); })()`);
 await sleep(200);
 
+// ── T-49 · 홈 3×1 "로그 쓰기" 위젯 ─────────────────────────────────────────
+//
+// **T-46의 "+"와 같은 물건에 다른 옷이다** — 탭 → 딥링크 → 앱 입력창. 그래서 여기서
+// 새로 볼 것은 배선 하나뿐이고, `add-log` 액션 자체는 T-48이 이미 세웠다(이 티켓은 안 고친다).
+console.log("\n[T-49] 로그 쓰기 위젯 — 딥링크 하나");
+
+const t49Kt = t46Bare(readFileSync(
+  join(here, "../android/app/src/main/java/dev/mond1424/personalos/widget/LogWidget.kt"), "utf8"));
+const t49Layout = t46NoXml(readFileSync(
+  join(here, "../android/app/src/main/res/layout/widget_log.xml"), "utf8"));
+const t49Draw = t46NoXml(readFileSync(
+  join(here, "../android/app/src/main/res/drawable/widget_log_bg.xml"), "utf8"));
+
+/** 탭이 딥링크로 이어져 있는가. ⑤가 **이 함수 자체**를 합성 줄로 검증한다. */
+const T49_TAP = (src) =>
+  /setOnClickPendingIntent\s*\(/.test(src) && /PendingIntent\.getActivity\s*\(/.test(src)
+  && /Intent\.ACTION_VIEW/.test(src) && /MainActivity::class\.java/.test(src);
+
+const t49Url = (/DEEP_LINK\s*=\s*"([^"]+)"/.exec(t49Kt) || [])[1];
+
+// ① 배선 — RemoteViews에 PendingIntent를 걸고, 던지는 것이 우리 스킴의 딥링크다.
+//    ⚠️ **여기서 액션 이름은 안 본다.** 이름의 옳고 그름은 ②가 대장에 물어서 가른다.
+ok("① 위젯이 탭을 딥링크로 잇는다 (Kotlin — RemoteViews에 PendingIntent를 건다)",
+  T49_TAP(t49Kt) && /^personalos:\/\/[a-z-]+$/.test(t49Url || ""),
+  `wire=${T49_TAP(t49Kt)} url=${t49Url}`);
+
+/* ② ★ ①의 짝 — **그 이름이 대장에 실제로 있는가.**
+ * ①만 보면 `add-logs`처럼 **한 글자 틀린 딥링크**가 통과한다. 그러면 `deepLinkAction`이
+ * `null`을 주고 T-46이 세운 폴백이 그냥 Today를 띄운다 — 위젯을 눌렀는데 *"앱이 열리긴 했다"* 로
+ * 보여서 **결함이 조용해진다.** 그래서 두 문자열을 각자 정규식으로 보지 않고,
+ * Kotlin이 던지는 URL을 **살아 있는 `deepLinkAction`에 먹인다.** */
+ok("② ★ Kotlin이 던지는 URL을 웹의 대장이 실제로 해석한다 (한 글자도 안 틀렸다)",
+  ev(`deepLinkAction(${JSON.stringify(t49Url || "")})`) === "add-log"
+  && ev(`Object.prototype.hasOwnProperty.call(DEEPLINK_ACTIONS, "add-log")`) === true,
+  `url=${t49Url} action=${ev(`deepLinkAction(${JSON.stringify(t49Url || "")})`)}`);
+
+/* ③ 다크 짝 — **없는 것을 센다.** 한쪽에만 있는 이름은 그 모드에서 반대쪽 값이 그대로 쓰여
+ * 아무 소리 없이 배경과 같은 색이 된다(함정 5의 Android판).
+ * ⚠️ 파일이 통째로 없어도 **검사 하나만 죽어야 한다** — 여기서 던지면 러너가 통째로 멈춘다. */
+const t49Colors = (p) => {
+  try {
+    return new Set([...readFileSync(join(here, p), "utf8").matchAll(/<color\s+name="([^"]+)"/g)]
+      .map((m) => m[1]));
+  } catch { return new Set(); }
+};
+const t49Light = t49Colors("../android/app/src/main/res/values/widget_log_colors.xml");
+const t49Night = t49Colors("../android/app/src/main/res/values-night/widget_log_colors.xml");
+const t49Orphan = [...t49Light].filter((n) => !t49Night.has(n))
+  .concat([...t49Night].filter((n) => !t49Light.has(n)));
+ok("③ values-night 색이 짝으로 있다 — 한쪽에만 있는 이름이 0이고, 레이아웃·배경이 그 이름만 쓴다",
+  t49Light.size >= 3 && t49Orphan.length === 0
+  && [...t49Light].every((n) => new RegExp(`@color/${n}\\b`).test(t49Layout + t49Draw)),
+  `light=${[...t49Light]} night=${[...t49Night]} orphan=${t49Orphan}`);
+
+/* ④ 리터럴 0 — 색은 `values-night`가 일해야 하고, 문구는 한 곳에서 고쳐야 한다.
+ * 둥근 모서리 때문에 배경이 드로어블로 나갔으므로 **드로어블까지 함께 본다** —
+ * 레이아웃만 보면 색을 드로어블에 박는 것이 통과한다. */
+ok("④ 레이아웃·배경에 색 리터럴도 문자열 리터럴도 없다",
+  !/="#[0-9A-Fa-f]{3,8}"/.test(t49Layout + t49Draw)
+  && !/android:text="(?!@string\/)/.test(t49Layout)
+  && /@string\/widget_log_hint/.test(t49Layout),
+  `색=${/="#[0-9A-Fa-f]{3,8}"/.exec(t49Layout + t49Draw)} 글=${/android:text="(?!@string\/)/.exec(t49Layout)}`);
+
+/* ⑤ ★ ①의 짝 — **스캐너가 살아 있는가.** 눈멀면 ①은 배선과 무관하게 초록이 되고,
+ * "배선이 끊겼다"인지 "정규식이 낡았다"인지 구별이 안 된다. 합성 줄로 가른다 —
+ * **주석뿐이면 '안 배선됨'이어야 한다.** */
+const t49Real = [
+  "RemoteViews(context.packageName, R.layout.widget_log).apply {",
+  "    setOnClickPendingIntent(R.id.widget_log_root, tapIntent(context))",
+  "val intent = Intent(Intent.ACTION_VIEW, Uri.parse(DEEP_LINK)).apply { setClass(context, MainActivity::class.java) }",
+  "return PendingIntent.getActivity(context, REQ_TAP, intent, 0)",
+].join("\n");
+ok("⑤ ★ ①의 스캐너가 살아 있다 — 배선은 잡고, 주석뿐이면 안 잡는다",
+  T49_TAP(t49Real) && !T49_TAP(t46Bare(t49Real.split("\n").map((l) => "// " + l).join("\n")))
+  && !T49_TAP("setOnClickPendingIntent(R.id.x, y)"),
+  `real=${T49_TAP(t49Real)}`);
+
+/* ⑥ Manifest — 선언이 빠지면 위젯이 목록에 아예 안 뜨거나, 떠도 `onUpdate`가 안 와서
+ * `initialLayout` 그대로 굳어 **눌러도 아무 일이 없다**(T-46이 물린 자리).
+ * `exported="false"`가 그 실패를 만든다 — APPWIDGET_UPDATE는 system_server가 보낸다. */
+const t49Manifest = t46NoXml(readFileSync(
+  join(here, "../android/app/src/main/AndroidManifest.xml"), "utf8"));
+const t49Block = (/<receiver[^>]*\.widget\.LogWidget[\s\S]*?<\/receiver>/.exec(t49Manifest) || [])[0] || "";
+ok("⑥ Manifest가 로그 위젯을 선언한다 — exported=true · APPWIDGET_UPDATE · 자기 메타",
+  /android:exported="true"/.test(t49Block)
+  && /android\.appwidget\.action\.APPWIDGET_UPDATE/.test(t49Block)
+  && /android:resource="@xml\/widget_log_info"/.test(t49Block),
+  `블록=${t49Block.length}자`);
+
 console.log("\n[부팅 · 연결 실패 복구]");
 ok("로드 후 부팅 오버레이 닫힘", !$("#boot").classList.contains("on"));
 

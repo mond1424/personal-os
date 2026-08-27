@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- android/app/src/main/res/drawable/widget_log_bg.xml
+     "로그 쓰기" 위젯의 배경 (T-49).
+
+     ★ **둥근 모서리는 shape 드로어블로만 된다** — `RemoteViews`에는 런타임에 모서리를 깎는
+        수단이 없다. 이 파일이 있어야 "입력줄처럼 보이는" 요구가 선다.
+
+     ⚠️ 색은 `@color/…` 참조다. 리터럴을 박으면 `values-night/`가 일을 안 해서
+        다크 모드에서 배경이 셸과 같은 색이 되고 입력줄로 안 읽힌다(함정 5의 Android판).
+        참조는 인플레이트 시점의 설정으로 풀리므로 드로어블 한 벌로 두 모드가 다 된다. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="@color/widget_log_bg" />
+    <stroke
+        android:width="1dp"
+        android:color="@color/widget_log_line" />
+    <corners android:radius="18dp" />
+</shape>

@@ -190,6 +190,28 @@
                 android:resource="@xml/widget_scale_info" />
         </receiver>
 
+        <!-- 홈 3×1 "로그 쓰기" 위젯 (T-49) — 검색창처럼 생겼고 탭하면 앱의 입력줄로 간다.
+             T-46의 "+"와 **같은 물건에 다른 옷이다**(탭 → 딥링크 → 입력창). 합치지 않는 이유는
+             둘 중 어느 쪽이 눌리는지가 "안 눌리는 이유가 어포던스인가"를 답하기 때문이다.
+
+             ⚠️ `exported="true"`인 이유는 앞의 둘과 같다 — APPWIDGET_UPDATE는 system_server가
+                보내는 protected broadcast라 uid가 우리와 다르다. `false`면 등록 . 재부팅 시
+                `onUpdate`가 안 와서 위젯이 `initialLayout` 그대로 뜨고 눌러도 아무 일이 없다.
+
+             ⚠️ 딥링크 스킴 filter는 위 MainActivity에 이미 있다. 여기 다시 적지 않는다 —
+                이 리시버가 던지는 것은 `setClass`로 컴포넌트를 명시한 명시 인텐트다. -->
+        <receiver
+            android:name=".widget.LogWidget"
+            android:label="@string/widget_log_label"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_log_info" />
+        </receiver>
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"

@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- android/app/src/main/res/xml/widget_log_info.xml
+     3×1 "로그 쓰기" 위젯 메타 (T-49).
+
+     `minWidth="180dp"` = 가로 3칸, `minHeight="40dp"` = 세로 1칸.
+     (런처의 한 칸은 대략 70dp이고 규격은 `70n - 30`이다 — 3칸이면 180dp.)
+
+     `resizeMode="horizontal"` — 가로로만 늘린다. 세로로 늘려도 그릴 것이 없다.
+
+     `updatePeriodMillis="0"` — **주기 갱신을 하지 않는다.** 그릴 데이터가 없으므로
+     깨울 이유도 없다(T-46과 같은 판단. 데이터를 그리면 그때 갱신이 따라온다).
+
+     ⚠️ `targetCellWidth` . `targetCellHeight` . `description` . `previewLayout`은 API 31+
+        속성이다. 그 아래에서는 조용히 무시되고 `minWidth` . `minHeight`가 대신 판정한다. -->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:minWidth="180dp"
+    android:minHeight="40dp"
+    android:minResizeWidth="180dp"
+    android:minResizeHeight="40dp"
+    android:targetCellWidth="3"
+    android:targetCellHeight="1"
+    android:resizeMode="horizontal"
+    android:widgetCategory="home_screen"
+    android:initialLayout="@layout/widget_log"
+    android:previewLayout="@layout/widget_log"
+    android:description="@string/widget_log_description"
+    android:updatePeriodMillis="0" />

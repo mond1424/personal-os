@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- android/app/src/main/res/values/widget_log_colors.xml — 밝은 쪽 (T-49).
+
+     ★ **`values-night/widget_log_colors.xml`과 이름이 정확히 짝이어야 한다.**
+        한쪽에만 있는 이름은 그 모드에서 **없는 것이 아니라 반대쪽 값이 그대로 쓰인다** —
+        위젯이 아무 소리 없이 배경과 같은 색 글씨가 된다. `test/front.mjs`가 그 차집합을 센다.
+
+     ⚠️ **위젯마다 자기 색 파일을 가진다.** T-46의 검사가 *"`widget_colors.xml`의 색 이름은
+        전부 그 레이아웃이 쓴다"* 를 세므로 한 파일에 몰면 남의 검사가 빨간불이 된다(T-48이 겪었다).
+
+     값은 웹 셸과 맞춘다 — `public/style.css`의 card . line . sub. -->
+<resources>
+    <color name="widget_log_bg">#FFFFFF</color>
+    <color name="widget_log_line">#E7E2D8</color>
+    <color name="widget_log_dim">#787164</color>
+</resources>
