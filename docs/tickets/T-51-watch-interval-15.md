@@ -135,12 +135,102 @@ await Capacitor.Plugins.Guard.watchStatus()   // 둘 다 15인지 눈으로
 ## 보고 (담당이 채운다)
 
 ```
-티켓: T-51
-바꾼 파일:
-기준선: typecheck · smoke 375(변화 없음) · front 357 → ? · verify exit 0
-       assembleRelease · cap sync · APK MD5
-재발동 간격을 어디에 뒀나 · 리터럴이 남았는가:
-③ watchMaxPerNight 를 어떻게 했나 · 근거:
-coerceIn 범위를 무엇으로 잡았나 · 이웃과 같은가:
-변이 넷이 각각 하나씩만 죽였는가:
+티켓: T-51 · 2026-08-28 · Claude Code
+바꾼 파일: android/.../guard/GuardSettings.kt · GuardWatch.kt · GuardPlugin.kt · test/front.mjs
+기준선: typecheck 통과 · smoke 377(변화 없음) · front 357 → 363 · 실패 0 · verify exit 0
+       assembleRelease BUILD SUCCESSFUL · npx cap sync android 성공
+       APK MD5 4eb230d74f298073ff20f36718e37410
+       ⚠️ 완료 조건의 "smoke 375"는 377이다 — T-50이 먼저 들어가 +7 됐다(이 티켓과 무관).
 ```
+
+### 재발동 간격을 어디에 뒀나 · 리터럴이 남았는가
+
+**`GuardSettings.watchRefireMinutes` (기본 15).** `GuardWatch.REFIRE_MS` 상수는 없앴다.
+
+```kotlin
+if (l2done && now - last < s.watchRefireMinutes * 60_000L) return false
+```
+
+**`GuardWatch`에 분(分) 리터럴이 0이다** — 검사 ②가 `\d+ * 60_000` 꼴을 세서 확인한다.
+남은 `60_000L`은 **밀리초 환산 계수**이지 임계가 아니다(앞에 붙는 것이 숫자가 아니라 설정값이다).
+
+`watchStatus`에 `refireMin`을 함께 노출했다 — **둘이 같은 화면에 보여야 짝으로 읽힌다.**
+그리고 KDoc의 *"이후 30분마다"* 도 지웠다: 숫자를 주석에 박으면 설정과 두 벌이 되고,
+그 순간 그 주석이 틀린 문서가 된다.
+
+### ★ ③ watchMaxPerNight 를 어떻게 했나 · 근거
+
+**(a) 올렸다. 5 → 9.**
+
+**이것은 요청받은 변경이 아니라 요청의 부작용을 되돌린 것이다.**
+
+```
+옛것   5회 × 30분 간격  →  첫 발동 뒤 (5−1)×30 = 120분을 덮는다
+그대로 5회 × 15분 간격  →  첫 발동 뒤  (5−1)×15 =  60분  ← 취침 창 5.5시간의 뒤쪽이 통째로 빈다
+새것   9회 × 15분 간격  →  첫 발동 뒤 (9−1)×15 = 120분   ← 옛 커버 시간 그대로
+```
+
+**9 = (5 − 1) × 30 ÷ 15 + 1.** 임의로 고른 수가 아니라 **커버 시간을 보존하는 유일한 수**다.
+즉 **요청한 것(밀도)은 바꾸고, 요청하지 않은 것(커버 시간)은 지킨다.**
+사용자가 말한 것은 *"더 일찍, 더 자주"* 였지 *"더 일찍 끝나라"* 가 아니었다.
+
+**(c) 그대로 두는 쪽을 고르지 않은 결정적 이유는 실측이다.** §확인 절차의 마지막 줄이
+*"새벽 늦게까지 개입이 남아 있는가"* 를 묻는데, 상한이 5면 **01:45에 끝나는 것이 규칙 때문인지
+상한 때문인지 갈리지 않는다.** 오늘 밤은 이미 두 변경(간격 · 상시 알림 채널)이 겹쳐 있어서
+세 번째 교란 요인을 더하면 그 밤의 관측이 아무것도 못 가른다.
+
+**(b) 시간당 상한은 안 골랐다** — 구조 변경이고 이 티켓엔 크다. 그리고 지금 필요한 것은
+*"밤 전체를 덮는가"* 하나인데 그건 총량 조정으로 답이 난다. **(b)는 다음 후보로 남겨 둔다.**
+
+⚠️ **올리는 쪽도 그냥 안전하지 않다**(§6.3 — 실패는 잔소리로 도구를 떠나는 것이다).
+**되돌릴 신호를 미리 적어 둔다**: Override·무시 비율이 오르면 9가 잔소리로 읽힌 것이고,
+그때는 (b) 시간당 상한이다. `watchMaxPerNight`는 **이미 설정이라 APK 없이 되돌릴 수 있다.**
+
+### ⚠️ §확인 절차의 명령에 `maxPerNight` 가 빠져 있다
+
+```js
+// 티켓에 적힌 것 — 이대로 붙여넣으면 기기에 옛 상한 5가 남는다
+await Capacitor.Plugins.Guard.setWatch({ minutes: 15, refireMinutes: 15 })
+
+// 이렇게 불러야 ③의 실측이 가능하다
+await Capacitor.Plugins.Guard.setWatch({ minutes: 15, refireMinutes: 15, maxPerNight: 9 })
+await Capacitor.Plugins.Guard.watchStatus()   // thresholdMin · refireMin · maxPerNight 셋을 눈으로
+```
+
+기본값을 바꿔도 **이미 깔린 기기의 SharedPreferences 는 안 따라온다** — 티켓이 `watchMinutes`에
+대해 적어 둔 그 경고가 `watchMaxPerNight`에도 똑같이 걸린다. **§확인 절차는 Cowork 소유라
+고치지 않고 여기 적는다.**
+
+### coerceIn 범위를 무엇으로 잡았나 · 이웃과 같은가
+
+**`1..240` — `watchMinutes`와 정확히 같다.** 둘은 *"언제 처음 말하고, 그 뒤 얼마 만에 다시
+말하는가"* 라는 **한 판단의 두 손잡이**라, 한쪽만 다른 상한을 두면 0이나 거대값이 들어왔을 때
+**어느 쪽이 먼저 걸렸는지 못 읽는다.** `watchMaxPerNight`의 `1..20`은 손대지 않았다(9가 그 안이다).
+
+검사 ⑤가 셋을 함께 센다 — refire가 `1..240`인가 · minutes와 **같은가** · max가 `1..20`인가.
+
+### 변이 넷이 각각 하나씩만 죽였는가
+
+**그렇다. 기준선 363에서 넷 전부 362 · 실패 1이다.**
+
+| 변이 | 통과 | 죽은 검사 |
+|---|---|---|
+| A 간격을 다시 상수로 박는다 | 362 | ② 설정에서 온다 |
+| B ②의 스캐너를 눈멀게 한다 | 362 | ③ (②는 초록) |
+| C 기본값 하나만 15로 한다 | 362 | ④ 둘 다 15 |
+| D `coerceIn`을 뺀다 | 362 | ⑤ 이웃과 같은 범위 |
+
+**변이 뒤 복구를 숫자로 확인했다**: verify가 377/363으로 돌아왔고 `assembleRelease`가
+**166 up-to-date**라 APK가 한 바이트도 안 바뀌었다(위 MD5가 최종이다).
+
+⚠️ **C를 처음 돌렸을 때 front.mjs가 통째로 죽었다 — 이 티켓과 무관한 곳이다.**
+`test/front.mjs:1283`에서 `addedMemo.created_at`이 `undefined`였다(memo 절). Kotlin 기본값이
+닿을 수 없는 자리이고 재실행에서 정상이었다 — **함정 8이 말하는 간헐 플레이크**다.
+다만 **한 검사가 죽는 대신 러너가 죽어 숫자를 잃는 모양**이라 적어 둔다:
+바로 위 `ok()`가 이미 `azDay.memos.some(...)`을 세므로, 그 아래 한 줄을
+`addedMemo?.created_at ?? ""`로 감싸면 같은 상황이 **검사 하나의 실패**로 남는다.
+**이 티켓의 범위가 아니라 고치지 않았다.**
+
+### Codex 위임
+
+**불가 — `guard/` 아래는 위임 금지 영역이다**(AGENT-CHAIN §4). 전부 직접 했다.

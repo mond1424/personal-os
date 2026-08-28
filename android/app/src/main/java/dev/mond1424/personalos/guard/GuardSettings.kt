@@ -43,12 +43,40 @@ class GuardSettings(ctx: Context) {
 
     /** 연속 사용 임계(분). 잠깐 확인하는 것과 붙잡고 있는 것을 가른다. */
     var watchMinutes: Int
-        get() = p.getInt(K_WATCH_MIN, 20)
+        get() = p.getInt(K_WATCH_MIN, 15)
         set(v) = p.edit().putInt(K_WATCH_MIN, v.coerceIn(1, 240)).apply()
 
-    /** 하룻밤 최대 발동 횟수. 오발동이 매일 반복되면 도구를 떠난다(§6.3). */
+    /**
+     * Level 3 재발동 간격(분) — T-51에서 `GuardWatch`의 상수에서 여기로 내려왔다.
+     *
+     * ★ **같은 규칙의 두 임계가 한 곳에 있어야 한다.** 위 [watchMinutes]와 이 값은
+     *   *"언제 처음 말하고, 그 뒤 얼마 만에 다시 말하는가"* 라는 한 판단의 두 손잡이인데,
+     *   하나는 설정이고 하나는 코드 상수였다 — 그러면 조정할 때마다 APK가 든다.
+     *   **9~11월 실사용에서 가장 먼저 만질 값이 이 둘이다**(§6.3의 반복 수정).
+     *
+     * 범위는 [watchMinutes]와 **같은 `1..240`** 이다. 두 값이 같은 규칙의 두 손잡이라
+     * 한쪽만 다른 상한을 두면 어느 쪽이 먼저 걸렸는지 못 읽는다.
+     */
+    var watchRefireMinutes: Int
+        get() = p.getInt(K_WATCH_REFIRE, 15)
+        set(v) = p.edit().putInt(K_WATCH_REFIRE, v.coerceIn(1, 240)).apply()
+
+    /**
+     * 하룻밤 최대 발동 횟수. 오발동이 매일 반복되면 도구를 떠난다(§6.3).
+     *
+     * ★ **T-51이 5에서 9로 올렸다 — 요청받은 것이 아니라 요청의 부작용을 되돌린 것이다.**
+     *   간격이 절반이 되면 상한도 두 배 빨리 닳는다: 5회 × 30분이면 첫 발동 뒤 2시간을
+     *   덮었는데, 5회 × 15분이면 1시간에 끝나고 **취침 창(5.5시간)의 뒤쪽이 통째로 빈다.**
+     *   가장 필요한 새벽이 비는 모양이고, 그것은 *"더 자주 개입해 달라"* 의 반대다.
+     *
+     *   9는 **옛 커버 시간을 그대로 유지하는 수**다:  (5 − 1) × 30 ÷ 15 + 1 = 9.
+     *   즉 **요청한 것(밀도)은 바꾸고, 요청하지 않은 것(커버 시간)은 지킨다.**
+     *
+     * ⚠️ **올리는 쪽도 그냥 안전하지 않다**(§6.3 — 실패는 잔소리로 도구를 떠나는 것이다).
+     *    되돌릴 신호는 Override·무시 비율이고, 그때는 시간당 상한(구조 변경)이 다음 후보다.
+     */
     var watchMaxPerNight: Int
-        get() = p.getInt(K_WATCH_MAX, 5)
+        get() = p.getInt(K_WATCH_MAX, 9)
         set(v) = p.edit().putInt(K_WATCH_MAX, v.coerceIn(1, 20)).apply()
 
     companion object {
@@ -58,6 +86,7 @@ class GuardSettings(ctx: Context) {
         private const val K_BED_FROM = "bed_from"
         private const val K_BED_TO = "bed_to"
         private const val K_WATCH_MIN = "watch_minutes"
+        private const val K_WATCH_REFIRE = "watch_refire_minutes"
         private const val K_WATCH_MAX = "watch_max_per_night"
     }
 }

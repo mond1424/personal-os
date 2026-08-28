@@ -13,7 +13,10 @@ import java.util.Calendar
  *   전례가 없으면 자기 보정(§6.5)은 12월에도 발화하지 못한다 — 실사용 기간의 목적 자체가 무너진다.
  *
  * 규칙은 **결정론**이다(ADR-021 유지). 위험도 점수나 AI가 아니라 관찰값의 임계 비교다:
- *   취침 창 안 · 화면 켜짐 · 연속 사용 ≥ N분  →  Level 2(1회) → 이후 30분마다 Level 3
+ *   취침 창 안 · 화면 켜짐 · 연속 사용 ≥ N분  →  Level 2(1회) → 이후 M분마다 Level 3
+ *
+ * ⚠️ **N도 M도 여기 적지 않는다** — 둘 다 `GuardSettings`가 진다(T-51).
+ *    숫자를 주석에 박으면 설정과 두 벌이 되고, 그 순간 이 주석이 틀린 문서가 된다.
  *
  * 실패 사례 #1이 정확히 이 상황이다 — 시험 전날 밤, 몰입, 새벽.
  *
@@ -22,8 +25,10 @@ import java.util.Calendar
  */
 object GuardWatch {
 
-    /** Level 3 재발동 간격. §6.1 Level 4의 30분과 같은 감각. */
-    private const val REFIRE_MS = 30 * 60_000L
+    // ★ **재발동 간격은 여기 없다** — `GuardSettings.watchRefireMinutes`가 진다 (T-51).
+    //   `watchMinutes`(첫 발동 임계)와 같은 규칙의 두 손잡이인데 하나만 상수였고,
+    //   그러면 조정할 때마다 APK가 든다. 9~11월에 가장 먼저 만질 값이 이 둘이다.
+    //   ⚠️ 여기에 분(分)을 다시 박으면 `test/front.mjs`의 스캐너가 빨간불이 된다.
 
     private const val K_LAST_FIRE = "watch_last_fire_at"
     private const val K_NIGHT_KEY = "watch_night_key"
@@ -65,7 +70,7 @@ object GuardWatch {
 
         // 처음은 Level 2(맥락 경고). 바로 Level 3으로 가면 오발동 비용이 크다.
         val level = if (!l2done) 2 else 3
-        if (l2done && now - last < REFIRE_MS) return false
+        if (l2done && now - last < s.watchRefireMinutes * 60_000L) return false
 
         val app = UsageProbe.currentApp(ctx)
         val title = if (level == 2) "아직 깨어 있네요" else "지금 자야 합니다"
@@ -94,6 +99,7 @@ object GuardWatch {
             .put("bedFrom", s.bedFrom).put("bedTo", s.bedTo)
             .put("inWindow", inBedWindow(s.bedFrom, s.bedTo))
             .put("thresholdMin", s.watchMinutes)
+            .put("refireMin", s.watchRefireMinutes)   // T-51 — 둘이 같은 화면에 보여야 짝으로 읽힌다
             .put("continuousMin", GuardActivityLog.continuousScreenOnMin(ctx))
             .put("firedTonight", pr.getInt(K_NIGHT_N, 0))
             .put("maxPerNight", s.watchMaxPerNight)

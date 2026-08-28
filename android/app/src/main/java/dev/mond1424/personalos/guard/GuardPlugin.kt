@@ -288,6 +288,9 @@ class GuardPlugin : Plugin() {
         call.getString("bedFrom")?.let { s.bedFrom = it }
         call.getString("bedTo")?.let { s.bedTo = it }
         call.getInt("minutes")?.let { s.watchMinutes = it }
+        // 재발동 간격 (T-51). `minutes`와 **한 판단의 두 손잡이**라 같은 자리에서 받는다 —
+        // 전엔 이것만 코드 상수여서 조정할 때마다 APK가 들었다.
+        call.getInt("refireMinutes")?.let { s.watchRefireMinutes = it }
         call.getInt("maxPerNight")?.let { s.watchMaxPerNight = it }
         watchStatus(call)
     }

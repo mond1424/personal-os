@@ -2475,6 +2475,86 @@ ok("⑥ Manifest가 로그 위젯을 선언한다 — exported=true · APPWIDGET
   && /android:resource="@xml\/widget_log_info"/.test(t49Block),
   `블록=${t49Block.length}자`);
 
+// ── T-51 · 밤 개입이 더 일찍, 더 자주 ──────────────────────────────────────
+//
+// ⚠️ **jsdom은 Kotlin을 못 돌린다.** 여기 다섯은 전부 스캐너이고, **진짜 판정은 오늘 밤이다**
+//    (§확인 절차 — 15분 만에 첫 알림이 오는가 · 그 뒤 15분 간격인가 · 새벽까지 남는가).
+//    그래서 여기서 세는 것은 *"동작하는가"*가 아니라 **"값이 설정에 있는가"** 하나다.
+console.log("\n[T-51] 밤 개입 — 간격이 설정으로 내려왔는가");
+
+const t51Kt = (p) => t46Bare(readFileSync(
+  join(here, "../android/app/src/main/java/dev/mond1424/personalos/guard/" + p), "utf8"));
+const t51Settings = t51Kt("GuardSettings.kt");
+const t51Watch = t51Kt("GuardWatch.kt");
+const t51Plugin = t51Kt("GuardPlugin.kt");
+
+/** 프로퍼티 하나의 본문만. 옆 프로퍼티까지 흘러 들어가면 `coerceIn`을 빼도 이웃 것이 잡힌다. */
+const t51Block = (name) => {
+  const i = t51Settings.indexOf(`var ${name}: Int`);
+  if (i < 0) return "";
+  const rest = t51Settings.slice(i);
+  const j = rest.slice(1).search(/\n {4}(var |fun |companion )/);
+  return j < 0 ? rest : rest.slice(0, j + 1);
+};
+const t51Default = (name) => {
+  const m = /getInt\(\w+,\s*(\d+)\)/.exec(t51Block(name));
+  return m ? +m[1] : null;
+};
+const t51Range = (name) => {
+  const m = /coerceIn\((\d+),\s*(\d+)\)/.exec(t51Block(name));
+  return m ? `${m[1]}..${m[2]}` : null;
+};
+
+// ① 웹 → 플러그인 → 설정 → 상태. **네 마디가 다 이어져야** 폰 콘솔에서 한 줄로 덮을 수 있다.
+ok("① setWatch가 refire 간격을 받아 저장하고 watchStatus가 돌려준다",
+  /call\.getInt\("refireMinutes"\)\?\.let \{ s\.watchRefireMinutes = it \}/.test(t51Plugin)
+  && /var watchRefireMinutes: Int/.test(t51Settings)
+  && /\.put\("refireMin", s\.watchRefireMinutes\)/.test(t51Watch),
+  `plugin=${/refireMinutes/.test(t51Plugin)} settings=${/watchRefireMinutes/.test(t51Settings)} status=${/refireMin/.test(t51Watch)}`);
+
+/* ② ★ **간격이 코드 상수가 아니라 설정에서 온다.** 이 티켓의 본체다 —
+ * 상수로 두면 9~11월에 이 값을 만질 때마다 APK를 새로 깔아야 하고,
+ * `watchMinutes`(이미 설정)와 같은 규칙의 두 손잡이가 서로 다른 곳에 있게 된다. */
+const T51_LITERAL_MIN = /\d+\s*\*\s*60_000/;              // 분을 상수로 박은 모양
+const T51_FROM_SETTING = /watchRefireMinutes\s*\*\s*60_000/;
+ok("② ★ 재발동 간격이 설정에서 온다 — GuardWatch에 리터럴 분(分)이 없다",
+  !T51_LITERAL_MIN.test(t51Watch) && T51_FROM_SETTING.test(t51Watch),
+  `리터럴=${T51_LITERAL_MIN.exec(t51Watch)} 설정=${T51_FROM_SETTING.test(t51Watch)}`);
+
+/* ③ ★ ②의 짝 — 스캐너가 눈멀면 ②는 상수가 박혀 있어도 초록이 되고,
+ * "설정에서 온다"인지 "정규식이 낡았다"인지 구별이 안 된다. 합성 줄로 가른다. */
+const t51Old = "    private const val REFIRE_MS = 30 * 60_000L";
+const t51New = "        if (l2done && now - last < s.watchRefireMinutes * 60_000L) return false";
+ok("③ ★ ②의 스캐너가 살아 있다 — 옛 모양은 잡고, 새 모양은 안 잡는다",
+  T51_LITERAL_MIN.test(t51Old) && !T51_FROM_SETTING.test(t51Old)
+  && !T51_LITERAL_MIN.test(t51New) && T51_FROM_SETTING.test(t51New)
+  && !T51_LITERAL_MIN.test(t46Bare("  // " + t51Old)),
+  `옛=${T51_LITERAL_MIN.test(t51Old)} 새=${T51_FROM_SETTING.test(t51New)}`);
+
+// ④ 기본값이 **둘 다** 15다. 하나만 바꾸면 새 기기에서 두 값이 어긋난다.
+ok("④ 기본값이 둘 다 15다 (첫 발동 임계 · 재발동 간격)",
+  t51Default("watchMinutes") === 15 && t51Default("watchRefireMinutes") === 15,
+  `minutes=${t51Default("watchMinutes")} refire=${t51Default("watchRefireMinutes")}`);
+
+/* ⑤ ★ 범위 밖 값이 coerce 된다 — **이웃과 같은 모양인가.**
+ * 새 값만 상한이 다르면 0이나 거대값이 들어왔을 때 어느 쪽이 먼저 걸렸는지 못 읽는다.
+ * ⚠️ 여기서 `watchMaxPerNight`도 함께 본다 — ③(밤 상한)을 5에서 9로 올렸고,
+ *    그 값도 `coerceIn` 안에 있어야 폰 콘솔에서 잘못 넣어도 규칙이 안 깨진다. */
+ok("⑤ ★ 범위 밖 값이 coerce 된다 — refire가 이웃(minutes)과 같은 범위다",
+  t51Range("watchRefireMinutes") === "1..240"
+  && t51Range("watchRefireMinutes") === t51Range("watchMinutes")
+  && t51Range("watchMaxPerNight") === "1..20",
+  `refire=${t51Range("watchRefireMinutes")} minutes=${t51Range("watchMinutes")} max=${t51Range("watchMaxPerNight")}`);
+
+// ⑥ ③의 판단 — 밤 상한을 올린 것이 실제로 파일에 있는가. **근거는 보고에 있고 여기선 수를 센다.**
+//    간격이 절반이 되면 상한도 두 배 빨리 닳는다: 5회 × 30분은 첫 발동 뒤 2시간을 덮었는데
+//    5회 × 15분이면 1시간에 끝나고 취침 창(5.5시간)의 뒤쪽이 통째로 빈다.
+//    9 = (5 − 1) × 30 ÷ 15 + 1 — **커버 시간을 그대로 유지하는 수**다.
+ok("⑥ 밤 상한이 커버 시간을 유지하도록 올라갔다 (5 → 9)",
+  t51Default("watchMaxPerNight") === 9
+  && (t51Default("watchMaxPerNight") - 1) * t51Default("watchRefireMinutes") === (5 - 1) * 30,
+  `max=${t51Default("watchMaxPerNight")} 커버=${(t51Default("watchMaxPerNight") - 1) * t51Default("watchRefireMinutes")}분`);
+
 console.log("\n[부팅 · 연결 실패 복구]");
 ok("로드 후 부팅 오버레이 닫힘", !$("#boot").classList.contains("on"));
 
