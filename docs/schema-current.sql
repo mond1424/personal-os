@@ -1,6 +1,6 @@
 -- docs/schema-current.sql — 스키마 스냅샷 (자동 생성)
 -- migrations/ 전체를 인메모리 sqlite에 적용한 뒤 sqlite_master를 덤프한 것.
--- 최신 마이그레이션: 0018_collected_items.sql  ·  갱신 2026-08-21
+-- 최신 마이그레이션: 0019_guard_ai_immutable.sql  ·  갱신 2026-08-28
 -- 0013·0014는 DDL을 바꾸지 않는다: 0013 = analyses backfill(트리거를 원문 그대로 복원) ·
 --   0014 = lm_schema.body에 title 얹기(UPDATE만).
 -- 0015 = me_history에 reason TEXT 추가(ADR-027 — 모드 하향 사유). ALTER라 컬럼이 표 끝에 붙는다.
@@ -17,6 +17,13 @@
 --   summary·description은 **원문 그대로**다 — 형식을 아직 모르므로 해석하지 않는다(ADR-037 §실측).
 --   uid UNIQUE가 diff 기준이자 멱등 키다. 사라진 항목을 **지우지 않는 것**이 이 표의 성질이고,
 --   그래서 last_seen_at이 있다(창이 -5일~+365일이라 지난 마감은 저절로 빠진다).
+-- 0019 = trg_guard_event_immutable 재작성(T-50 — AI 판정도 한 번만 채워진다).
+--   0010이 ai_used·ai_verdict를 WHEN 절에서 빼먹었고 0016·0017도 트리거를 안 고쳐,
+--   **사후 필드 넷(ai_*)만 아무 값으로나 덮일 수 있었다.** 막고 있던 것은 `stAmendGuardAi`의
+--   MAX·COALESCE 하나였는데, 이 리포의 원칙은 *"불변성은 DB 트리거가 최종 강제"*다(원칙 2).
+--   ⚠️ ai_used만 모양이 다르다 — NOT NULL DEFAULT 0이라 "아직 안 채워짐"이 NULL이 아니라 **0**이다.
+--   `IS NOT NULL`로 쓰면 항상 참이 되어 첫 기입(0 → 1)까지 막히고 T-39의 경로가 죽는다.
+--   ★ level은 완화하지 않았다 — 격상은 행이 생기기 전에 끝난다(ADR-024).
 -- 손으로 고치지 않는다 — 마이그레이션을 추가하고 다시 덤프한다 (CLAUDE.md 세션 종료 규칙).
 
 -- ==========================================================
@@ -420,6 +427,11 @@ WHEN
   OR (OLD.override_reason IS NOT NULL AND IFNULL(NEW.override_reason,'') != OLD.override_reason)
   OR (OLD.override_class IS NOT NULL AND IFNULL(NEW.override_class,'') != OLD.override_class)
   OR (OLD.outcome        IS NOT NULL AND IFNULL(NEW.outcome,'')        != OLD.outcome)
+  -- ── 여기부터 T-50이 더한 넷 ──────────────────────────────
+  OR (OLD.ai_used != 0 AND NEW.ai_used != OLD.ai_used)
+  OR (OLD.ai_verdict            IS NOT NULL AND IFNULL(NEW.ai_verdict,'')            != OLD.ai_verdict)
+  OR (OLD.ai_unavailable_reason IS NOT NULL AND IFNULL(NEW.ai_unavailable_reason,'') != OLD.ai_unavailable_reason)
+  OR (OLD.ai_reason             IS NOT NULL AND IFNULL(NEW.ai_reason,'')             != OLD.ai_reason)
 BEGIN
   SELECT RAISE(ABORT, 'Guard 이벤트는 수정할 수 없음 — 사후 확정 필드만 한 번 채울 수 있음');
 END;

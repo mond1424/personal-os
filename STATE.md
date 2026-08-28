@@ -18,7 +18,25 @@
 
 - repo: https://github.com/mond1424/personal-os
 - branch: main
-- 마지막 코드 변경: **T-49** (2026-08-27 · **Android만** · 서버 무변경 · **`public/app.js` 무변경** ·
+- 마지막 코드 변경: **T-50** (2026-08-28 · **`0019_guard_ai_immutable.sql` 포함** ·
+  서버 코드 무변경 · 프런트 무변경 · **APK 무관** — `trg_guard_event_immutable`을 DROP/CREATE로
+  다시 써서 **AI 판정 넷을 append-only로** 넣었다. 0010이 `ai_used`·`ai_verdict`를 빼먹었고
+  0016·0017도 트리거를 안 고쳐, **사후 필드 넷만 아무 값으로나 덮일 수 있었다**).
+  - ⚠️ **`--local` → `--remote` 마이그레이션이 필요하다. 배포 여부·적용 여부는 이 층이 모른다** —
+    `d1 migrations list --remote`로 확인한다.
+  - ⚠️ **구멍은 셋이 아니라 넷이었다** — `ai_unavailable_reason`(0016)도 같은 자리였다.
+    `smoke.ts` 자신의 주석이 *"트리거는 ai_* 넷을 아예 안 본다"*고 적고 있었다.
+  - ★ **`ai_used`만 규칙 모양이 다르고, 다를 수밖에 없다** — `NOT NULL DEFAULT 0`이라
+    "아직 안 채워짐"이 NULL이 아니라 **0**이다. 티켓이 준 `OLD.ai_used IS NOT NULL`은
+    **항상 참**이라 첫 기입(0 → 1)까지 막는다. 변이 B가 그것을 실측으로 보였다(**다섯 죽음**).
+  - ★ **`stAmendGuardAi`는 원래부터 append-only였다**(`MAX`·`COALESCE`). 그래서 새 트리거에
+    안 걸린다 — 이 티켓이 채운 것은 *"서버가 안 그런다"*가 아니라 *"DB가 못 하게 한다"*의 차이다.
+    ⚠️ **그래서 T-39 절의 기존 검사들은 트리거가 통째로 없어도 초록이다**(서버 경로라
+    COALESCE가 먼저 일한다). 새 검사는 `raw.prepare`로 **UPDATE를 DB에 직접 쏜다.**
+  - ⚠️ **범위 밖으로 올린 것**: `reacted_at`·`outcome_at`·`foreground_app`·`task_id`·`period_id`·
+    `event_id`도 트리거 밖이다. `reaction`은 막고 그 짝인 `reacted_at`은 안 막는 모양이라
+    같은 종류의 빠짐으로 보인다 — **고치지 않고 올린다.** Cowork 판단 대기.
+- 그 앞 코드 변경: **T-49 `ca13939`** (2026-08-27 · **Android만** · 서버 무변경 · **`public/app.js` 무변경** ·
   마이그레이션 없음 · **★ APK가 필요하다** — 홈 3×1 "로그 쓰기" 위젯. 검색창처럼 생겼고
   탭하면 `personalos://add-log`로 앱의 로그 입력줄이 열린다. `widget/LogWidget.kt` 신설 ·
   Manifest에 receiver 하나 · `res/drawable/widget_log_bg.xml`이 **이 리포 첫 shape 드로어블**이다.
@@ -1570,8 +1588,8 @@ Guard v1이 1순위라는 건 안 바뀐다. Phase 1을 셋으로 쪼개 **UI를
 - style.css      https://raw.githubusercontent.com/mond1424/personal-os/main/public/style.css
 
 ## 기준선
-typecheck 통과 / **smoke 370** / **front 357** / 실패 0 / verify exit 0
-**2026-08-27 (T-49).** 그 앞이 같은 날의 T-48, 8/25의 T-47과 T-46, 8/23의 T-45, 8/22의 T-44 → T-43,
+typecheck 통과 / **smoke 377** / **front 357** / 실패 0 / verify exit 0
+**2026-08-28 (T-50).** 그 앞이 8/27의 T-49와 T-48, 8/25의 T-47과 T-46, 8/23의 T-45, 8/22의 T-44 → T-43,
 그 앞이 8/21의 T-41 → T-42, 그 앞이 8/20의 T-38 → T-37 → T-39 → T-40이다.
 **front가 291에서 움직인 것은 T-35 이후 처음이다** — T-42가 화면을 건드린 첫 티켓이다.
 8/20 착수 전 재측정에서도 **306/291**이었다 —
@@ -1586,6 +1604,21 @@ typecheck 통과 / **smoke 370** / **front 357** / 실패 0 / verify exit 0
 front가 **257**로 나왔다 — T-26은 `public/`·`front.mjs`를 건드리지도 않았는데. 셋을 stash하고
 다시 재니 256이었다(smoke 279는 같았다). **오염된 트리에서 잰 숫자가 원장에 들어가면 그 줄은
 거짓이고, 다음 티켓의 '앞 숫자'가 어긋난다.** 병렬 발행은 Cowork가 `AGENT-CHAIN.md` §3로 막았다.
+
+(T-50 AI 판정도 한 번만 채워진다: smoke **370 → 377** · front **357 무변경** ·
+ **`0019` 포함 · 서버 코드 무변경 · APK 무관**.
+ ★ **막고 있던 것이 API 하나였다** — `stAmendGuardAi`의 `MAX`·`COALESCE`. 원칙 2는
+ *"불변성은 API가 아니라 DB 트리거가 최종 강제"*이고, **그 마지막 방벽만 AI 판정에 없었다.**
+ ⚠️ **그래서 서버 경로로는 이 결함을 못 잰다** — T-39 절의 검사들은 트리거가 통째로 없어도
+ 전부 초록이다(COALESCE가 먼저 일한다). 새 검사는 `raw.prepare`로 DB를 직접 친다.
+ ★ **`ai_used`만 규칙이 다르다**: `NOT NULL DEFAULT 0`이라 "아직 안 채워짐"이 **0**이다.
+ 티켓이 준 `IS NOT NULL`은 항상 참이라 첫 기입까지 막는다 — **변이 B가 다섯을 죽여** 그걸 보였다.
+ ⚠️ **구멍이 넷이었다**(티켓은 셋) — `ai_unavailable_reason`도 같은 자리.
+ ⚠️ **변이 C가 처음엔 smoke를 통째로 죽였다** — ⑤의 준비용 UPDATE가 `try` 밖이라 던졌다.
+ 그리고 ⑤·⑥을 **ai_*가 안 채워진 별도 행**으로 옮겼다: 같은 행에서 재면 ai 규칙이 망가졌을 때
+ *"reaction 보호가 살아서"*가 아니라 *"ai 규칙이 다 막아서"* 초록이 되는 거짓 통과가 된다.
+ ⚠️ 범위 밖으로 올린 것: `reacted_at`·`outcome_at`·`foreground_app`·task/period/event id도
+ 트리거 밖이다. **고치지 않고 올린다.**)
 
 (T-49 홈에 로그 한 줄: smoke **370 무변경** · front **351 → 357** ·
  **Android만 · 서버 무변경 · `public/app.js` 무변경 · ★ APK 필요**.

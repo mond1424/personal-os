@@ -17,7 +17,7 @@ import type { Env } from "../src/types";
 import { makeD1, rawOf } from "./d1shim";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const schema = ["0001_init.sql", "0002_models.sql", "0003_ai_provider.sql", "0004_events.sql", "0005_delete_scope.sql", "0006_fix_model_high.sql", "0007_defer_reason.sql", "0008_cancel_task.sql", "0009_cancel_reason.sql", "0010_guard.sql", "0011_guard_sync.sql", "0012_life_model.sql", "0013_analysis_backfill.sql", "0014_schema_titles.sql", "0015_me_history_reason.sql", "0016_guard_unavailable_reason.sql", "0017_ai_reason.sql", "0018_collected_items.sql"]
+const schema = ["0001_init.sql", "0002_models.sql", "0003_ai_provider.sql", "0004_events.sql", "0005_delete_scope.sql", "0006_fix_model_high.sql", "0007_defer_reason.sql", "0008_cancel_task.sql", "0009_cancel_reason.sql", "0010_guard.sql", "0011_guard_sync.sql", "0012_life_model.sql", "0013_analysis_backfill.sql", "0014_schema_titles.sql", "0015_me_history_reason.sql", "0016_guard_unavailable_reason.sql", "0017_ai_reason.sql", "0018_collected_items.sql", "0019_guard_ai_immutable.sql"]
   .map((f) => readFileSync(join(here, "../migrations/" + f), "utf8")).join("\n");
 const env: Env = { DB: makeD1(schema) };
 const raw = rawOf(env.DB);
@@ -1083,7 +1083,9 @@ ok("flush 뒤에 도착한 판정이 서버에 실린다 (cause·level 없이 �
   `${rLate.status} ${JSON.stringify(late1)}`);
 
 // 2. 1의 짝 — `NULL → 값`만이다. 재시도가 판정을 뒤집으면 안 된다.
-//    ⚠️ 여기가 **유일한 방어선**이다: `trg_guard_event_immutable`은 ai_* 넷을 아예 안 본다.
+//    ⚠️ **여기는 서버(`stAmendGuardAi`의 MAX·COALESCE)가 지키는 자리다.**
+//       전엔 이것이 *유일한* 방어선이었다 — 트리거가 ai_* 넷을 아예 안 봤다.
+//       **T-50(0019)이 그 마지막 방벽을 채웠다**(아래 [T-50] 절이 DB 쪽을 직접 센다).
 await api("POST", "/api/guard/events", {
   cause: "protect:deadline", level: 4, client_id: "t39-late-2", ai_used: 1,
   ai_verdict: "approve", ai_reason: "첫 판정",
@@ -1103,6 +1105,87 @@ const carriesFallback = (block: string) =>
   block.length > 0 && !/\?: return/.test(block) && /write\(ctx, list \+ o\)/.test(block);
 ok("기기가 fallback 항목을 만든다 — 큐에 없으면 버리지 않는다 (T-39의 본체)",
   carriesFallback(amendBlock), `block=${amendBlock.length}자`);
+
+// ── T-50 · AI 판정도 한 번만 채워진다 (0019) ────────────────────
+// ★ **여기서는 API로 안 막고 DB로 막히는지를 센다.** 위 T-39 검사들은 서버를 거치므로
+//    `stAmendGuardAi`의 `MAX`·`COALESCE`가 먼저 일하고, 트리거는 한 번도 안 불린다 —
+//    즉 **트리거가 통째로 없어도 저 검사들은 전부 초록이다.** 원칙 2가 말하는 최종 강제는
+//    그쪽이 아니라 이쪽이라, 이 절은 `raw.prepare`로 **직접 UPDATE를 쏜다.**
+console.log("\n[T-50] guard_events — AI 판정 append-only (DB가 최종 강제)");
+
+/** 그 UPDATE가 트리거에 막히는가. 막히면 true. */
+const t50Blocked = (sql: string, ...args: unknown[]) => {
+  try { raw.prepare(sql).run(...args as any[]); return false; } catch { return true; }
+};
+
+await api("POST", "/api/guard/events", { cause: "protect:deadline", level: 3, client_id: "t50-fresh" });
+const t50Id = raw.prepare("SELECT id AS i FROM guard_events WHERE client_id='t50-fresh'").get()?.i as string;
+
+// ① 첫 기입은 통과해야 한다 — **`ai_used`가 여기서 0 → 1이다.**
+//    `OLD.ai_used IS NOT NULL`로 썼으면 NOT NULL 컬럼이라 항상 참이 되어 이 줄이 막힌다.
+//    그러면 T-39가 되찾은 경로(판정이 뒤늦게 오는 밤)가 통째로 죽는다.
+await api("POST", "/api/guard/events", {
+  client_id: "t50-fresh", ai_used: 1, ai_verdict: "deny", ai_reason: "첫 판정",
+});
+const t50a = raw.prepare(
+  "SELECT ai_used AS u, ai_verdict AS v, ai_reason AS r FROM guard_events WHERE id=?").get(t50Id);
+ok("① NULL → 값은 그대로 통과한다 (amendFire 경로 · ai_used는 0 → 1)",
+  t50a?.u === 1 && t50a?.v === "deny" && t50a?.r === "첫 판정", JSON.stringify(t50a));
+
+// ② ★ 이 티켓의 핵심 — 채운 뒤 다른 값으로 바꾸면 DB가 막는다.
+ok("② ★ 채운 뒤 다른 값으로 바꾸면 트리거가 막는다 (ai_verdict)",
+  t50Blocked("UPDATE guard_events SET ai_verdict='approve' WHERE id=?", t50Id));
+
+// ③ ★ ②의 짝 — **같은 값 재기입은 통과한다.** ②만 보면 *"값이 있으면 무조건 거부"*가
+//    통과하고, 그러면 오프라인 재전송이 막힌다(ADR-023 — 기기가 같은 것을 다시 올린다).
+ok("③ ★ 같은 값으로 다시 쓰는 것은 통과한다 (재전송이 막히면 안 된다)",
+  !t50Blocked("UPDATE guard_events SET ai_verdict='deny' WHERE id=?", t50Id));
+
+// ④ 셋 다인가 — 하나만 고치지 않았나.
+ok("④ ai_used · ai_reason 도 같다 (1 → 0으로 못 내리고, 이유도 못 덮는다)",
+  t50Blocked("UPDATE guard_events SET ai_used=0 WHERE id=?", t50Id)
+  && t50Blocked("UPDATE guard_events SET ai_reason='다른 이유' WHERE id=?", t50Id));
+
+// ④' ⚠️ **티켓은 셋이라 했지만 같은 구멍이 넷이었다.** `ai_unavailable_reason`(0016)도
+//     `amendFire`가 같은 호출에서 쓰는 사후 필드인데 트리거 밖에 있었다.
+await api("POST", "/api/guard/events", {
+  cause: "protect:deadline", level: 3, client_id: "t50-unavail",
+  ai_used: 1, ai_verdict: "unavailable", ai_unavailable_reason: "timeout",
+});
+const t50Uid = raw.prepare("SELECT id AS i FROM guard_events WHERE client_id='t50-unavail'").get()?.i as string;
+ok("④' ai_unavailable_reason 도 같다 — 0016이 더한 넷째 사후 필드",
+  t50Blocked("UPDATE guard_events SET ai_unavailable_reason='dns' WHERE id=?", t50Uid)
+  && !t50Blocked("UPDATE guard_events SET ai_unavailable_reason='timeout' WHERE id=?", t50Uid));
+
+// ⑤·⑥ ★ 회귀 — 트리거를 DROP/CREATE로 통째로 다시 썼다. **옛 보호를 한 줄이라도 잃으면
+//    조용히 사라진다**(이 작업의 유일한 위험).
+//
+// ⚠️ **ai_* 가 안 채워진 행을 따로 쓴다.** 위 행(t50-fresh)에는 판정이 들어 있어서,
+//    ai 규칙이 망가지면 그 행에 대한 **모든** UPDATE가 막힌다 — 그러면 ⑤·⑥이
+//    *"reaction 보호가 살아 있어서"*가 아니라 *"ai 규칙이 다 막아서"* 초록이 된다.
+//    옛 보호를 재는 검사는 옛 필드만 있는 행에서 재야 한다.
+// ⚠️ **준비용 UPDATE도 `t50Blocked`로 감싼다.** 맨 `raw.prepare().run()`으로 두면
+//    변이 하나가 여기서 던져 **smoke가 통째로 죽고 숫자를 잃는다** — 실제로 그렇게 됐다.
+//    "검사 하나가 죽는다"와 "검사가 안 돈다"는 다르다(T-49 ③과 같은 자리).
+await api("POST", "/api/guard/events", { cause: "protect:deadline", level: 3, client_id: "t50-legacy" });
+const t50Lid = raw.prepare("SELECT id AS i FROM guard_events WHERE client_id='t50-legacy'").get()?.i as string;
+
+// 먼저 채운다(NULL → 값). **채우는 것 자체가 통과해야** 아래 거부가 뜻을 가진다.
+const t50Filled = !t50Blocked("UPDATE guard_events SET reaction='accepted' WHERE id=?", t50Lid)
+  && !t50Blocked("UPDATE guard_events SET outcome='success' WHERE id=?", t50Lid);
+// ⚠️ 바꿔 볼 값으로 'override'를 쓰지 않는다 — 0010의 CHECK(사유 필수)에 먼저 걸려
+//    **트리거가 아니라 CHECK 때문에** 막히는 거짓 초록이 된다.
+ok("⑤ ★ reaction · outcome 의 기존 보호가 그대로다 (다시 쓰면서 안 잃었다)",
+  t50Filled
+  && t50Blocked("UPDATE guard_events SET reaction='ignored' WHERE id=?", t50Lid)
+  && t50Blocked("UPDATE guard_events SET outcome='failure' WHERE id=?", t50Lid),
+  `채움=${t50Filled}`);
+
+// ⑥ ★ ⑤의 짝 — level은 사후 필드가 **아니다.** 바뀌면 무조건 차단이고, 완화하지 않았다.
+//    격상(ADR-024)은 `POST /api/guard/verify`가 판정만 돌려주고 **기기가 그 level로 발동한
+//    뒤에** 행이 생기므로, 발동 시점의 level은 사실이고 바뀔 경로가 없다.
+ok("⑥ ★ level 은 여전히 무조건 차단이다 (사후 필드로 완화하지 않았다)",
+  t50Blocked("UPDATE guard_events SET level=4 WHERE id=?", t50Lid));
 
 // 4. ★ 3의 짝. 슬라이스가 빗나가면 `amendBlock`이 빈 문자열이 되는데, 그때 **조용히 초록이
 //    되지 않도록** 빈 블록도 거짓으로 둔다 — 그 자리를 합성 소스로 확인한다.
