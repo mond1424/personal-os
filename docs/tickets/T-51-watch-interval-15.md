@@ -111,15 +111,19 @@ assembleRelease BUILD SUCCESSFUL · npx cap sync android 성공
 
 ## 확인 절차 (사용자) — APK 설치 후
 
-**이미 깔린 기기에는 옛 값(20)이 남아 있다.** 폰 WebView 콘솔에서 한 번 덮는다:
+**이미 깔린 기기에는 옛 값이 남아 있다.** 기본값을 바꿔도 SharedPreferences 는 안 따라오므로
+폰 WebView 콘솔에서 한 번 덮는다 — ⚠️ **`maxPerNight` 까지 셋 다**:
 
 ```js
-await Capacitor.Plugins.Guard.setWatch({ minutes: 15, refireMinutes: 15 })
-await Capacitor.Plugins.Guard.watchStatus()   // 둘 다 15인지 눈으로
+await Capacitor.Plugins.Guard.setWatch({ minutes: 15, refireMinutes: 15, maxPerNight: 9 })
+await Capacitor.Plugins.Guard.watchStatus()   // thresholdMin · refireMin · maxPerNight
 ```
 
+⚠️ **`maxPerNight` 를 빼면 기기에 옛 상한 5가 남아 ③의 실측 자체가 불가능하다** —
+간격만 절반이 되고 커버 시간은 60분으로 줄어, 아래 마지막 줄이 무엇 때문인지 못 가른다.
+
 ```
-□ watchStatus 가 15 · 15 를 돌려준다
+□ watchStatus 가 15 · 15 · 9 를 돌려준다
 □ ★ 오늘 밤 — 15분 만에 첫 알림이 오는가
 □ ★ 그 뒤 15분 간격인가
 □ ★ 새벽 늦게까지 개입이 남아 있는가, 아니면 초반에 상한이 끝나는가   ← ③의 실측

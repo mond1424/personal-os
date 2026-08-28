@@ -1,6 +1,6 @@
 -- docs/schema-current.sql — 스키마 스냅샷 (자동 생성)
 -- migrations/ 전체를 인메모리 sqlite에 적용한 뒤 sqlite_master를 덤프한 것.
--- 최신 마이그레이션: 0019_guard_ai_immutable.sql  ·  갱신 2026-08-28
+-- 최신 마이그레이션: 0020_cal_sync.sql  ·  갱신 2026-08-28
 -- 0013·0014는 DDL을 바꾸지 않는다: 0013 = analyses backfill(트리거를 원문 그대로 복원) ·
 --   0014 = lm_schema.body에 title 얹기(UPDATE만).
 -- 0015 = me_history에 reason TEXT 추가(ADR-027 — 모드 하향 사유). ALTER라 컬럼이 표 끝에 붙는다.
@@ -24,6 +24,13 @@
 --   ⚠️ ai_used만 모양이 다르다 — NOT NULL DEFAULT 0이라 "아직 안 채워짐"이 NULL이 아니라 **0**이다.
 --   `IS NOT NULL`로 쓰면 항상 참이 되어 첫 기입(0 → 1)까지 막히고 T-39의 경로가 죽는다.
 --   ★ level은 완화하지 않았다 — 격상은 행이 생기기 전에 끝난다(ADR-024).
+-- 0020 = events에 ext_src·ext_uid·ext_updated 추가 + 부분 유니크 인덱스(T-52 — 폰 캘린더 미러).
+--   ALTER라 컬럼이 표 끝에 붙는다. **셋 다 NULL이면 앱이 만든 일정**이고, 동기화가 안 건드린다 —
+--   삭제 후보를 고르는 SQL이 `ext_src = 'devcal'`로 시작하므로 구조가 그것을 강제한다.
+--   인덱스가 부분(`WHERE ext_src IS NOT NULL`)인 이유는 앱 일정이 셋 다 NULL이기 때문이다.
+--   ⚠️ **마감된 날 방어는 스키마에 없다** — `events`엔 `_ins` 트리거가 없어서(함정 6)
+--   `services/calsync.ts`가 유일한 방어선이다. UPDATE·DELETE는 트리거가 막지만 그건 409로
+--   배치를 통째로 깨는 모양이라, 어느 쪽이든 서버가 먼저 판단해서 건너뛴다.
 -- 손으로 고치지 않는다 — 마이그레이션을 추가하고 다시 덤프한다 (CLAUDE.md 세션 종료 규칙).
 
 -- ==========================================================
@@ -76,7 +83,7 @@ CREATE TABLE events (
   period_id  TEXT REFERENCES periods(id) ON DELETE SET NULL,
   note       TEXT,
   created_at TEXT NOT NULL
-, protect_from      TEXT, protect_level     INTEGER, protect_sleep_min INTEGER, protect_prep_min  INTEGER);
+, protect_from      TEXT, protect_level     INTEGER, protect_sleep_min INTEGER, protect_prep_min  INTEGER, ext_src TEXT, ext_uid TEXT, ext_updated TEXT);
 
 CREATE TABLE feelings (
   date   TEXT NOT NULL REFERENCES daily(date),
@@ -339,6 +346,9 @@ CREATE INDEX idx_entries_date ON schedule_entries(date);
 CREATE INDEX idx_entries_task ON schedule_entries(task_id, date);
 
 CREATE INDEX idx_events_date ON events(date);
+
+CREATE UNIQUE INDEX idx_events_ext
+  ON events(ext_src, ext_uid) WHERE ext_src IS NOT NULL;
 
 CREATE INDEX idx_events_protect ON events(date) WHERE protect_from IS NOT NULL;
 

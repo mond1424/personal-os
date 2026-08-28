@@ -339,6 +339,10 @@ export interface EventRow {
   protect_level?: number | null;      // 활성화할 최대 Level
   protect_sleep_min?: number | null;  // 필요 수면(분)
   protect_prep_min?: number | null;   // 기상~출발 준비(분)
+  // 외부 캘린더 미러 (0020 · ADR-029). **셋 다 NULL이면 앱이 만든 일정이고, 동기화가 안 건드린다.**
+  ext_src?: string | null;            // 'devcal' | NULL
+  ext_uid?: string | null;            // 반복은 인스턴스 단위 '<eventId>:<날짜>'
+  ext_updated?: string | null;        // LWW 기준 (ISO8601 UTC)
 }
 export const eventGet = (env: Env, id: string) =>
   q(env, "SELECT * FROM events WHERE id = ?").bind(id).first<EventRow>();
@@ -386,6 +390,49 @@ export const protectedEvents = (env: Env, fromDate: string, days = 30) =>
 
 export const stDeleteEvent = (env: Env, id: string) =>
   q(env, "DELETE FROM events WHERE id = ?").bind(id);
+
+// ── 외부 캘린더 미러 (0020 · ADR-029 · T-52) ─────────────────
+//
+// ★ **`ext_src`가 이 절 전체의 방벽이다.** 아래 조회·삭제가 전부 `ext_src = ?`로 시작하므로
+//   앱이 만든 일정(`ext_src IS NULL`)은 **후보 집합에 아예 들어오지 않는다.**
+//   조건을 서비스 쪽 `if`로 두면 그 한 줄을 지우는 순간 사용자의 일정이 지워진다 —
+//   **동기화가 사용자의 것을 지우면 신뢰가 끝난다**(티켓 §금지).
+
+/** 창 밖으로 옮겨 간 항목도 찾아야 하므로 **날짜가 아니라 uid로** 집는다. */
+export const eventByExt = (env: Env, src: string, uid: string) =>
+  q(env, "SELECT * FROM events WHERE ext_src = ? AND ext_uid = ?").bind(src, uid).first<EventRow>();
+
+/** 삭제 후보 — 창 안의 미러 전부. 여기에 앱 일정은 **구조적으로** 안 들어온다. */
+export const extEventsInWindow = (env: Env, src: string, from: string, to: string) =>
+  q(env, `SELECT id, ext_uid, date, protect_from FROM events
+          WHERE ext_src = ? AND date BETWEEN ? AND ? ORDER BY date`)
+    .bind(src, from, to)
+    .all<{ id: string; ext_uid: string; date: string; protect_from: string | null }>();
+
+export const stInsertExtEvent = (
+  env: Env, id: string, title: string, date: string, time: string | null,
+  src: string, uid: string, updated: string | null, now: string,
+) => q(env, `INSERT INTO events (id,title,date,time,period_id,note,created_at,ext_src,ext_uid,ext_updated)
+             VALUES (?,?,?,?,NULL,NULL,?,?,?,?)`)
+  .bind(id, title, date, time, now, src, uid, updated);
+
+/**
+ * 미러 갱신 — 본문 셋과 LWW 기준만 건드린다.
+ * `period_id`·`note`·`protect_*`는 **앱이 붙인 것**이라 캘린더가 덮지 않는다(ADR-029: protect는 앱 전용).
+ */
+export const stUpdateExtEvent = (
+  env: Env, id: string, title: string, date: string, time: string | null, updated: string | null,
+) => q(env, "UPDATE events SET title=?, date=?, time=?, ext_updated=? WHERE id=?")
+  .bind(title, date, time, updated, id);
+
+/** 그 창에서 마감된 날들. **동기화가 영구 이탈시키는 날짜 집합**이다(ADR-029). */
+export const closedDaysIn = (env: Env, from: string, to: string) =>
+  q(env, "SELECT date FROM daily WHERE status = 'closed' AND date BETWEEN ? AND ?")
+    .bind(from, to).all<{ date: string }>();
+
+/** 이 일정을 개입 이력이 참조하는가. 참조하면 **지우지 않는다**(guard_events는 영구 보존). */
+export const guardCountByEvent = (env: Env, eventId: string) =>
+  q(env, "SELECT COUNT(*) AS n FROM guard_events WHERE event_id = ?").bind(eventId).first<{ n: number }>();
 
 // 기간 카드 — 달성률(2.1)은 뷰가 계산
 export const periodCards = (env: Env) => q(env, `

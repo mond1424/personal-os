@@ -17,7 +17,7 @@ import type { Env } from "../src/types";
 import { makeD1, rawOf } from "./d1shim";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const schema = ["0001_init.sql", "0002_models.sql", "0003_ai_provider.sql", "0004_events.sql", "0005_delete_scope.sql", "0006_fix_model_high.sql", "0007_defer_reason.sql", "0008_cancel_task.sql", "0009_cancel_reason.sql", "0010_guard.sql", "0011_guard_sync.sql", "0012_life_model.sql", "0013_analysis_backfill.sql", "0014_schema_titles.sql", "0015_me_history_reason.sql", "0016_guard_unavailable_reason.sql", "0017_ai_reason.sql", "0018_collected_items.sql", "0019_guard_ai_immutable.sql"]
+const schema = ["0001_init.sql", "0002_models.sql", "0003_ai_provider.sql", "0004_events.sql", "0005_delete_scope.sql", "0006_fix_model_high.sql", "0007_defer_reason.sql", "0008_cancel_task.sql", "0009_cancel_reason.sql", "0010_guard.sql", "0011_guard_sync.sql", "0012_life_model.sql", "0013_analysis_backfill.sql", "0014_schema_titles.sql", "0015_me_history_reason.sql", "0016_guard_unavailable_reason.sql", "0017_ai_reason.sql", "0018_collected_items.sql", "0019_guard_ai_immutable.sql", "0020_cal_sync.sql"]
   .map((f) => readFileSync(join(here, "../migrations/" + f), "utf8")).join("\n");
 const env: Env = { DB: makeD1(schema) };
 const raw = rawOf(env.DB);
@@ -2021,6 +2021,119 @@ ok("★ 미룬 일은 도착지가 앞날이어도 '이월 중'에 남는다 (�
   t47Has(tC) && t47List.find((x) => x.id === tC)!.defer_count === 1
   && t47List.find((x) => x.id === tC)!.latest_date > D,
   JSON.stringify(t47List.find((x) => x.id === tC)));
+
+// ── T-52 · 폰 캘린더 미러 (0020 · ADR-029) ──────────────────────
+// **창을 통째로 보내면 서버가 그 상태에 맞춘다.** 화면 변화는 없다 — 그건 T-53이다.
+console.log("\n[T-52] /api/cal/sync — 멱등 upsert · 마감 이탈 · 삭제의 경계");
+
+// 창은 **D(마감된 날)를 포함한다** — ③의 자리가 창 안에 있어야 검사가 성립한다.
+const CW_TO = addDays(D, 10);
+// ⚠️ **LWW 기준 시각도 상대로 잡는다**(함정 12). 고정 문자열을 쓰면 스캐너가 잡고,
+//    잡는 것이 맞다 — *"언젠가 반드시 현재가 된다"* 는 규칙에 예외를 두기 시작하면
+//    다음 사람이 그 예외를 근거로 진짜 위험한 고정 날짜를 넣는다.
+const CU_NEW = `${D}T01:00:00Z`;              // 지금 버전
+const CU_OLD = `${addDays(D, -30)}T00:00:00Z`; // 30일 전 — 무시돼야 하는 구갱신
+const calItem = (uid: string, date: string, extra: Record<string, unknown> = {}) =>
+  ({ ext_uid: uid, title: `캘린더 ${uid}`, date, ext_updated: CU_NEW, ...extra });
+const calSync = (items: unknown[]) =>
+  api("POST", "/api/cal/sync", { items, window: { from: D, to: CW_TO } });
+const calRows = () => raw.prepare(
+  "SELECT id, ext_uid, date, title, time, ext_updated, protect_from FROM events WHERE ext_src='devcal' ORDER BY ext_uid").all() as any[];
+const calCount = () => calRows().length;
+
+// ① 멱등 — 같은 것을 두 번 보내면 한 행이다.
+const calBase = [
+  calItem("ev-1", N1, { time: "10:00" }),
+  calItem("ev-2", N2, { all_day: true }),
+];
+const cal1 = await calSync(calBase);
+const calAfter1 = calCount();
+const cal2 = await calSync(calBase);
+ok("① 같은 것을 두 번 보내면 한 행이다 (멱등)",
+  cal1.status === 200 && cal1.json.upserted === 2 && calAfter1 === 2
+  && cal2.json.upserted === 2 && calCount() === 2,
+  `1차 ${JSON.stringify(cal1.json)} / 2차 ${JSON.stringify(cal2.json)} / 행 ${calCount()}`);
+
+// ② ★ 마감된 날은 동기화에서 영구 이탈한다. `events`엔 `_ins` 트리거가 없어(함정 6)
+//    **DB가 안 막아 준다 — 서버가 먼저 판단해서 건너뛴다.**
+// ⚠️ **②는 행위, ③은 보고다.** 둘을 한 검사에 두면 *"안 넣었는데 안 세는"* 구현과
+//    *"세는데 넣어 버린"* 구현이 **같은 한 줄을 죽여** 어느 결함인지 못 읽는다.
+//    그래서 ②는 **행 수만** 보고, ③은 **응답이 실제와 맞는가**만 본다(수가 0이어도 성립한다).
+const calClosed = await calSync([...calBase, calItem("ev-closed-a", D), calItem("ev-closed-b", D)]);
+const calOnClosed = calRows().filter((r) => r.date === D).length;
+ok("② ★ 마감된 날의 항목이 실제로 안 들어간다 (DB가 아니라 서버가 막는다)",
+  calOnClosed === 0 && calClosed.json.upserted === 2 && calCount() === 2,
+  `마감일행=${calOnClosed} upserted=${calClosed.json.upserted} 전체=${calCount()}`);
+
+// ③ ★ ②의 짝 — **조용하지 않은가.** 건너뛴 수가 응답에 그대로 있어야 한다.
+//    ②만 보면 *"조용히 건너뛰는 구현"*이 통과하고, 그러면 동기화가 절반만 도는 밤에 아무도 모른다.
+//    ★ **보낸 것 중 마감된 날이면서 실제로 안 들어간 수**와 응답을 맞춘다 —
+//      마감 판정 자체가 사라지면 양쪽이 0으로 함께 내려가 이 검사는 성립한 채 ②만 죽는다.
+const calClosedAbsent = 2 - calOnClosed;
+ok("③ ★ 응답의 skipped_closed 가 실제로 빠진 수와 맞는다 (건너뛰기가 조용하지 않다)",
+  calClosed.json.skipped_closed === calClosedAbsent,
+  `응답=${calClosed.json.skipped_closed} 실제로빠진수=${calClosedAbsent}`);
+
+// ④ LWW — 저장된 것보다 **오래된** 갱신은 무시한다.
+const calStale = await calSync([
+  { ...calItem("ev-1", N1, { time: "10:00" }), title: "옛 제목", ext_updated: CU_OLD },
+  calItem("ev-2", N2, { all_day: true }),
+]);
+const calE1 = calRows().find((r) => r.ext_uid === "ev-1");
+ok("④ 구갱신(ext_updated 가 옛것)은 무시되고 skipped_stale 이 센다",
+  calStale.json.skipped_stale === 1 && calE1?.title === "캘린더 ev-1",
+  `${JSON.stringify(calStale.json)} title=${calE1?.title}`);
+
+// ⑧ 반복은 **인스턴스 단위**다. 마스터 1건으로 키잉하면 개강 후 수업이 통째로 한 행이 된다.
+// ⚠️ **삭제 경로보다 앞에 둔다.** 뒤에 두면 ④·⑥을 깨뜨리는 변이가 그 왕복까지 함께 실패시켜
+//    ⑧이 딸려 죽는다 — 어느 결함이 무엇을 죽였는지 못 읽는다(T-47이 ⑦을 둘로 가른 자리).
+// ⚠️ **ev-2를 함께 보낸다.** 빼면 이 동기화의 삭제 단계가 ev-2를 지워, 아래 ⑥이 쓸 자리가 사라진다.
+const calRep = await calSync([
+  calItem("ev-1", N1, { time: "10:00" }),
+  calItem("ev-2", N2, { all_day: true }),
+  { ...calItem("77:" + N1, N1, { time: "09:00" }), title: "주간 수업" },
+  { ...calItem("77:" + N2, N2, { time: "09:00" }), title: "주간 수업" },
+  { ...calItem("77:" + N3, N3, { time: "09:00" }), title: "주간 수업" },
+]);
+const calRepRows = calRows().filter((r) => r.ext_uid.startsWith("77:"));
+ok("⑧ 반복 인스턴스가 '<id>:<날짜>' 로 개별 행이 된다",
+  calRep.status === 200 && calRepRows.length === 3
+  && new Set(calRepRows.map((r) => r.date)).size === 3,
+  `${JSON.stringify(calRepRows.map((r) => `${r.ext_uid}@${r.date}`))}`);
+
+// ⑦ ★ **가장 위험한 자리** — 앱이 만든 일정은 창 안이어도 안 지워진다.
+//    ⑤보다 먼저 만들어 둔다: 같은 동기화에서 하나는 지워지고 하나는 남아야 짝이 성립한다.
+const calMine = (await api("POST", "/api/events", { title: "내가 만든 일정", date: N1, time: "15:00" })).json.id as string;
+
+// ⑥ 준비 — 개입 이력이 참조하는 미러. 보호까지 붙여 둔다.
+const calGuardEv = calRows().find((r) => r.ext_uid === "ev-2")!;
+await api("PUT", `/api/events/${calGuardEv.id}/protect`, { protect_from: "-1d 00:00", protect_level: 4 });
+await api("POST", "/api/guard/events", {
+  cause: "protect:deadline", level: 3, client_id: "t52-ref", event_id: calGuardEv.id,
+});
+
+// ⑤ 창 안에서 **안 온** 미러는 지워진다. 이번엔 ev-1만 보낸다.
+const calDel = await calSync([calItem("ev-1", N1, { time: "10:00" })]);
+const calNow = calRows();
+ok("⑤ 창 안에서 안 온 devcal 일정은 지워진다",
+  calNow.some((r) => r.ext_uid === "ev-1"), `남은 것 ${JSON.stringify(calNow.map((r) => r.ext_uid))}`);
+
+// ⑥ ★ guard 이력이 참조하면 **안 지우고 protect 만 푼다**(개입 이력은 영구 보존이고 FK가 걸려 있다).
+// ⚠️ 여기서 `deleted === 0`을 세지 않는다 — 그러면 **삭제 범위가 넓어지는 결함**(⑦의 것)이
+//    이 검사까지 함께 죽여, 어느 경계가 무너졌는지 못 읽는다. 이 검사가 지는 것은
+//    *"참조되는 것이 살아남고 보호만 풀렸는가"* 하나다.
+const calKept = calNow.find((r) => r.ext_uid === "ev-2");
+ok("⑥ ★ guard 이력이 참조하면 안 지우고 protect 만 푼다",
+  calDel.json.protected_kept === 1 && !!calKept && calKept.protect_from === null,
+  `${JSON.stringify(calDel.json)} kept=${JSON.stringify(calKept)}`);
+
+// ⑦ ★ ⑤의 짝 — **앱이 만든 일정은 창 안이어도 안 지워진다.**
+//    ⑤만 보면 *"창 안의 것을 전부 지우는 구현"*이 통과하고, 그건 동기화가 사용자의 것을
+//    삭제하는 모양이다. 방벽은 `if`가 아니라 **후보를 고르는 SQL**(`ext_src = 'devcal'`)이다.
+const calMineRow = raw.prepare("SELECT id, ext_src FROM events WHERE id=?").get(calMine) as any;
+ok("⑦ ★ ext_src IS NULL 인 일정은 창 안이어도 안 지워진다 (동기화가 사용자의 것을 안 건드린다)",
+  !!calMineRow && calMineRow.ext_src === null,
+  `행=${JSON.stringify(calMineRow)}`);
 
 // ── 결과 ─────────────────────────────────────────────────────
 console.log(`\n${"=".repeat(46)}\n통과 ${passN} · 실패 ${fails.length}`);

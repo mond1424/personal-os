@@ -46,6 +46,7 @@
 | POST `/api/events` | `{title, date, time?, period_id?, note?}` | `{id, ...}` | `events.create` |
 | PATCH `/api/events/:id` | `{title?, date?, time?, period_id?, note?}` | `{...}` (마감일 409) | `events.update` |
 | DELETE `/api/events/:id` | — | `{id, deleted}` (마감일 409) | `events.remove` |
+| POST `/api/cal/sync` | `{items:[{ext_uid, title, date, time?, all_day?, ext_updated?}], window:{from,to}}` | `{upserted, skipped_closed, skipped_stale, deleted, protected_kept, window}` · **멱등** · 앱 생성 일정(`ext_src IS NULL`)은 안 지운다 | `calsync.syncCal` |
 | GET `/api/me` | — | `{fields, now}` | `me.getMe` |
 | PUT `/api/me/:field` | `{value}` | `{field}` | `me.putMeField` |
 | GET `/api/me/history?limit` | — | 이력 rows | `me.meHistory` |
@@ -135,6 +136,20 @@
 - `create(env, t, input)` → `{id, ...}` · 마감된 날에도 추가 가능(불변)
 - `update(env, id, input)` → `{...}` · 마감일 트리거 409
 - `remove(env, id)` → `{id, deleted}` · 마감일 트리거 409
+
+### calsync.ts — 폰 캘린더 미러 (0020 · ADR-029 · T-52)
+- `CAL_SRC` = `'devcal'` — `events.ext_src`에 그대로 들어간다. **NULL이면 앱이 만든 일정**
+- `syncCal(env, t, {items[], window:{from,to}})` → `{upserted, skipped_closed, skipped_stale, deleted, protected_kept, window}`
+  - **멱등**: 창 범위를 통째로 받아 그 상태에 맞춘다. 같은 것을 두 번 보내면 한 행
+  - 항목 키는 `(ext_src, ext_uid)` — 반복은 **인스턴스 단위** `'<eventId>:<날짜>'`
+  - ★ **마감된 날은 건너뛴다**(ADR-029 영구 이탈). `events`엔 `_ins` 트리거가 없어(함정 6)
+    **DB가 안 막아 준다 — 여기가 유일한 방어선**이다. UPDATE·DELETE 쪽 트리거는 409로
+    배치를 깨는 모양이라, 어느 쪽이든 서버가 먼저 판단한다
+  - ★ **삭제 후보는 `db.extEventsInWindow`가 `ext_src='devcal'`로 고른다** —
+    앱이 만든 일정은 후보 집합에 **구조적으로** 안 들어온다. 조건을 `if`로 두지 않는다
+  - guard 이력이 참조하면 삭제 대신 `protect` 해제 + 보존 → `protected_kept`
+  - LWW: `ext_updated`(ISO8601 UTC 문자열)가 저장된 것보다 오래되면 무시 → `skipped_stale`
+  - ⚠️ **받지 않는 것**: `protect_*`(앱 전용) · 위치·참석자·알림 · 귀속일 재계산(벽시계 그대로)
 
 ### memos.ts — 어느 날짜에든 붙는 짧은 노트(3단계)
 - `addMemo(env, t, {date, ts?, text})` → `{id, date}` · 과거·오늘·미래 어디든. daily 없으면 `stOpenDaily`로 빈 open daily ensure 후 붙임(마감된 날 불변은 트리거 유지) · +daily summary stale

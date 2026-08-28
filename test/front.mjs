@@ -1280,7 +1280,11 @@ const azDay = await ev(`Api.day("${AZF}")`);
 ok("미래 날짜 memo 저장(daily 자동 생성)",
   azDay.memos.some((m) => m.text === "미래에 남기는 memo") && !!azDay.daily, JSON.stringify(azDay.memos));
 const addedMemo = azDay.memos.find((m) => m.text === "미래에 남기는 memo");
-const addedMemoDate = `${+addedMemo.created_at.slice(5, 7)}/${+addedMemo.created_at.slice(8, 10)}`;
+// ⚠️ **`?.`가 없으면 memo가 간헐로 안 잡힐 때 여기서 던져 러너가 통째로 죽고 숫자를 잃는다**
+//    (T-51의 변이 배터리에서 실제로 그랬다). 바로 위 `ok()`가 이미 그 존재를 세므로,
+//    감싸면 같은 상황이 **검사 하나의 실패**로 남는다 — "검사가 죽는다"와 "검사가 안 돈다"는 다르다.
+const addedMemoIso = addedMemo?.created_at ?? "";
+const addedMemoDate = `${+addedMemoIso.slice(5, 7)}/${+addedMemoIso.slice(8, 10)}`;
 await w.openDay(AZF); await sleep(500);
 ok("미래 날짜 시트에 memo 표시", $("#day-body").innerHTML.includes("미래에 남기는 memo"));
 const laterMemoRow = [...$("#day-body").querySelectorAll(".memo-origin-row")]

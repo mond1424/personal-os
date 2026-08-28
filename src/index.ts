@@ -14,6 +14,7 @@ import * as me from "./services/me";
 import * as analysis from "./services/analysis";
 import * as collected from "./services/collected";
 import * as events from "./services/events";
+import * as calsync from "./services/calsync";
 import { PROVIDERS, aiConfig, testConnection } from "./lib/ai";
 import * as guard from "./services/guard";
 import * as lm from "./services/lifemodel";
@@ -194,6 +195,10 @@ app.put("/api/settings/:key", async (c) => {
 app.post("/api/events", async (c) => c.json(await events.create(c.env, c.get("t"), await body(c))));
 app.patch("/api/events/:id", async (c) => c.json(await events.update(c.env, c.req.param("id"), await body(c))));
 app.delete("/api/events/:id", async (c) => c.json(await events.remove(c.env, c.req.param("id"))));
+
+// 폰 캘린더 미러 (T-52 · ADR-029) — 기기가 창 범위를 통째로 보내고 서버가 맞춘다. **멱등**.
+// 응답이 무엇을 **안 했는지**까지 센다: skipped_closed · skipped_stale · protected_kept.
+app.post("/api/cal/sync", async (c) => c.json(await calsync.syncCal(c.env, c.get("t"), await body(c))));
 
 // ── Analysis (5장) ──────────────────────────────────────────
 app.get("/api/analyses", async (c) => c.json(await analysis.list(c.env)));
