@@ -574,8 +574,16 @@ w.toggleSet(true); await sleep(200);
 const rows = [...$("#set-list").querySelectorAll(".srow")].map((r) => r.textContent);
 // ⚠️ **검사를 고쳤다** — T-43이 설정 맨 아래에 수집 상태 한 줄을 더한다(11 → 12).
 //    이 검사는 "행이 조용히 늘거나 줄지 않는다"를 세는 것이므로, 늘린 티켓이 숫자를 옮긴다.
-ok("설정 12행 (AI 연결 통합 + 수집 상태)", rows.length === 12, String(rows.length));
-ok("맨 아래가 수집 상태 한 줄이다", rows[rows.length - 1]?.includes("학사 캘린더"), rows.join(" | "));
+// ⚠️ **검사를 또 고쳤다** — T-53이 폰 캘린더 줄을 하나 더한다(12 → 13). 같은 이유다.
+ok("설정 13행 (AI 연결 통합 + 상태 두 줄)", rows.length === 13, String(rows.length));
+// ⚠️ **"맨 아래가 수집 상태"에서 옮겼다.** 이 검사가 지키던 것은 *"그 줄이 사라지지 않는다"*이고,
+//    이제 같은 자리에 줄이 둘이라 **둘 다** 봐야 그 뜻이 남는다. 순서까지 고정하는 이유는
+//    **둘이 서로 다른 것**이기 때문이다: 학사 캘린더는 서버가 iCal을 긁는 것(T-41)이고,
+//    폰 캘린더는 기기가 CalendarContract를 읽는 것(T-53)이다. 한 줄로 합치면 어느 쪽이
+//    죽었는지 못 읽는다 — 이 티켓이 실패 문구를 셋으로 가른 것과 같은 규칙이다.
+ok("맨 아래 두 줄이 상태 줄이다 — 학사 캘린더 · 폰 캘린더 순서 (둘 다 안 사라진다)",
+  rows[rows.length - 2]?.includes("학사 캘린더") && rows[rows.length - 1]?.includes("폰 캘린더"),
+  rows.slice(-2).join(" | "));
 ok("Low 모델 표시", rows.some((r) => r.includes("Low") && r.includes("haiku")), rows.join(" | "));
 ok("High 모델 표시", rows.some((r) => r.includes("High") && r.includes("claude")), rows.join(" | "));
 ok("AI 연결 행 · 토큰 위", rows.findIndex((r) => r.includes("AI 연결")) < rows.findIndex((r) => r.includes("앱 접근 토큰")), rows.join(" | "));
@@ -2558,6 +2566,168 @@ ok("⑥ 밤 상한이 커버 시간을 유지하도록 올라갔다 (5 → 9)",
   t51Default("watchMaxPerNight") === 9
   && (t51Default("watchMaxPerNight") - 1) * t51Default("watchRefireMinutes") === (5 - 1) * 30,
   `max=${t51Default("watchMaxPerNight")} 커버=${(t51Default("watchMaxPerNight") - 1) * t51Default("watchRefireMinutes")}분`);
+
+// ── T-53 · 폰 캘린더가 Today를 채운다 ──────────────────────────────────────
+//
+// ⚠️ **jsdom은 CalendarContract를 못 본다.** 여기서 진짜로 돌려 보는 것은 **웹이 세 실패를
+//    가르는가**이고, 기기 쪽(Instances 전개·창 범위·순서)은 스캐너다. 무엇이 어디에 있는지
+//    감추지 않고 나눠 적는다 — 진짜 판정은 §확인 절차(폰에 깔고 하루 살아 보기)다.
+console.log("\n[T-53] 폰 캘린더 — 세 실패가 각자의 문구를 가진다");
+
+const t53Kt = (p) => t46Bare(readFileSync(
+  join(here, "../android/app/src/main/java/dev/mond1424/personalos/" + p), "utf8"));
+const t53Reader = t53Kt("cal/CalendarReader.kt");
+const t53Send = t53Kt("cal/CalSync.kt");
+const t53Plugin = t53Kt("cal/CalPlugin.kt");
+const t53Main = t53Kt("MainActivity.java");
+const t53GuardSync = t53Kt("guard/GuardSync.kt");
+const t53Manifest = t46NoXml(readFileSync(
+  join(here, "../android/app/src/main/AndroidManifest.xml"), "utf8"));
+
+/* ① 대상이 골라져 있으면 **창 범위를** 보낸다 — 기기 스캐너 + 웹 배선.
+ *   ⚠️ 짝이 되는 절반은 *"선택 전에는 아무것도 안 가져온다"*(티켓 ③)이고, 그 방벽이
+ *      읽기(`CalendarReader`)와 보내기(`CalSync`) **양쪽**에 있어야 한쪽을 지워도 새지 않는다. */
+ok("① 대상이 있으면 창 범위를 보낸다 · 미선택이면 읽지도 보내지도 않는다",
+  /\/api\/cal\/sync/.test(t53Send)
+  && /put\("window"[\s\S]{0,90}"from"[\s\S]{0,40}"to"/.test(t53Send)
+  && /windowDays\(ctx\)/.test(t53Send)
+  && /ids\.isEmpty\(\)/.test(t53Send) && /calIds\.isEmpty\(\)/.test(t53Reader)
+  && /setTargets\(\{\s*ids\s*\}\)/.test(t46AppBare),
+  `sync=${/\/api\/cal\/sync/.test(t53Send)} window=${/put\("window"/.test(t53Send)}`
+  + ` 방벽=${/ids\.isEmpty\(\)/.test(t53Send)}/${/calIds\.isEmpty\(\)/.test(t53Reader)}`);
+
+/* ②③④ — 세 실패를 **각자의 문구로** 띄운다.
+ *
+ * 네이티브가 없는 jsdom에 `Capacitor.Plugins.Cal`을 심어 상태만 갈아 끼운다.
+ * 이렇게 해야 순수 함수(`calStatusLine`)가 아니라 **배선까지** 지나간다 —
+ * 문구가 맞아도 `loadCalStatus`가 바를 안 켜면 화면은 여전히 침묵한다. */
+const t53Bar = $("#td-cal");
+const t53Show = async (st) => {
+  w.Capacitor = { Plugins: { Cal: { status: async () => st } } };
+  await w.loadCalStatus();
+  return {
+    state: t53Bar.dataset.state, display: t53Bar.style.display,
+    text: txt("#td-cal-text"), act: txt("#td-cal-act"),
+  };
+};
+// 시각은 **지금에서 상대로** 만든다 — 고정 날짜는 언젠가 반드시 현재가 된다(함정 12).
+const t53OkAt = new Date(Date.now() - 3600_000).toISOString();
+const t53NoPerm = await t53Show({ permission: false, targets: [] });
+const t53NoTarget = await t53Show({ permission: true, targets: [] });
+const t53Failed = await t53Show({ permission: true, targets: [7], lastError: "HTTP 503 boom" });
+const t53Synced = await t53Show({ permission: true, targets: [7], lastError: null, lastOkAt: t53OkAt, lastCount: 12 });
+
+ok("② ★ 권한이 없으면 Today에 그 사실이 뜬다 (행동까지 붙는다)",
+  t53NoPerm.state === "noperm" && t53NoPerm.display === "flex"
+  && t53NoPerm.text.includes("권한") && t53NoPerm.act === "허용하기",
+  JSON.stringify(t53NoPerm));
+
+ok("③ ★ 대상 미선택도 뜬다 — 다른 상태 · 다른 문구 · 다른 행동",
+  t53NoTarget.state === "notarget" && t53NoTarget.display === "flex"
+  && t53NoTarget.act === "고르기" && t53NoTarget.text !== t53NoPerm.text,
+  JSON.stringify(t53NoTarget));
+
+ok("④ ★ 동기화 실패도 뜨고 사유가 남는다 · 성공하면 안 뜬다 (없는 것을 세는 검사)",
+  t53Failed.state === "error" && t53Failed.display === "flex"
+  && t53Failed.text.includes("HTTP 503 boom")
+  && t53Synced.state === "ok" && t53Synced.display === "none" && t53Synced.text === "",
+  `${JSON.stringify(t53Failed)} / ${JSON.stringify(t53Synced)}`);
+
+/* ★ ②③④의 짝 — **셋이 서로 다른 문장인가.** 이 티켓의 본체가 여기다.
+ *   하나로 뭉치면 *"뭔가 안 된다"*만 남고 무엇을 고칠지 화면이 말하지 않는다 —
+ *   8/28에 알림 권한에서 겪은 것이 정확히 그 모양이다. 각각을 따로 보는 것만으로는
+ *   **셋을 같은 문자열로 만드는 변이가 통과한다**(세 검사가 모두 '뜬다'만 세므로). */
+const t53Three = [t53NoPerm, t53NoTarget, t53Failed];
+ok("★ 셋이 서로 다른 상태·문구다 — 무엇을 고칠지가 화면에서 갈린다",
+  new Set(t53Three.map((x) => x.state)).size === 3
+  && new Set(t53Three.map((x) => x.text)).size === 3
+  && t53Three.every((x) => x.text.length > 0),
+  t53Three.map((x) => `${x.state}:${x.text}`).join(" | "));
+
+// 브라우저(네이티브 없음)는 **실패가 아니다** — 없는 기능의 실패를 말하는 것은 잔소리다.
+delete w.Capacitor;
+await w.loadCalStatus();
+ok("★ 네이티브가 없으면 아무 말도 안 한다 — 'off'는 'ok'와 화면에서 같고 기록에서 다르다",
+  t53Bar.dataset.state === "off" && t53Bar.style.display === "none"
+  && t53Bar.dataset.state !== t53Synced.state && t53Bar.style.display === t53Synced.display,
+  `${t53Bar.dataset.state}/${t53Bar.style.display} vs ${t53Synced.state}/${t53Synced.display}`);
+
+/* ⑤⑥ — devcal 일정은 읽기 전용, 앱 일정은 그대로.
+ *
+ * ⚠️ **⑤만 보면 "모든 일정의 수정을 막는 구현"이 통과한다.** 그래서 같은 날에 둘을 넣고
+ *    **한 화면에서** 가른다. 날짜는 상대(D+25)이고, 끝나면 둘 다 치운다 —
+ *    devcal 일정은 앱에서 못 지우므로 **빈 창을 한 번 더 보내** 서버가 지우게 한다. */
+const t53Day = ev("addDaysStr(S.today.date, 25)");
+const t53Post = (body) => ev(`_req("POST", "/cal/sync", ${JSON.stringify(body)})`);
+const t53Sent = await t53Post({
+  window: { from: t53Day, to: t53Day },
+  items: [{ ext_uid: `t53-front:${t53Day}`, title: "폰 캘린더에서 온 일정", date: t53Day, time: "10:00" }],
+});
+const t53AppEv = await ev(`Api.createEvent({title:"앱이 만든 일정", date:"${t53Day}", time:"11:00"})`);
+await w.openDay(t53Day);
+await until(() => $("#day-body").textContent.includes("앱이 만든 일정"), 4000);
+const t53Row = (needle) => [...$("#day-body").querySelectorAll(".evrow")]
+  .find((r) => r.textContent.includes(needle));
+const t53Ext = t53Row("폰 캘린더에서 온 일정");
+const t53App = t53Row("앱이 만든 일정");
+
+ok("⑤ ★ devcal 일정은 수정·삭제 버튼이 없다 (출처가 화면에 보인다)",
+  !!t53Ext && !t53Ext.querySelector("button") && !t53Ext.querySelector(".ex")
+  && !!t53Ext.querySelector(".ev-cal-badge"),
+  `upserted=${t53Sent && t53Sent.upserted} row=${t53Ext ? t53Ext.outerHTML.slice(0, 120) : "없음"}`);
+
+ok("⑥ ★ 앱이 만든 일정은 그대로 수정·삭제된다 (⑤의 짝)",
+  !!t53App && !!t53App.querySelector("button.ev-protect-event-title") && !!t53App.querySelector(".ex"),
+  t53App ? t53App.outerHTML.slice(0, 140) : "없음");
+
+// 버튼을 지우는 것만으로 막으면 다음에 목록을 하나 더 만드는 사람이 그 사실을 모른다 —
+// 경로가 새도 한 번 더 걸린다.
+ok("★ 읽기 전용은 화면뿐 아니라 진입 함수에서도 막힌다",
+  ev(`calReadOnlyGuard({ ext_src: "devcal" })`) === true
+  && ev(`calReadOnlyGuard({ ext_src: null })`) === false
+  && ev(`isExtEvent({ ext_src: "devcal" })`) === true);
+
+w.closeAll();
+await sleep(150);
+await t53Post({ window: { from: t53Day, to: t53Day }, items: [] });   // 미러 치우기(서버가 지운다)
+await ev(`Api.deleteEvent("${t53AppEv.id}")`);
+
+/* ⑦ 반복은 **Instances로 전개**한다. 마스터 이벤트 1건으로 읽으면 RRULE이 문자열로만 오고
+ *   **개강 후 주간 수업이 통째로 안 들어온다** — 이 티켓에서 값이 가장 큰 부분이다. */
+const T53_INSTANCES = /CalendarContract\.Instances\.CONTENT_URI/;
+const T53_EVENTS_URI = /CalendarContract\.Events\.CONTENT_URI/;
+ok("⑦ ★ 반복을 Instances로 전개한다 (Events 마스터로 읽지 않는다) · uid는 인스턴스 단위다",
+  T53_INSTANCES.test(t53Reader) && !T53_EVENTS_URI.test(t53Reader)
+  && /appendPath/.test(t53Reader) && /"\$eventId:\$date"/.test(t53Reader),
+  `instances=${T53_INSTANCES.test(t53Reader)} events=${T53_EVENTS_URI.test(t53Reader)}`);
+
+/* ⑧ ★ ⑦의 짝 — 스캐너가 눈멀면 ⑦은 구현과 무관하게 초록이 되고,
+ *   "Events로 읽는다"인지 "정규식이 낡았다"인지 구별이 안 된다. 합성 줄로 가른다. */
+const t53Old = "        ctx.contentResolver.query(CalendarContract.Events.CONTENT_URI, cols, sel, null, null)";
+const t53New = "        val uri = CalendarContract.Instances.CONTENT_URI.buildUpon()";
+ok("⑧ ★ ⑦의 스캐너가 살아 있다 — 옛 모양은 잡고, 주석은 안 잡는다",
+  T53_EVENTS_URI.test(t53Old) && !T53_INSTANCES.test(t53Old)
+  && T53_INSTANCES.test(t53New) && !T53_EVENTS_URI.test(t53New)
+  && !T53_INSTANCES.test(t46Bare("  // " + t53New)),
+  `옛=${T53_EVENTS_URI.test(t53Old)} 새=${T53_INSTANCES.test(t53New)}`);
+
+/* ★ ⑤(시점) — **캘린더 동기화가 보호 일정 pull보다 먼저다.**
+ *   순서가 뒤집히면 오늘 캘린더에서 옮겨 온 시험이 이번 응답의 `fires[]`에 없고,
+ *   다음 동기화는 내일이라 **그날 알람 예약을 통째로 놓친다.**
+ *   ⚠️ 위치로 센다 — 둘의 존재만 보면 순서가 뒤집혀도 초록이다. */
+const t53CalAt = t53GuardSync.indexOf("CalSync.syncNow");
+const t53PullAt = t53GuardSync.indexOf("/api/guard/schedule");
+ok("★ 캘린더 동기화가 보호 일정 pull '직전'이다 (둘 다 있고, 순서가 이 순서다)",
+  t53CalAt >= 0 && t53PullAt >= 0 && t53CalAt < t53PullAt,
+  `cal@${t53CalAt} pull@${t53PullAt}`);
+
+// 등록을 빼면 `Capacitor.Plugins.Cal`이 아예 없어 권한도 목록도 화면에 안 뜬다(T-48에서 배웠다).
+ok("★ Manifest가 READ_CALENDAR만 선언하고 · MainActivity가 CalPlugin을 등록한다",
+  /android\.permission\.READ_CALENDAR/.test(t53Manifest)
+  && !/android\.permission\.WRITE_CALENDAR/.test(t53Manifest)
+  && /registerPlugin\(CalPlugin\.class\)/.test(t53Main)
+  && /@CapacitorPlugin\(\s*\n?\s*name = "Cal"/.test(t53Plugin),
+  `read=${/READ_CALENDAR/.test(t53Manifest)} write=${/WRITE_CALENDAR/.test(t53Manifest)}`);
 
 console.log("\n[부팅 · 연결 실패 복구]");
 ok("로드 후 부팅 오버레이 닫힘", !$("#boot").classList.contains("on"));

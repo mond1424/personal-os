@@ -445,6 +445,7 @@ async function refreshToday() {
   loadNotice();
   loadGuardOutcome();
   loadCollected();
+  loadCalStatus();   // 폰 캘린더가 조용히 죽어 있지 않은가 (T-53 ②)
   if (!S.staleShown && S.today.overdue.length) { S.staleShown = true; showStale(S.today.overdue[0]); }
   maybeCarryPrompt();   // 세 번 밀린 일의 출구 (T-35). 조건을 넘는 게 없으면 아무 일도 없다.
 }
@@ -682,6 +683,138 @@ function renderCollected(rows) {
       if (S.cal) renderCal();     // 추가된 일정이 캘린더에 보이게
     });
   });
+}
+
+/* 폰 캘린더 미러 (T-53 · ADR-029) ────────────────────────────
+ *
+ * **아무것도 안 넣어도 오늘 화면에 무언가 있다** — 이 티켓이 처음 공략하는 것은
+ * *"넣을 것이 없다"*이고, 그래서 **실패가 조용하면 목적이 통째로 사라진다.**
+ * 일정이 안 들어온 화면과 넣을 것이 없는 화면은 눈으로 똑같다.
+ *
+ * ★ **세 실패가 각자의 문구를 가진다**(권한 없음 · 대상 미선택 · 동기화 실패).
+ *   하나로 뭉치면 *"뭔가 안 된다"*만 남고 **무엇을 고칠지 화면이 말하지 않는다** —
+ *   2026-08-28에 알림 권한을 껐을 때 Guard가 통째로 멈춘 그 모양이다(그때는 문구조차 없었다).
+ *
+ * ★ **판정 순서가 곧 사용자가 할 일의 순서다**: 권한 → 대상 → 동기화.
+ *   권한이 없으면 목록 자체를 못 읽으므로 뒤의 것을 말해도 할 수 있는 일이 없다.
+ *
+ * **네이티브가 없으면 아무 말도 안 한다**(`off`). 브라우저에는 폰 캘린더가 없고,
+ * 없는 기능의 실패를 말하는 것은 잔소리다 — T-33이 `none`과 `error`를 가른 것과 같은 규칙이다.
+ */
+const CAL_ACT = { noperm: "허용하기", notarget: "고르기", error: "다시 시도" };
+
+/** 폰 캘린더에서 온 일정인가 — **출처는 서버가 준다**(`events.ext_src`). 화면이 추측하지 않는다.
+ *  값은 서버의 `CAL_SRC`(`services/calsync.ts`)와 같은 문자열이다: 한쪽을 바꾸면 다른 쪽도. */
+const CAL_SRC = "devcal";
+function isExtEvent(e) { return !!e && e.ext_src === CAL_SRC; }
+
+/** 읽기 전용 안내 — 버튼이 새는 경로가 생겨도 **여기서 한 번 더 막는다**(§금지 5행).
+ *  화면에서 지우는 것만으로 막으면, 다음에 목록을 하나 더 만드는 사람이 그 사실을 모른다. */
+function calReadOnlyGuard(item) {
+  if (!isExtEvent(item)) return false;
+  toast("폰 캘린더에서 온 일정이에요 — 캘린더 앱에서 고쳐요", "warn");
+  return true;
+}
+
+/** 순수 함수 — 사실(`status`)에서 상태와 문구를 정한다. **네이티브는 이름을 정하지 않는다.** */
+function calStatusLine(st) {
+  if (!st) return { state: "off", text: "" };
+  if (st.unreadable) return { state: "error", text: "캘린더 상태를 못 읽었어요" };
+  if (!st.permission) return { state: "noperm", text: "폰 캘린더를 못 읽어요 — 캘린더 권한이 꺼져 있어요" };
+  if (!(st.targets || []).length) return { state: "notarget", text: "가져올 캘린더를 아직 안 골랐어요" };
+  // ★ 사유를 그대로 보여준다(T-43과 같은 이유). 문장으로 뭉개면 다음에 다른 사유가 와도 같은 문장이다.
+  if (st.lastError) return { state: "error", text: `캘린더 동기화가 실패했어요 — ${st.lastError}` };
+  return { state: "ok", text: "" };
+}
+
+async function calNativeStatus() {
+  const C = globalThis.Capacitor?.Plugins?.Cal;
+  if (!C?.status) return null;                       // 브라우저·구버전 APK — 폴백
+  try { return await C.status(); } catch { return { unreadable: true }; }
+}
+
+/** Today 한 줄. **정상일 때는 안 뜬다** — 뜨는 것은 할 일이 있을 때뿐이다. */
+async function loadCalStatus() {
+  const bar = $("#td-cal");
+  if (!bar) return null;                             // 옛 index.html에서도 안 죽는다
+  const st = await calNativeStatus();
+  S.calStatus = st;
+  const v = calStatusLine(st);
+  bar.dataset.state = v.state;
+  // 행동이 있는 상태만 보인다 — `off`·`ok`는 같은 '안 보임'이고 기록에서만 갈린다(T-33).
+  bar.style.display = CAL_ACT[v.state] ? "flex" : "none";
+  $("#td-cal-text").textContent = v.text;
+  const b = $("#td-cal-act");
+  b.textContent = CAL_ACT[v.state] || "";
+  b.onclick = () => run(async () => {
+    const C = globalThis.Capacitor?.Plugins?.Cal;
+    if (v.state === "noperm") { await C?.requestPermission?.(); return loadCalStatus(); }
+    if (v.state === "notarget") return openCalSheet();
+    return calSyncNow();
+  });
+  return v;
+}
+
+/** 수동 새로고침 (티켓 ⑤의 셋째). 앱 열 때와 하루 1회는 **기기가** 한다. */
+async function calSyncNow() {
+  const C = globalThis.Capacitor?.Plugins?.Cal;
+  if (!C?.sync) return null;
+  const r = await C.sync();
+  if (r && r.ok) {
+    toast(`캘린더 ${r.sent}건을 맞췄어요`, "ok");
+    await refreshToday();                            // 안에서 loadCalStatus가 다시 돈다
+    if (S.cal) { invalidateCalendarCache(); await renderCalendar(); }
+  } else {
+    await loadCalStatus();
+  }
+  return r;
+}
+
+/** 대상 캘린더 선택 (티켓 ③). **선택 전에는 아무것도 안 가져온다** — 기기가 그것을 지킨다. */
+async function openCalSheet() {
+  const C = globalThis.Capacitor?.Plugins?.Cal;
+  const body = $("#cal-list");
+  const note = $("#cal-note");
+  const save = $("#cal-save");
+  if (!C?.calendars) {
+    note.textContent = "이 기기에서는 폰 캘린더를 읽을 수 없어요 — 앱(안드로이드)에서만 돼요.";
+    body.innerHTML = "";
+    save.style.display = "none";
+    return openSheet("sh-cal");
+  }
+  save.style.display = "";
+  const r = await C.calendars();
+  if (!r || !r.permission) {
+    note.textContent = "캘린더 권한이 필요해요. 허용해야 목록을 읽을 수 있어요.";
+    body.innerHTML = `<button class="btn" id="cal-perm" style="width:100%">캘린더 권한 허용하기</button>`;
+    save.style.display = "none";
+    $("#cal-perm").onclick = () => run(async () => {
+      await C.requestPermission();
+      await loadCalStatus();
+      return openCalSheet();
+    });
+    return openSheet("sh-cal");
+  }
+  const days = (S.calStatus && S.calStatus.windowDays) || 60;
+  const targets = new Set((r.targets || []).map(Number));
+  note.textContent = `가져올 캘린더만 고르세요 — 오늘부터 ${days}일치를 읽어요.`;
+  body.innerHTML = (r.calendars || []).map((c) =>
+    `<label class="evrow" data-cid="${esc(String(c.id))}">
+      <input type="checkbox" ${targets.has(Number(c.id)) ? "checked" : ""}>
+      <span class="en">${esc(c.name)}<span class="cap"> · ${esc(c.account || "")}</span></span>
+    </label>`).join("")
+    || `<div class="evrow"><span class="cap">이 기기에 캘린더가 없어요</span></div>`;
+  save.onclick = () => run(async () => {
+    const ids = [...body.querySelectorAll("[data-cid]")]
+      .filter((el) => el.querySelector("input")?.checked)
+      .map((el) => Number(el.dataset.cid));
+    await C.setTargets({ ids });
+    closeSheet("sh-cal");
+    S.calStatus = await calNativeStatus();
+    await calSyncNow();
+    if ($("#me-set").style.display === "") renderMe();   // 설정 줄도 따라온다
+  });
+  openSheet("sh-cal");
 }
 
 /* 세 번 밀린 일의 출구 (T-35 · ADR-036) ─────────────────────
@@ -1050,9 +1183,17 @@ async function openDay(k) {
     h += `<div class="sec-h" style="margin-top:16px"><span class="sec-t">일정</span><span class="cnt">${evs.length}</span></div>`;
     h += `<div class="card" style="padding:4px 14px">` + (evs.map((e) => {
       evxItems.set(e.id, e);
-      return `<div class="evrow"><span class="et mono">${e.time || "종일"}</span><button class="ev-protect-event-title" onclick="openEventEdit('${k}',${closed},'${e.id}')">${esc(e.title)}</button>` +
+      // 폰 캘린더에서 온 일정은 **읽기 전용**이다 (T-53 ⑥). 쓰기 방향(앱 → 캘린더)이 붙기
+      // 전까지 여기서 고치면 다음 동기화가 그것을 되돌린다 — 갈라짐을 화면에서 먼저 막는다.
+      // **수정은 캘린더에서.** 그래서 제목이 버튼이 아니고 ×도 없다.
+      const ext = isExtEvent(e);
+      const title = ext
+        ? `<span class="en">${esc(e.title)}</span>`
+        : `<button class="ev-protect-event-title" onclick="openEventEdit('${k}',${closed},'${e.id}')">${esc(e.title)}</button>`;
+      return `<div class="evrow"><span class="et mono">${e.time || "종일"}</span>${title}` +
       (e.protect_from ? '<span class="ev-protect-badge">보호</span>' : "") +
-      (closed ? "" : `<button class="ex" onclick="removeEvent('${e.id}','${k}')">×</button>`) + `</div>`}).join("")
+      (ext ? '<span class="cap ev-cal-badge">캘린더</span>' : "") +
+      (closed || ext ? "" : `<button class="ex" onclick="removeEvent('${e.id}','${k}')">×</button>`) + `</div>`}).join("")
       || `<div class="evrow"><span class="cap">이 날의 일정이 없어요</span></div>`) + `</div>`;
     // 통합 추가 영역 — [일정 | 할 일 | memo] (relation별 가용 세그). 기존 함수 재사용.
     h += addZoneHtml(k, day.relation, closed);
@@ -1064,6 +1205,7 @@ async function openDay(k) {
 }
 
 function removeEvent(id, k) {
+  if (calReadOnlyGuard(evxItems.get(id))) return;   // 지우면 다음 동기화가 되살린다 (T-53 ⑥)
   run(async () => {
     const r = await confirmAsk("이 일정을 지울까요?", "일정은 '있었던 일'이라 마감된 날에서는 지울 수 없어요.", "지우기");
     if (r !== "ok") return;
@@ -1194,6 +1336,7 @@ function protectionBody() {
 function openEventEdit(k, closed, id) {
   const item = evxItems.get(id);
   if (!item) return toast("일정을 다시 불러와 주세요", "warn");
+  if (calReadOnlyGuard(item)) return;    // 폰 캘린더 일정은 앱에서 안 고친다 (T-53 ⑥)
   openEventSheet(k, closed, item);
 }
 
@@ -2335,6 +2478,9 @@ async function renderMe() {
       Api.collectedStatus().catch(() => null),
     ]);
   S.collectStatus = collectSt;
+  // 폰 캘린더는 **서버가 아니라 기기가** 안다 — `Promise.all`에 못 얹는다(응답이 아니라 다리다).
+  // 네이티브가 없으면 null이고, 그 자체가 화면에서 '앱에서만 돼요'로 읽힌다.
+  S.calStatus = await calNativeStatus();
   S.me = me;
   S.guardModes = guardModes;
   S.goalsSchema = goalsSchema;
@@ -2391,7 +2537,8 @@ async function renderMe() {
     : key ? `onclick="openSetting('${key}')"` : 'style="opacity:.5"';
   $("#set-list").innerHTML = rows.map(([k, v, key]) =>
     `<button class="srow" ${act(key)}>${k}<em>${esc(v)}</em></button>`).join("")
-    + collectStatusRow(S.collectStatus);
+    + collectStatusRow(S.collectStatus)
+    + calStatusRow(S.calStatus);
 }
 
 /* 학사 캘린더 수집 상태 — 설정 안 한 줄 (T-43) ────────────────
@@ -2437,6 +2584,26 @@ function collectStatusRow(st) {
   const v = collectStatusLine(st);
   return `<div class="srow${v.bad ? " srow-alert" : ""}" id="set-collect" data-state="${v.state}">`
     + `학사 캘린더<em>${esc(v.text)}</em></div>`;
+}
+
+/* 폰 캘린더 줄 (T-53 ③) — **위 학사 캘린더 줄과 다른 것이다.**
+ * 저쪽은 서버가 iCal을 긁어 오는 것이고(T-41), 이쪽은 기기가 폰의 캘린더를 읽는 것이다.
+ * 둘을 한 줄로 합치면 어느 쪽이 죽었는지 못 읽는다 — 이 티켓이 문구를 셋으로 가른 것과 같은 이유다.
+ *
+ * **여기는 눌린다** — 대상 캘린더를 고르는 유일한 입구이기 때문이다(Today 한 줄은 사라진다). */
+function calStatusRow(st) {
+  const v = calStatusLine(st);
+  const n = (st && st.targets ? st.targets.length : 0);
+  const label = {
+    off: "앱에서만 돼요",
+    noperm: "권한 없음 ›",
+    notarget: "고르지 않음 ›",
+    error: "동기화 실패 ›",
+    ok: `${n}개 · ${st && st.lastOkAt ? `${collectAgo(st.lastOkAt)} 맞춤` : "아직 안 맞췄어요"} ›`,
+  }[v.state] || "";
+  const bad = v.state === "error" || v.state === "noperm" || v.state === "notarget";
+  return `<button class="srow${bad ? " srow-alert" : ""}" id="set-cal" data-state="${v.state}"`
+    + ` onclick="openCalSheet()">폰 캘린더<em>${esc(label)}</em></button>`;
 }
 
 function toggleSet(on) { $("#me-main").style.display = on ? "none" : ""; $("#me-set").style.display = on ? "" : "none"; }
@@ -3390,11 +3557,17 @@ async function syncGuardNative() {
       baseUrl: location.origin,
       token: localStorage.getItem("api_token") || null,
     });
+    // ★ **이 한 번의 호출이 폰 캘린더 동기화도 태운다** (T-53 ⑤ — '앱 열 때').
+    //   `GuardSync.syncNow`가 보호 일정 pull **직전에** `CalSync.syncNow`를 부르므로,
+    //   여기서 따로 `Cal.sync()`를 부르면 같은 창을 두 번 읽는다. 순서를 보장하는 자리는
+    //   기기 쪽 한 곳이고(웹이 없는 새벽에도 같은 순서여야 한다), 웹은 그것을 부르기만 한다.
     const r = await G.sync();
     if (!r.ok) console.warn("[guard] sync 실패:", r.error);
   } catch (e) {
     console.warn("[guard] sync 예외:", e);
   }
+  // 동기화가 끝난 뒤의 사실로 한 줄을 다시 그린다 — 부팅 직후에는 옛 결과가 남아 있다.
+  loadCalStatus();
 }
 
 let booted = false;

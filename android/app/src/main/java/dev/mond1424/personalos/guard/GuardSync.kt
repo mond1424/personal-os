@@ -120,6 +120,15 @@ object GuardSync {
         // 예약은 실패해도 다음날 다시 오지만, 기록은 여기서 안 올리면 계속 기기에만 남는다.
         runCatching { GuardEventQueue.flush(ctx) }
 
+        // ★ **폰 캘린더 미러가 보호 일정 pull보다 먼저다** (T-53 ⑤ · 범위 밖 한 줄).
+        //   순서가 뒤집히면 오늘 캘린더에서 옮겨 온 시험이 **이번 응답의 `fires[]`에 없고**,
+        //   다음 동기화는 내일이라 **그날 알람 예약을 통째로 놓친다.**
+        //   여기가 유일한 자리인 이유: 앱을 열 때도, 하루 1회 알람이 깨울 때도, 부팅 복구도
+        //   전부 이 함수를 지난다 — 별도 알람으로 '2분 먼저'를 흉내 내면 그것은 순서 보장이
+        //   아니라 우연이다. 실패해도 계속 간다: 캘린더가 안 와도 서버가 이미 아는
+        //   보호 일정은 예약돼야 한다(동기화 실패로 예약을 인질로 잡지 않는다).
+        runCatching { dev.mond1424.personalos.cal.CalSync.syncNow(ctx) }
+
         val body = try {
             val c = (URL("$base/api/guard/schedule").openConnection() as HttpURLConnection).apply {
                 requestMethod = "GET"

@@ -62,6 +62,15 @@
     tools:ignore="QueryAllPackagesPermission" />
 
 
+<!-- ══════════ 폰 캘린더 (T-53 · ADR-029) ══════════ -->
+
+<!-- 런타임 권한이다. 없으면 일정이 조용히 사라지고, 그건 "넣을 게 없다"와
+     화면상 구별이 안 된다 → Today 한 줄이 그 사실을 말한다(티켓 ②).
+     읽기만 선언한다. WRITE_CALENDAR은 쓰기 방향(9월)의 것이고,
+     선언하지 않는 것이 갈라짐을 막는 가장 확실한 방법이다. -->
+<uses-permission android:name="android.permission.READ_CALENDAR" />
+
+
 <!-- ══════════ 9월 이후 — 오버레이 ══════════ -->
 <!-- 지금은 선언만. 권한 요청은 실제로 쓸 때 -->
 <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />

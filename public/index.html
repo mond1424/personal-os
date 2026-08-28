@@ -45,6 +45,17 @@
       <button class="go" id="td-coll-open">보기</button>
     </span>
   </div>
+  <!-- 폰 캘린더 상태 (T-53 ②) — 권한 없음 · 대상 미선택 · 동기화 실패가 **각자의 문구**로 뜬다.
+       2026-08-28에 알림 권한을 껐을 때 Guard가 통째로 멈췄는데 앱이 아무 말도 안 했다.
+       캘린더에서 같은 실패를 반복하면 일정이 조용히 사라지고, 그건 "넣을 게 없다"와
+       화면상 구별이 안 된다 — 이 티켓이 고치려는 그 증상으로 되돌아간다.
+       ⚠️ 정상일 때는 안 뜬다. 셋을 한 문구로 뭉치지 않는다: 무엇을 고칠지가 문구에서 갈린다. -->
+  <div class="guardbar" id="td-cal" style="display:none">
+    <span id="td-cal-text"></span>
+    <span style="margin-left:auto;display:flex;gap:10px;flex:none">
+      <button class="go" id="td-cal-act"></button>
+    </span>
+  </div>
   <div class="sec" id="td-events" style="display:none"></div>
 
   <div class="sec">
@@ -283,6 +294,18 @@
   <div class="sh-t">새로 들어온 일정</div>
   <div id="coll-list" style="margin-top:12px"></div>
   <p class="cap" style="margin-top:10px">학사 캘린더에서 읽어 온 것이에요. 원문 그대로 보여드려요.</p>
+</div>
+
+<!-- 대상 캘린더 선택 (T-53 ③) — **전체 동기화는 잡동사니다.** 계정이 여럿이라
+     (구글 다중·삼성) 고르지 않으면 광고·생일·공휴일이 그대로 일정이 된다.
+     선택 전에는 아무것도 안 가져오고, 위 `#td-cal` 한 줄이 그 사실을 말한다. -->
+<div class="sheet" id="sh-cal">
+  <div class="grip"></div>
+  <div class="sh-t">폰 캘린더</div>
+  <p class="cap" id="cal-note" style="margin-top:4px"></p>
+  <div id="cal-list" style="margin-top:12px"></div>
+  <button class="btn" id="cal-save" style="margin-top:12px;width:100%">저장하고 지금 동기화</button>
+  <p class="cap" style="margin-top:10px">읽기만 해요 — 앱에서 고친 것은 폰 캘린더로 가지 않아요. 캘린더 일정은 캘린더 앱에서 고쳐요.</p>
 </div>
 
 <div class="sheet" id="sh-add">
