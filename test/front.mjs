@@ -1723,6 +1723,29 @@ await until(() => txt("#td-coll-text").includes("1건"));
 ok("④ 하나를 처리하면 남은 수가 준다 — 카드가 1건으로",
   ev(`window.__t42.sent.join("|")`) === "add:t42-a" && txt("#td-coll-text").includes("1건"),
   `${ev(`window.__t42.sent.join("|")`)} / ${txt("#td-coll-text")}`);
+// ★ **④는 처리 뒤의 캘린더 갱신을 안 본다** — 그래서 이 절은 T-42부터 `renderCal()`(없는
+//    함수)을 부르며 초록이었다. 던진 자리가 `refreshToday()` **뒤**라 건수는 이미 줄어 있고,
+//    ④는 그 앞에서 이미 만족된다.
+// ⚠️ **토스트로 보면 안 된다** — 실제로 그렇게 짰다가 변이(옛 `renderCal()`)에서도 초록이었다.
+//    `until`이 `refreshToday()`의 DOM 쓰기를 보고 먼저 빠져나와, 던지기 **전에** 토스트를 읽는다.
+//    그래서 **호출 자체**를 센다: 캐시를 버리고 다시 그렸는가. 순서까지 본다 —
+//    캐시를 안 버리면 방금 만든 event가 안 실린 채로 다시 그려진다(`calSyncNow`와 같은 짝).
+await ev(`(async()=>{
+  window.__t42.calls = [];
+  window.__t42.oldRC = renderCalendar;
+  window.__t42.oldIC = invalidateCalendarCache;
+  renderCalendar = async (...a) => { window.__t42.calls.push("render"); return window.__t42.oldRC(...a); };
+  invalidateCalendarCache = () => { window.__t42.calls.push("invalidate"); return window.__t42.oldIC(); };
+  S.cal = S.cal || { y: +S.today.date.slice(0,4), m: +S.today.date.slice(5,7) };
+})()`);
+$("#coll-list [data-cid='t42-b'] [data-act='add']").click();
+await until(() => ev(`window.__t42.calls.length >= 2`), 4000);
+const t42Calls = ev(`window.__t42.calls.join("|")`);
+await ev(`(async()=>{
+  renderCalendar = window.__t42.oldRC; invalidateCalendarCache = window.__t42.oldIC;
+})()`);
+ok("★ [추가]가 조용히 실패하지 않는다 — 캐시를 버리고 캘린더를 다시 그린다 (T-53 진단)",
+  t42Calls === "invalidate|render", t42Calls || "(아무것도 안 불렸다)");
 
 await ev(`(async()=>{ window.__t42.pending = []; await loadCollected(); })()`);
 const t42None = { state: t42Bar.dataset.state, display: t42Bar.style.display };

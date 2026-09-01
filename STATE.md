@@ -48,9 +48,9 @@
   - ⚠️ **`ext_updated`는 '수정 시각'이 아니라 '기기가 이 상태를 본 시각'이다.** CalendarContract에
     이식 가능한 수정 시각이 없다 — 안 실으면 서버 LWW가 아무것도 안 하고, 늦게 도착한 옛 배치가
     새 상태를 덮는다.
-  - ⚠️ **관측 하나 — `renderCollected()`가 없는 함수를 부른다**(`renderCal()` · T-42가 남긴 것 ·
-    이 리포엔 `renderCalendar`뿐이다). 수집 제안을 [추가]로 처리하면 항목은 들어가고 **빨간 토스트
-    한 줄**이 남으며 캘린더가 안 갱신된다. **한 단어**이고 이 티켓 범위 밖이라 고치지 않았다.
+  - ✅ ~~**관측 하나 — `renderCollected()`가 없는 함수를 부른다**(`renderCal()`)~~ —
+    **2026-09-01 진단 커밋에서 닫혔다.** 한 단어가 아니라 `calSyncNow`와 같은 짝
+    (`invalidateCalendarCache()` + `await renderCalendar()`)이었다. 아래 §T-53 실측 진단.
 - 그 앞 코드 변경: **T-52** (2026-08-28 · **`0020_cal_sync.sql` 포함** · 서버 · 프런트 무변경 ·
   **APK 무관** — `POST /api/cal/sync` 신설. 기기가 창 범위의 폰 캘린더 일정을 통째로 보내면
   서버가 `events`를 그 상태에 맞춘다(**멱등**). `services/calsync.ts` 신설 ·
@@ -275,6 +275,92 @@
   - ✅ **2026-08-03 폰 실측 완료** — T-04·T-05·T-09·T-11·T-12 닫힘. 기준선 smoke 237 / front 210 / 실패 0.
   - ✅ **0013까지 로컬·원격 모두 적용 + deploy 완료** (2026-07-29). 폰 APK도 갱신 완료.
   - ✅ 2026-07-30 21:55 배포 완료 — `normalizeIso`(UTC 정규화)·T-03·T-05까지 라이브.
+
+## 🔬 T-53 실측 진단 (2026-09-01 · 폰 CDP + adb) — **고치지 않았다. 티켓 범위를 정하는 근거다**
+
+> ⚠️ **이 절은 관측이다.** 폰 상태는 §CLAUDE.md의 명령 셋으로 다시 확인한다.
+> 붙는 법: `adb connect <폰IP>:5555` → `adb forward tcp:9333 localabstract:webview_devtools_remote_<pid>`
+> → `http://127.0.0.1:9333/json/list`의 `webSocketDebuggerUrl`에 `Runtime.evaluate`.
+> **폰 IP는 사람에게 묻지 않는다** — 서브넷에서 5555가 열린 호스트를 찾는다(`FIELD-TEST-NIGHT.md` §준비).
+
+### 확인한 사실 (전부 실측)
+
+| 무엇 | 값 | 무엇을 배제하나 |
+|---|---|---|
+| 설치된 APK MD5 | `4f3e67e9038fa2a69c5284133c85f4ad` = **T-53 빌드** (설치 08-30 15:35) | (e) 플러그인 없음 |
+| `Capacitor.Plugins` | `Cal` **있다** (`MainActivity` 등록 정상) | (e) |
+| `READ_CALENDAR` | `granted=true` (`USER_SET`) | 권한 갈래 |
+| `Cal.status()` | `permission:true` · **`targets:[]`** · `windowDays:60` · `configured:true` · **`lastOkAt:null` · `lastError:null` · `lastCount:-1`** | ★ 아래 |
+| provider 직접 조회 | 창 안 **26행**(`content query … /instances/when/…`) — cal 10에 실물 일정 | (b) 읽기 0건 |
+| `GuardSync.syncStatus()` | `lastOkAt 2026-09-01T04:07:57Z` · `boundary "06:00"` · `lastFire` 08-31 밤 | 앱 데이터 초기화 없음 |
+| 창 | `2026-09-01 ~ 2026-10-31` (경계 06:00 · 13시라 오늘) | (d) 창 밖 |
+| **`setTargets` 왕복** | `[] → [10]` 저장됨 → 읽힘 → `[]` 원복 | 저장 경로 자체는 **정상** |
+| **`Cal.sync()` 실측** | `ok:true · sent:5` · 서버 `upserted:5` | (b)(c) 전부 |
+
+### A — 왜 안 넘어오나: **(a) 대상이 저장 안 됨. 정확히는 "빈 목록이 저장됐다"**
+
+**대상은 기기 prefs에 있다**(`SharedPreferences("cal")`의 `cal_targets`) — 서버 `settings`에 devcal 키가
+0인 것은 **정상이고 증거가 아니다.** Cowork의 관측 셋 중 그 하나는 배제 재료가 못 된다.
+
+★ **증명은 `targets:[]`가 아니라 prefs 셋이 전부 초기값인 것이다.** `lastOkAt:null` ·
+`lastError:null` · `lastCount:-1` — `CalSync.syncNow`가 **설치 이래 한 번도 HTTP까지 간 적이 없고
+실패한 적도 없다.** 그 함수가 아무것도 안 쓰고 나가는 길은 `no_permission`과 `no_target` 둘뿐이고,
+권한은 켜져 있다. 그리고 **저장이 성공하면 그 자리에서 `calSyncNow()`가 뒤따르므로**
+(`openCalSheet`의 `save.onclick`), 비지 않은 대상이 한 번이라도 저장됐다면 `lastOk`나 `lastErr` 중
+하나가 반드시 남는다. **둘 다 없다 = 비지 않은 대상이 저장된 적이 없다.**
+
+(b)~(e)는 실측으로 전부 배제됐다 — 대상 하나(`10`)를 넣고 `Cal.sync()`를 돌리자
+**읽기 5건 → 전송 → 서버 `upserted:5`** 까지 한 번에 갔다. **읽기·보내기·창·배선 어디에도 결함이 없다.**
+
+### B — ★ 왜 화면에 안 떴나 (②의 실패)
+
+**`calStatusLine`이 받은 state는 `ok`가 아니라 `notarget`이다.** `#td-cal`은 실제로 떠 있었다:
+`가져올 캘린더를 아직 안 골랐어요 [고르기]`. 그러니 *"0건 성공과 실패가 안 갈렸다"*는
+**이번에 터진 것이 아니다**(그건 아래 B-3의 잠복분이다).
+
+**②가 실패한 자리는 '상태'가 아니라 '방금 한 행동의 결과'다.** 셋이 겹친다:
+
+| | 무엇 | 어디 |
+|---|---|---|
+| **B-1** | **`skipped`가 화면까지 안 온다.** 네이티브는 `no_target`/`no_permission`을 성실히 실어 보내는데 `calSyncNow`의 `else` 가지가 `r`을 통째로 버리고 `loadCalStatus()`만 부른다. 그 둘은 **설계상 prefs에 흔적을 안 남기므로**(*"실패가 아니다"*) 다시 그린 줄은 **저장 누르기 전과 글자 하나 안 다르다** | `public/app.js` `calSyncNow` |
+| **B-2** | **빈 선택으로 저장하는 것이 막히지도, 말해지지도 않는다.** `save.onclick`은 `ids.length === 0`을 안 보고 `CalPlugin.setTargets`도 빈 배열을 정상 저장으로 처리한다. *"안 고르고 저장"* 과 *"선택 해제"* 가 같은 연산인데 화면에 둘을 가르는 말이 없다. 시트가 닫히는 것이 유일한 피드백이고 **그건 성공 신호로 읽힌다** | `public/app.js` `openCalSheet` · `cal/CalPlugin.kt` |
+| **B-3** | (아직 안 터진 것 · 사용자가 짚은 그 자리) **"0건 성공"과 "실패"가 안 갈린다.** `r.ok && r.sent===0`이면 초록 토스트 `캘린더 0건을 맞췄어요`가 뜬다. 휴일 캘린더만 고르면 바로 이 모양이다. **서버가 세어 준 것(`lastServer`의 `upserted`·`deleted`)은 prefs에 저장되는데 화면 어디에도 안 나온다** — T-52가 *"무엇을 안 했는지"* 를 세어 돌려준 값이 통째로 사장돼 있다 | `public/app.js` `calSyncNow` · `calStatusRow` |
+
+⚠️ **`cal/` 셋에 `Log` 호출이 0건이다.** 티켓 §확인 절차가 지시한 *"logcat의 CalSync·CalendarReader 태그"*
+는 **찍히는 것이 없어서 애초에 볼 수 없다.** 화면이 조용하면 로그라도 남아야 하는데 **둘 다 없다** —
+이것도 ②의 일부다. `guard/`는 `noteFire`로 흔적을 남긴다(같은 문제를 이미 한 번 겪은 자리다).
+
+### 진단 중 건드린 것 — **전부 원복했다**
+
+측정을 위해 `setTargets([10])` → `Cal.sync()` → `setTargets([])` → 빈 items POST(Cowork가 이미 돌린
+그 프로브)로 되돌렸다. 확인: `targets:[]` · `/api/calendar` 창 안 `events 0` · `devcal 0` ·
+`#td-cal` state `notarget`. **딱 하나 못 되돌린 것**: 기기 prefs의 `cal_last_ok`/`cal_last_count`가
+`2026-09-01T04:50:17Z` / `5`로 남는다(성공한 동기화의 기록이라 지울 길이 없다).
+**그건 이 진단이 만든 값이고 사용자의 행동이 아니다** — 대상이 비어 있는 동안은 화면에 안 나온다.
+
+### ① uclass 개강일 0건 — **형식 문제가 아니다. 목록이 비어 있다**
+
+- `settings`: `uclass_last_collect_at 2026-09-01T10:00:01+09:00` · `uclass_last_error ""` · **`uclass_last_seen_count 0`**
+- **`collected_items`는 0행이다**(원격 D1 직접 조회). 8/21 첫 수집 이래 **한 건도 들어온 적이 없다.**
+- `K_SEEN`은 `parseIcal(text).length`, 즉 **VEVENT 수 그대로**다. 필터가 없다 — UID만 있으면 전부 저장한다.
+  그리고 본문에 `BEGIN:VCALENDAR`가 없으면 `not_calendar`로 던져 `K_ERROR`에 남는데 **그것도 비어 있다.**
+  → **정상적인 달력을 받았고 그 안에 VEVENT가 0개다.** 파싱·형식·SUMMARY 해석의 문제가 아니다.
+- `docs/samples/uclass-icalexport-20260817.ics`는 **VEVENT가 하나뿐이고 그것도 `SUMMARY:test`**
+  (사용자가 만든 개인 이벤트 · `DTSTART:20260818T130900Z`). **강좌 이벤트는 그때도 없었다.**
+- ★ **ADR-037 §미확인의 자리가 한 칸 앞이다.** 적힌 것은 *"과제 due 이벤트의 SUMMARY 형식 미확인"*
+  인데, 실제로 미확인인 것은 **"그 목록에 무엇이 실리는가"** 다. **정규 수업(주간 시간표)은 Moodle
+  캘린더 이벤트가 아닐 가능성이 높다** — Moodle 캘린더에 들어가는 것은 과제·퀴즈의 마감과
+  코스/사이트 이벤트이고, 강의 시간표는 수강신청 쪽에 있다. 개강 **첫날**이라 마감이 아직 하나도
+  안 걸린 것과도 모순되지 않는다.
+- ⚠️ **이 층은 iCal 원문을 못 받았다.** `UCLASS_ICAL_URL`은 시크릿이고 **그 값 자체가 열쇠다**
+  (ADR-037 §근거 ④ — 채팅·문서·커밋에 넣지 않는다). 가르는 한 줄은 사용자 몫이다:
+  ```powershell
+  # URL은 화면에만 남긴다. 붙여넣지 않는다.
+  curl -s "<UCLASS_ICAL_URL>" | Select-String "BEGIN:VEVENT|^SUMMARY|^DTSTART"
+  ```
+  **VEVENT가 0줄이면** 목록 자체가 비었다는 것이 확정되고(→ 수업은 여기 안 온다 · 다음은
+  `preset_what`/`preset_time`이 옛 학기 필터인지),
+  **줄이 있는데 `collected_items`가 0이면** 그때 비로소 수집 경로의 결함이다.
 
 ## ✅ 다음 티켓에 얹을 것 (2026-08-28 · Cowork 판단) — **둘 다 T-52 `8cdfda5`에 실려 닫혔다**
 
@@ -1732,8 +1818,8 @@ Guard v1이 1순위라는 건 안 바뀐다. Phase 1을 셋으로 쪼개 **UI를
 - style.css      https://raw.githubusercontent.com/mond1424/personal-os/main/public/style.css
 
 ## 기준선
-typecheck 통과 / **smoke 385** / **front 376** / 실패 0 / verify exit 0
-**2026-08-29 (T-53).** 그 앞이 8/28의 T-52·T-51·T-50, 8/27의 T-49와 T-48, 8/25의 T-47과 T-46,
+typecheck 통과 / **smoke 385** / **front 377** / 실패 0 / verify exit 0
+**2026-09-01 (T-53 진단).** 그 앞이 8/29의 T-53, 8/28의 T-52·T-51·T-50, 8/27의 T-49와 T-48, 8/25의 T-47과 T-46,
 8/23의 T-45, 8/22의 T-44 → T-43,
 그 앞이 8/21의 T-41 → T-42, 그 앞이 8/20의 T-38 → T-37 → T-39 → T-40이다.
 **front가 291에서 움직인 것은 T-35 이후 처음이다** — T-42가 화면을 건드린 첫 티켓이다.
@@ -1749,6 +1835,15 @@ typecheck 통과 / **smoke 385** / **front 376** / 실패 0 / verify exit 0
 front가 **257**로 나왔다 — T-26은 `public/`·`front.mjs`를 건드리지도 않았는데. 셋을 stash하고
 다시 재니 256이었다(smoke 279는 같았다). **오염된 트리에서 잰 숫자가 원장에 들어가면 그 줄은
 거짓이고, 다음 티켓의 '앞 숫자'가 어긋난다.** 병렬 발행은 Cowork가 `AGENT-CHAIN.md` §3로 막았다.
+
+(T-53 진단 — 왜 안 넘어왔나: smoke **385 무변경** · front **376 → 377** ·
+ **프런트 한 줄 + 검사 하나 · 서버 무변경 · Kotlin 무변경 · 마이그레이션 없음 · APK 무관**.
+ 코드 변경은 T-42가 남긴 `renderCal()` → `renderCalendar()` 하나뿐이다(아래 §T-53 실측 진단).
+ ★ **"한 단어"가 아니었다.** 캐시를 안 버리면 다시 그려도 방금 만든 event가 안 실린다 —
+ `calSyncNow`의 짝과 같은 `{ invalidateCalendarCache(); await renderCalendar(); }` 로 맞췄다.
+ ⚠️ **새 검사를 토스트로 짰다가 변이에서 초록이었다.** `until`이 `refreshToday()`의 DOM 쓰기를
+ 보고 먼저 빠져나와 **던지기 전에** 토스트를 읽는다. **호출을 세는 모양으로 바꾸니 변이가 죽었다**
+ (`(아무것도 안 불렸다)` · 376/실패 1). 경합이 있는 신호는 *"조용한 실패"* 검사에 쓸 수 없다.)
 
 (T-53 폰 캘린더가 Today를 채운다: smoke **385 무변경** · front **363 → 376** ·
  **Android(`cal/` 셋 신규) + 프런트 · 서버 무변경 · 마이그레이션 없음 · APK와 배포 둘 다 필요**.

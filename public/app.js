@@ -680,7 +680,9 @@ function renderCollected(rows) {
       row.remove();
       if (!body.querySelector("[data-cid]")) closeSheet("sh-coll");
       await refreshToday();       // 카드 수가 줄고, 없으면 카드가 사라진다
-      if (S.cal) renderCal();     // 추가된 일정이 캘린더에 보이게
+      // 추가된 일정이 캘린더에 보이게. **캐시를 먼저 버린다** — 달 세그먼트가 캐시돼 있어
+      // 그냥 다시 그리면 방금 만든 event가 안 실린다(`calSyncNow`와 같은 짝).
+      if (S.cal) { invalidateCalendarCache(); await renderCalendar(); }
     });
   });
 }
