@@ -1955,6 +1955,32 @@ LAST-MODIFIED:20260817T130943Z    ← 변경 감지
 ❌ CATEGORIES가 없다 — 강좌 구분이 iCal에 실리는지 미확인
 ❌ 과제 due 이벤트의 SUMMARY 형식 미확인   (화면은 "… 기한")
 ❌ DTSTART가 마감 시각인지 미확인
+
+⚠️ **미확인의 자리가 한 칸 앞이었다** (2026-09-01 실측). 위 셋은 *"실린 것을 어떻게 읽나"*를 묻는데,
+**아직 안 갈린 것은 "무엇이 실리는가"다.**
+
+```
+개강일 09-01 10:00  수집 정상(not_calendar 없음 · last_error 빈 문자열)
+last_seen_count 0   K_SEEN 은 parseIcal().length 그대로이고 필터가 없다
+collected_items 0행  8/21 이래 한 건도 없다
+```
+
+**정상 달력을 받았고 그 안에 VEVENT가 0개다.** 8/17 표본도 VEVENT 하나뿐이었고 그것마저
+사용자가 만든 개인 이벤트(`SUMMARY:test`)였다 — **강좌 이벤트는 그때도 없었다.**
+
+**정규 수업(주간 시간표)이 Moodle 캘린더 이벤트가 아닐 가능성이 높다.** Moodle 캘린더에 실리는
+것은 과제·퀴즈 마감과 코스 이벤트이고, **개강 첫날이라 마감이 아직 안 걸린 것과 모순되지 않는다.**
+
+⚠️ **가르는 것은 iCal 원문 한 줄이고 사용자만 할 수 있다**(`UCLASS_ICAL_URL`은 시크릿이자 열쇠다):
+
+```powershell
+curl -s "<UCLASS_ICAL_URL>" | Select-String "BEGIN:VEVENT|^SUMMARY|^DTSTART"
+```
+
+```
+VEVENT 0줄                    →  목록이 빈 것이 확정. 다음은 preset_what·preset_time 이 옛 학기 필터인가
+줄이 있는데 collected 0행      →  그때 비로소 수집 경로의 결함이다
+```
 ```
 
 ⚠️ **미확인 셋은 전부 같은 이유다 — 창 안에 실제 과제 이벤트가 없다.** 1학기 마감은 전부
