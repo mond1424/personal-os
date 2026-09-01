@@ -395,6 +395,14 @@ input[type=date]:focus, select:focus{border-color:var(--sub)}
 .swatches{display:flex;flex-wrap:wrap;gap:9px;margin-top:8px}
 .sw{width:30px;height:30px;border-radius:9px;border:2px solid transparent}
 .sw.on{border-color:var(--ink)}
+/* 폰 캘린더 — 방금 한 행동의 결과 (T-54). 상태 줄(.guardbar#td-cal)과 다른 것이라
+   자리도 다르다. 색은 이미 다크 짝이 있는 변수만 쓴다(함정 5) — 새 색을 만들지 않는다. */
+#cal-result{margin-top:10px;line-height:1.5;font-weight:600}
+#cal-result[data-kind=""]{display:none}
+#cal-result[data-kind="warn"]{color:var(--brick)}
+#cal-result[data-kind="err"]{color:var(--brick)}
+#cal-result[data-kind="ok"]{color:var(--mint)}
+
 .optrow{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:12px 2px;
   border-bottom:1px solid var(--line2);width:100%;font-size:14px}
 .optrow:last-child{border-bottom:none}

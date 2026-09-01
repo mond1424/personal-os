@@ -1716,10 +1716,12 @@ ok("② 시트에 원문이 그대로 나온다 · '마감'·'제출'을 우리�
 ok("③ '전부 추가' 버튼이 없다",
   !/전부|모두/.test($("#sh-coll").textContent || ""), $("#sh-coll").textContent?.slice(0, 60));
 
-$("#coll-list [data-cid='t42-a'] [data-act='add']").click();
-// ⚠️ 여기 200ms 고정이었다. 처리 뒤 `refreshToday()`가 **실 API를 한 번 왕복**하므로
-//    바쁜 기계에서 문구가 아직 안 바뀐 채로 검사가 돌았다(같은 코드가 4번 중 3번 빨간불).
-await until(() => txt("#td-coll-text").includes("1건"));
+// ⚠️ **여기는 두 번 고쳤다.** 처음엔 고정 200ms였고(바쁜 기계에서 4번 중 3번 빨간불),
+//    다음엔 `until`이었다. `until`도 부족했다 — 문구는 `refreshToday()` **도중에** 바뀌므로
+//    이 줄을 통과한 뒤에도 **핸들러는 아직 날고 있다.** 그 잔여가 아래 ★ 검사의 스파이에
+//    섞여 `invalidate|render`가 두 벌로 찍혔다(T-54 변이 배터리가 그것을 드러냈다).
+//    `onclick()`은 `run(...)`의 프라미스를 그대로 주므로 **끝난 것을 직접 안다** — 시계가 없다.
+await $("#coll-list [data-cid='t42-a'] [data-act='add']").onclick();
 ok("④ 하나를 처리하면 남은 수가 준다 — 카드가 1건으로",
   ev(`window.__t42.sent.join("|")`) === "add:t42-a" && txt("#td-coll-text").includes("1건"),
   `${ev(`window.__t42.sent.join("|")`)} / ${txt("#td-coll-text")}`);
@@ -1738,8 +1740,13 @@ await ev(`(async()=>{
   invalidateCalendarCache = () => { window.__t42.calls.push("invalidate"); return window.__t42.oldIC(); };
   S.cal = S.cal || { y: +S.today.date.slice(0,4), m: +S.today.date.slice(5,7) };
 })()`);
-$("#coll-list [data-cid='t42-b'] [data-act='add']").click();
-await until(() => ev(`window.__t42.calls.length >= 2`), 4000);
+// ⚠️ **시계를 아예 안 쓴다.** 처음엔 `click()` + `until(4초)`였는데 부하가 걸린 기계에서
+//    **이 절과 무관한 변이 셋(M2·M4·M7)에서 죽었다** — 처리 뒤 `refreshToday()`가 실 API를
+//    한 번 왕복하고 invalidate·render는 그 뒤에 온다. **20초로 늘려도 M4에서 또 죽었다:**
+//    대기를 늘리는 것은 경합을 없애는 것이 아니라 미루는 것이다.
+//    `onclick()`은 `run(...)`의 프라미스를 그대로 돌려주므로 **핸들러가 끝난 것을 직접 안다.**
+//    (`b`는 리스너 등록 때 클로저로 잡히므로 event 객체가 없어도 같은 경로다.)
+await $("#coll-list [data-cid='t42-b'] [data-act='add']").onclick();
 const t42Calls = ev(`window.__t42.calls.join("|")`);
 await ev(`(async()=>{
   renderCalendar = window.__t42.oldRC; invalidateCalendarCache = window.__t42.oldIC;
@@ -2751,6 +2758,146 @@ ok("★ Manifest가 READ_CALENDAR만 선언하고 · MainActivity가 CalPlugin�
   && /registerPlugin\(CalPlugin\.class\)/.test(t53Main)
   && /@CapacitorPlugin\(\s*\n?\s*name = "Cal"/.test(t53Plugin),
   `read=${/READ_CALENDAR/.test(t53Manifest)} write=${/WRITE_CALENDAR/.test(t53Manifest)}`);
+
+// ── T-54 · 캘린더가 아무것도 안 했으면 그렇게 말한다 ────────────────────────
+//
+// ⚠️ **신호에 토스트를 쓰지 않는다**(§금지). 직전 커밋에서 실측했다 — `until`이
+//    `refreshToday()`의 DOM 쓰기를 보고 먼저 빠져나와 **던지기 전에** 토스트를 읽는다.
+//    여기서 세는 것은 **`#cal-result`(사라지지 않는다)와 플러그인 호출**이다.
+console.log("\n[T-54] 결과가 상태와 다른 자리에 남는다");
+
+const t54Res = () => ({ kind: $("#cal-result").dataset.kind, text: txt("#cal-result") });
+const t54Calls = [];
+const t54Cal = (syncRet) => ({
+  status: async () => ({ permission: true, targets: [], windowDays: 60 }),
+  calendars: async () => ({
+    permission: true, targets: [],
+    calendars: [{ id: 7, name: "수업", account: "a@b" }, { id: 9, name: "휴일", account: "a@b" }],
+  }),
+  setTargets: async ({ ids }) => {
+    t54Calls.push("set:" + ids.join(","));
+    return { permission: true, targets: ids, windowDays: 60 };
+  },
+  sync: async () => { t54Calls.push("sync"); return syncRet; },
+});
+// ① 문구는 구현에서 가져온다 — 여기 다시 적으면 두 벌이 되고, 갈라진 쪽이 조용해진다.
+const t54EmptyText = ev(`calResultLine({ blocked: "empty" }).text`);
+
+/* 1 — 빈 선택으로 저장하면 **그 사실이 닿는다.** 지금까지는 시트가 조용히 닫혔고,
+ *     닫히는 것이 성공 신호로 읽혔다. `setTargets`·`sync`가 **안 불린 것까지** 센다 —
+ *     막았다고 말하려면 실제로 아무 일도 안 일어나야 한다. */
+w.Capacitor = { Plugins: { Cal: t54Cal({ ok: true, sent: 2, status: { targets: [7], windowDays: 60 } }) } };
+await w.openCalSheet();
+const t54Before1 = t54Res();
+// ⚠️ **시계를 안 쓴다** — `onclick()`이 `run(...)`의 프라미스를 그대로 준다(§금지: 경합 신호).
+await $("#cal-save").onclick();              // 아무것도 안 고른 채
+const t54Empty = { ...t54Res(), open: $("#sh-cal").classList.contains("on"), calls: t54Calls.join("|") };
+ok("1 빈 선택으로 저장하면 그 사실이 사용자에게 닿는다",
+  t54Empty.kind === "warn" && t54Empty.text === t54EmptyText
+  && t54Empty.text !== t54Before1.text && t54Empty.open && t54Empty.calls === "",
+  `${JSON.stringify(t54Empty)} ← 전: ${JSON.stringify(t54Before1)}`);
+
+/* 2 ★ 1의 짝 — **하나 이상 고르면 그 경고가 안 나온다.** 1만 보면 *"항상 경고하는 구현"*이
+ *     통과한다. 저장이 실제로 기기까지 갔는지(`set:7`)도 함께 센다. */
+t54Calls.length = 0;
+await w.openCalSheet();
+$("#cal-list [data-cid='7'] input").checked = true;
+await $("#cal-save").onclick();
+const t54Chosen = { ...t54Res(), calls: t54Calls.join("|") };
+ok("2 ★ 하나 이상 고르면 그 경고가 안 닿는다 (1의 짝)",
+  t54Chosen.calls === "set:7|sync" && t54Chosen.text !== t54EmptyText,
+  JSON.stringify(t54Chosen));
+
+/* 3·4 ★ **0건은 성공이 아니다**(T-43이 `0건`과 로그인 HTML을 가른 그 자리).
+ *      0이 왜 0인지 — 대상 수와 창 — 를 함께 말해야 *"휴일 캘린더만 골랐다"*가 드러난다.
+ *      3만 보면 *"성공도 실패처럼 말하는 구현"*이 통과하므로 4가 짝으로 선다. */
+const t54Sync = async (ret) => {
+  w.Capacitor = { Plugins: { Cal: t54Cal(ret) } };
+  await w.calSyncNow();
+  return t54Res();
+};
+const t54Zero = await t54Sync({ ok: true, sent: 0, status: { targets: [9], windowDays: 60 } });
+ok("3 ★ sent === 0 이 성공 문구로 안 나온다 (0이 왜 0인지 함께 말한다)",
+  t54Zero.kind !== "ok" && !/맞췄어요/.test(t54Zero.text)
+  && /대상 1개/.test(t54Zero.text) && /60일/.test(t54Zero.text),
+  JSON.stringify(t54Zero));
+
+const t54Five = await t54Sync({ ok: true, sent: 5, status: { targets: [7], windowDays: 60 } });
+ok("4 ★ sent > 0 은 성공 문구로 나온다 (3의 짝)",
+  t54Five.kind === "ok" && /5/.test(t54Five.text) && t54Five.text !== t54Zero.text,
+  JSON.stringify(t54Five));
+
+/* 5 ★ **이 티켓의 본체.** `skipped`는 설계상 prefs에 흔적을 안 남기므로(*"실패가 아니다"*)
+ *     상태 줄을 다시 그려도 **저장 전과 글자 하나 안 달랐다.** 전후를 직접 비교한다 —
+ *     같으면 실패다. ⚠️ 화면이 달라졌다는 것을 **비어 있지 않다**로 대신 세면 안 된다:
+ *     앞이 이미 차 있으면 그 검사는 아무것도 안 본다. */
+await ev(`showCalResult({ kind: "", text: "" })`);
+const t54Before5 = t54Res();
+const t54Skip = await t54Sync({
+  ok: false, sent: 0, skipped: "no_target",
+  status: { permission: true, targets: [], windowDays: 60 },
+});
+ok("5 ★ skipped(no_target)가 화면까지 온다 — 저장 전후로 화면이 달라진다",
+  t54Skip.text !== t54Before5.text && t54Skip.text.length > 0
+  && t54Skip.kind === "warn" && t54Skip.text !== t54EmptyText,
+  `전 ${JSON.stringify(t54Before5)} → 후 ${JSON.stringify(t54Skip)}`);
+
+/* 6 — 기기 쪽. **`Log`만 늘리는 것은 답이 아니다**(§금지) — logcat은 개발자만 본다.
+ *     사유가 `Cal.status()`에 실려야 화면이 안 보여도 CDP 한 줄로 갈린다.
+ *
+ * ⚠️ **출구를 하나라도 빼먹으면 그 출구만 조용해진다** — T-53이 정확히 그랬다.
+ *    그래서 옛 모양(사유를 **리터럴로** 든 `Result`)이 남아 있지 않은지 함께 본다:
+ *    사유 문자열은 이제 `skip(ctx, "…")`에만 있고, `Result`에는 변수로만 들어간다.
+ *    (처음에 `return Result(false, 0, skipped =` 로 썼더니 **`skip` 헬퍼 자신이 걸렸다** —
+ *     스캐너가 고친 코드를 옛 코드로 읽으면 6은 구현과 무관하게 빨간불이다.) */
+const T54_OLD_SKIP = /Result\([^)]*skipped\s*=\s*"/;
+ok("6 Cal.status()에 마지막 시도의 사유가 실린다 (스킵·실패·성공 셋 다)",
+  /put\(\s*\n?\s*"lastTry"/.test(t53Send) && /fun noteTry\(/.test(t53Send)
+  && /"outcome"/.test(t53Send) && /"reason"/.test(t53Send)
+  && /noteTry\(ctx, "ok"/.test(t53Send) && /noteTry\(ctx, "skipped"/.test(t53Send)
+  && /noteTry\(ctx, "error"/.test(t53Send)
+  && /return skip\(ctx, "no_permission"\)/.test(t53Send)
+  && /return skip\(ctx, "no_target"\)/.test(t53Send)
+  && !T54_OLD_SKIP.test(t53Send),
+  `lastTry=${/"lastTry"/.test(t53Send)} noteTry=${/fun noteTry\(/.test(t53Send)}`
+  + ` 옛출구=${T54_OLD_SKIP.test(t53Send)}`);
+
+/* 6의 짝 — ★ **스캐너가 살아 있는가.** 6이 초록인 것이 *"고쳤다"*인지 *"정규식이 눈멀었다"*인지
+ *   구별이 안 되면 6은 아무것도 안 세는 검사다(T-53 ⑧이 같은 자리에 섰다). 합성 줄로 가른다. */
+const t54OldLine = `        if (!hasPermission(ctx)) return Result(false, 0, skipped = "no_permission")`;
+const t54NewLine = `        if (!hasPermission(ctx)) return skip(ctx, "no_permission")`;
+const t54HelperLine = `        return Result(false, 0, skipped = reason)`;
+ok("6 ★ 6의 스캐너가 살아 있다 — 옛 출구는 잡고, 새 출구와 헬퍼는 안 잡는다",
+  T54_OLD_SKIP.test(t54OldLine) && !T54_OLD_SKIP.test(t54NewLine)
+  && !T54_OLD_SKIP.test(t54HelperLine),
+  `옛=${T54_OLD_SKIP.test(t54OldLine)} 새=${T54_OLD_SKIP.test(t54NewLine)}`
+  + ` 헬퍼=${T54_OLD_SKIP.test(t54HelperLine)}`);
+
+/* 7 ★ **없는 것을 세는 검사** — 결과가 상태로 새지 않았는가.
+ *     `calStatusLine`의 넷은 곧 `CAL_ACT`의 행동이다. 다섯째가 생기면 그 상태에는 할 행동이
+ *     없어 바가 뜨고도 아무 데도 안 데려간다. **결과 재료만 갈아 끼우고 상태가 안 움직이는지** 본다. */
+const t54Base = { permission: true, targets: [7], lastError: null, lastOkAt: t53OkAt, lastCount: 3 };
+const t54ByResult = [
+  {},
+  { lastTry: { outcome: "skipped", reason: "no_target", sent: 0 } },
+  { lastTry: { outcome: "error", reason: "HTTP 503 boom", sent: 0 } },
+  { lastTry: { outcome: "ok", reason: null, sent: 0 } },
+].map((v) => ev(`calStatusLine(${JSON.stringify({ ...t54Base, ...v })}).state`));
+const t54AllStates = [
+  null, { unreadable: true }, { permission: false, targets: [] }, { permission: true, targets: [] },
+  { permission: true, targets: [7], lastError: "boom" }, t54Base,
+].map((s) => ev(`calStatusLine(${JSON.stringify(s)}).state`));
+ok("7 ★ 상태 줄은 넷 그대로다 — 결과가 섞이지 않았다 (없는 것을 세는 검사)",
+  new Set(t54ByResult).size === 1 && t54ByResult[0] === "ok"
+  && new Set(t54AllStates).size === 5
+  && t54AllStates.every((s) => ["off", "noperm", "notarget", "error", "ok"].includes(s))
+  && ev(`Object.keys(CAL_ACT).length`) === 3,
+  `결과별=${t54ByResult.join(",")} 전체=${[...new Set(t54AllStates)].join(",")}`);
+
+delete w.Capacitor;
+await w.loadCalStatus();
+w.closeAll();
+await sleep(120);
 
 console.log("\n[부팅 · 연결 실패 복구]");
 ok("로드 후 부팅 오버레이 닫힘", !$("#boot").classList.contains("on"));

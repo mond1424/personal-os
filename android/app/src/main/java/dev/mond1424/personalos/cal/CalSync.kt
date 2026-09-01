@@ -1,6 +1,7 @@
 package dev.mond1424.personalos.cal
 
 import android.content.Context
+import android.util.Log
 import dev.mond1424.personalos.guard.GuardSync
 import org.json.JSONArray
 import org.json.JSONObject
@@ -31,6 +32,9 @@ object CalSync {
     private const val K_LAST_ERR = "cal_last_err"
     private const val K_LAST_N = "cal_last_count"
     private const val K_LAST_SERVER = "cal_last_server"  // 서버가 세어 준 것(무엇을 안 했는지)
+    private const val K_LAST_TRY = "cal_last_try"        // 마지막 '시도' — 성공·스킵·실패가 한 자리에
+
+    private const val TAG = "CalSync"
 
     /** 창 길이 기본값(일). 티켓 ④의 `기본 60`. */
     const val DEFAULT_WINDOW_DAYS = 60
@@ -54,9 +58,33 @@ object CalSync {
         prefs(ctx).edit().putInt(K_DAYS, days.coerceIn(1, 365)).apply()
     }
 
+    // ── 시도의 흔적 (T-54 ④) ────────────────────────────────────────────
+    //
+    // ★ **성공만 남기면 조용한 실패가 다시 생긴다.** T-53은 `lastOkAt`·`lastError`·`lastCount`
+    //   셋뿐이라 **스킵이 갈 곳이 없었고**, prefs에 자리가 없으니 화면도 못 읽었다 —
+    //   그것이 2026-09-01 진단이 찾은 ②의 뿌리다. `guard/`의 `noteFire`가 같은 이유로 서 있다.
+    //
+    // ⚠️ **`lastError`와 다른 것이다. 합치지 않는다.**
+    //   `lastError` = *"지금 실패한 상태인가"* — 화면의 상태 넷(`calStatusLine`)이 읽는다.
+    //   `lastTry`   = *"방금 무슨 일이 있었나"* — 결과가 읽는다(`calResultLine`).
+    //   합치면 `no_target`이 '실패'로 적히고, 그 순간 상태 줄이 *"동기화 실패"* 로 거짓말한다.
+    //
+    // ⚠️ **한 줄(JSON)로 남긴다.** 키를 넷으로 쪼개면 갱신이 원자적이지 않아
+    //   새 `outcome` 옆에 낡은 `sent`가 붙는 순간이 생긴다.
+
+    /** 마지막 시도 하나. `outcome`은 `ok`·`skipped`·`error` 셋뿐이다. */
+    private fun noteTry(ctx: Context, outcome: String, sent: Int, reason: String?) {
+        val o = JSONObject()
+            .put("at", nowIso()).put("outcome", outcome)
+            .put("sent", sent).put("reason", reason ?: JSONObject.NULL)
+        prefs(ctx).edit().putString(K_LAST_TRY, o.toString()).apply()
+        // logcat은 **덤이다** — 이 결함의 피해자는 사용자이고 사용자는 logcat을 안 본다(T-54 §금지).
+        Log.i(TAG, "sync $outcome sent=$sent reason=$reason")
+    }
+
     /**
      * 화면이 읽는 사실들. **상태 이름을 여기서 정하지 않는다** — 문구와 우선순위는
-     * 웹의 `calStatusLine` 한 곳이 정한다(두 곳에 두면 갈라진다).
+     * 웹의 `calStatusLine`(상태)과 `calResultLine`(결과)이 정한다(두 곳에 두면 갈라진다).
      */
     fun status(ctx: Context): JSONObject = JSONObject()
         .put("permission", CalendarReader.hasPermission(ctx))
@@ -71,6 +99,13 @@ object CalSync {
             prefs(ctx).getString(K_LAST_SERVER, null)
                 ?.let { runCatching { JSONObject(it) }.getOrNull() } ?: JSONObject.NULL,
         )
+        // ★ **사유가 여기 실려야 화면이 안 보여도 CDP 한 줄로 갈린다**(T-54 ④).
+        //   2026-09-01 진단이 `Cal.status()` 하나로 (a)~(e)를 가른 것이 그 자리다.
+        .put(
+            "lastTry",
+            prefs(ctx).getString(K_LAST_TRY, null)
+                ?.let { runCatching { JSONObject(it) }.getOrNull() } ?: JSONObject.NULL,
+        )
 
     data class Result(val ok: Boolean, val sent: Int, val error: String? = null, val skipped: String? = null)
 
@@ -83,11 +118,15 @@ object CalSync {
      *
      * ★ **권한 없음·미선택은 실패가 아니다.** `lastError`를 건드리지 않고 `skipped`로 돌아간다 —
      *   그 둘은 화면에서 각자의 문구를 가져야 하고(티켓 ②), 실패로 적으면 셋이 한 문장으로 뭉친다.
+     *
+     * ★ **그래도 흔적은 남긴다**(T-54 ④). *"실패가 아니다"* 와 *"아무 자국도 안 남긴다"* 는 다른
+     *   말인데 T-53이 그 둘을 같이 뒀다 — 그래서 `no_target`이 여덟 번 돌아도 prefs가 초기값이었고,
+     *   화면도 로그도 그 사실을 못 읽었다. **모든 출구가 [noteTry]를 지난다.**
      */
     fun syncNow(ctx: Context): Result {
-        if (!CalendarReader.hasPermission(ctx)) return Result(false, 0, skipped = "no_permission")
+        if (!CalendarReader.hasPermission(ctx)) return skip(ctx, "no_permission")
         val ids = targets(ctx)
-        if (ids.isEmpty()) return Result(false, 0, skipped = "no_target")
+        if (ids.isEmpty()) return skip(ctx, "no_target")
 
         val base = GuardSync.baseUrl(ctx)
             ?: return fail(ctx, "baseUrl이 설정되지 않았습니다 — 웹에서 configure를 먼저 부릅니다")
@@ -147,13 +186,23 @@ object CalSync {
             .putInt(K_LAST_N, items.size)
             .putString(K_LAST_SERVER, counted?.toString() ?: JSONObject().toString())
             .apply()
+        // 0건도 성공이다 — 다만 **성공했다는 말과 0건이라는 말은 다르다**(T-54 ③).
+        // 여기는 사실만 싣고, 그 둘을 가르는 문구는 웹의 `calResultLine`이 정한다.
+        noteTry(ctx, "ok", items.size, null)
         return Result(true, items.size)
     }
 
     private const val TIMEOUT_MS = 10_000
 
+    /** 권한 없음·미선택 — **실패가 아니지만 흔적은 남는다**(T-54 ④). `lastError`는 안 건드린다. */
+    private fun skip(ctx: Context, reason: String): Result {
+        noteTry(ctx, "skipped", 0, reason)
+        return Result(false, 0, skipped = reason)
+    }
+
     private fun fail(ctx: Context, msg: String): Result {
         prefs(ctx).edit().putString(K_LAST_ERR, msg).apply()
+        noteTry(ctx, "error", 0, msg)
         return Result(false, 0, error = msg)
     }
 

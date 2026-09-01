@@ -729,6 +729,43 @@ function calStatusLine(st) {
   return { state: "ok", text: "" };
 }
 
+/* 방금 한 행동의 결과 (T-54) ────────────────────────────────────────
+ *
+ * ★ **결과는 상태가 아니다.** 위 `calStatusLine`은 *"지금 어떤 상태인가"*(권한·대상·실패)이고
+ *   이것은 *"방금 무슨 일이 있었나"*다. 한 함수에 넣으면 상태 넷이 늘어나고 `CAL_ACT`의
+ *   행동 셋과 어긋난다 — **T-53이 세운 구조가 거기서 무너진다**(§금지).
+ *
+ * 문구를 한 곳에서 정하는 규칙은 그대로다 — 네이티브는 사실(`skipped`·`sent`)만 준다.
+ * `blocked`만 웹이 만든다: 저장을 막은 것은 기기가 아니라 화면이 한 일이기 때문이다.
+ */
+function calResultLine(r) {
+  if (!r) return { kind: "", text: "" };
+  if (r.blocked === "empty") return { kind: "warn", text: "가져올 캘린더를 하나 이상 골라 주세요" };
+  if (r.skipped === "no_permission") return { kind: "warn", text: "캘린더 권한이 없어서 못 읽었어요" };
+  if (r.skipped === "no_target") return { kind: "warn", text: "고른 캘린더가 없어서 아무것도 안 가져왔어요" };
+  if (!r.ok) return { kind: "err", text: `동기화가 실패했어요 — ${r.error || "사유를 못 읽었어요"}` };
+  // ★ **0건에 성공 문구를 쓰지 않는다**(T-43이 `0건`과 로그인 HTML을 가른 그 자리).
+  //   0이 왜 0인지를 함께 말해야 *"휴일 캘린더만 골랐다"*가 그 자리에서 드러난다.
+  if (!r.sent) {
+    const st = r.status || {};
+    return {
+      kind: "warn",
+      text: `가져올 일정이 없었어요 (대상 ${(st.targets || []).length}개 · 창 ${st.windowDays || 60}일)`,
+    };
+  }
+  return { kind: "ok", text: `일정 ${r.sent}개를 맞췄어요` };
+}
+
+/** 결과를 화면에 놓는다. **시트 안의 한 줄이 원본이고 토스트는 사본이다** —
+ *  시트가 닫힌 채로 부른 경로(Today 한 줄의 [다시 시도])에서도 말이 닿아야 한다.
+ *  ⚠️ 토스트는 사라지므로 **판정의 근거로 쓰지 않는다**(검사도 이 줄을 본다). */
+function showCalResult(v) {
+  const el = $("#cal-result");
+  if (el) { el.dataset.kind = v.kind; el.textContent = v.text; }
+  if (v.text) toast(v.text, v.kind === "ok" ? "ok" : v.kind === "err" ? "err" : "warn");
+  return v;
+}
+
 async function calNativeStatus() {
   const C = globalThis.Capacitor?.Plugins?.Cal;
   if (!C?.status) return null;                       // 브라우저·구버전 APK — 폴백
@@ -762,8 +799,11 @@ async function calSyncNow() {
   const C = globalThis.Capacitor?.Plugins?.Cal;
   if (!C?.sync) return null;
   const r = await C.sync();
+  // ★ **`r`을 버리지 않는다** (T-54 ②). T-53은 여기 `else`가 `r`을 통째로 버렸고,
+  //   `skipped`(권한 없음·미선택)는 설계상 prefs에 흔적을 안 남기므로 다시 그린 상태 줄이
+  //   **저장 누르기 전과 글자 하나 안 달랐다.** 결과는 상태와 다른 자리에 적는다.
+  showCalResult(calResultLine(r));
   if (r && r.ok) {
-    toast(`캘린더 ${r.sent}건을 맞췄어요`, "ok");
     await refreshToday();                            // 안에서 loadCalStatus가 다시 돈다
     if (S.cal) { invalidateCalendarCache(); await renderCalendar(); }
   } else {
@@ -778,6 +818,8 @@ async function openCalSheet() {
   const body = $("#cal-list");
   const note = $("#cal-note");
   const save = $("#cal-save");
+  // 지난 결과를 다음 열기까지 끌고 가지 않는다 — 낡은 문장은 방금 한 일로 읽힌다.
+  showCalResult({ kind: "", text: "" });
   if (!C?.calendars) {
     note.textContent = "이 기기에서는 폰 캘린더를 읽을 수 없어요 — 앱(안드로이드)에서만 돼요.";
     body.innerHTML = "";
@@ -810,6 +852,13 @@ async function openCalSheet() {
     const ids = [...body.querySelectorAll("[data-cid]")]
       .filter((el) => el.querySelector("input")?.checked)
       .map((el) => Number(el.dataset.cid));
+    // ① **빈 선택은 막는다** (T-54). 저장할 것도 동기화할 것도 없는데 시트가 조용히 닫히면
+    //    **그것이 성공 신호로 읽힌다** — 2026-09-01에 사용자가 겪은 것이 정확히 그 모양이다.
+    // ⚠️ *"해제로 허용한다"*를 안 고른 이유: 대상을 비우면 `syncNow`가 `no_target`으로 먼저
+    //    빠져나가 **서버 미러가 안 치워진다.** "해제했어요"라고 말한 뒤 창 안의 devcal 일정이
+    //    영원히 남는 것은 조용한 실패를 하나 더 만드는 것이다. 치우려면 빈 배치를 보내야 하는데
+    //    그러면 **대상이 없는 새 설치가 서버 미러를 지운다** — T-53 ③과 정면으로 부딪힌다.
+    if (!ids.length) { showCalResult(calResultLine({ blocked: "empty" })); return; }
     await C.setTargets({ ids });
     closeSheet("sh-cal");
     S.calStatus = await calNativeStatus();
