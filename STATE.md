@@ -2558,6 +2558,28 @@ await (async () => {
 > 10번(취소된 할 일이 Today에)은 T-15 이후 **재현이 안 돼 접었다.** 8/3 파일은 이력으로 남긴다.
 > 아래 목록은 그 backlog가 다루지 않는 **이 층의 기술 부채·미실측**이다. 새 항목은 backlog로 간다.
 
+- 🔴 **`agy inspect`가 없다 — 위임 전 확인법이 안 돈다 (2026-09-01 실측 · Cowork 확인 대기)**
+  `AGENTS.md` 머리와 위임 절차가 *"무엇이 실제로 로드됐는지는 `agy inspect`가 말한다"*고 적는데,
+  **agy 1.1.23에 그런 하위 명령이 없다:**
+  ```
+  agy inspect  →  Error: unexpected argument "inspect".
+  agy --help   →  agent(s) · changelog · help · install · mcp · mic-serve · models · plugin(s) · update
+  ```
+  ⚠️ **이것은 `CLAUDE.md` §사람이 하는 것의 상태가 말하는 그 실패다** — *"적힌 확인법이 안 돌면
+  이 절이 거짓말을 하는 것이고, 그건 상태를 적어 두는 것과 같다."* `d1 migrations apply --dry-run`이
+  exit 9로 죽고 `dumpsys … versionCode`가 늘 1이던 것과 같은 자리다.
+  **`AGENTS.md`는 Cowork 소유라 고치지 않았다.** 대신 **실제로 도는 확인법**을 여기 남긴다 —
+  로드 경로 셋을 파일 존재로 직접 본다(결정론적이고 모델 호출이 없다):
+  ```powershell
+  # 셋 다 '없음'이어야 한다. 하나라도 EXISTS면 작업 전에 멈추고 보고한다.
+  "repo GEMINI.md     : " + $(if (Test-Path .\GEMINI.md) { "EXISTS" } else { "없음" })
+  "repo .agents/      : " + $(if (Test-Path .\.agents) { "EXISTS" } else { "없음" })
+  "~/.gemini/AGENTS.md: " + $(if (Test-Path "$HOME\.gemini\AGENTS.md") { "EXISTS" } else { "없음" })
+  ```
+  ✅ **2026-09-01 실측: 셋 다 없음**(`~/.agents`·`~/GEMINI.md`도 없다). `~/.gemini`는 있지만
+  Antigravity 설치·상태 디렉터리이고 그 안에 `AGENTS.md`·`GEMINI.md`는 **어느 깊이에도 없다.**
+  ⚠️ 앞의 둘은 `.gitignore`가 한 번 더 막지만 **전역 파일은 리포 밖이라 못 막는다** — 그래서 확인이 남는다.
+
 - 🟡 **캘린더 '해제' 간선이 UI에 없다 (T-54가 만든 빚 · 2026-09-01)**
   대상을 비우려면 **미러를 치워야 하고**, 그 경로를 *"대상 없는 새 설치"*와 구별하는 신호가
   함께 있어야 한다 — **T-53 ③**(*"선택 전에는 아무것도 안 가져온다"*)과 충돌하지 않게.
