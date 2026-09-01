@@ -20,10 +20,10 @@ Cowork Claude          설계 · 판단 · 티켓 발행 · 최종 검토      [
 Claude Code            회귀 민감 영역 직접 구현 · verify · 커밋 · 1차 검토
   │  하위 티켓
   ▼
-Codex CLI              범위가 명확한 구현만
+Antigravity CLI              범위가 명확한 구현만
 ```
 
-**한 칸씩만 오간다.** Codex는 사용자에게 직접 결론을 내지 않고 Claude Code에 보고한다.
+**한 칸씩만 오간다.** Antigravity는 사용자에게 직접 결론을 내지 않고 Claude Code에 보고한다.
 Claude Code는 ADR급 판단을 스스로 확정하지 않고 위로 올린다.
 
 건너뛰기가 허용되는 유일한 경우: **사용자는 언제든 어느 층에나 직접 지시할 수 있다.**
@@ -57,11 +57,11 @@ Claude Code는 ADR급 판단을 스스로 확정하지 않고 위로 올린다.
 
 - **`STATE.md`·`APP-BUILD.md`·git의 유일한 편집자**
 - 회귀 민감 영역을 직접 구현한다(§4 위임 금지 목록)
-- Codex 티켓을 분해해 내려보내고, 돌아온 것을 1차 검토한다
+- Antigravity 티켓을 분해해 내려보내고, 돌아온 것을 1차 검토한다
 - `npm run verify`를 돌리고 숫자를 만든다. **숫자를 만드는 층은 여기 하나뿐이다**
 - 세션 종료 규칙(STATE 갱신 → api-surface 재생성 → commit·push)의 주인
 
-### Codex CLI — 구현
+### Antigravity CLI — 구현
 
 - **티켓에 적힌 파일만** 고친다
 - 범위 밖이 필요하면 **고치지 말고 멈춰서 보고한다** — 거기가 판단이 필요한 지점이라는 신호다
@@ -76,8 +76,8 @@ Claude Code는 ADR급 판단을 스스로 확정하지 않고 위로 올린다.
 |---|---|---|
 | `personal-agent-design*.md` · `APP-PLAN.md` · `APP-ADR.md` | Cowork | 제안만 |
 | `STATE.md` · `APP-BUILD.md` · `docs/api-surface.md` · `docs/schema-current.sql` | Claude Code | 읽기만 |
-| `docs/tickets/*.md` | Cowork 발행 · Claude Code 분해 | Codex는 읽기만 |
-| `CLAUDE.md` · `AGENTS.md` · 이 문서 | Cowork | 제안만 |
+| `docs/tickets/*.md` | Cowork 발행 · Claude Code 분해 | Antigravity는 읽기만 |
+| `CLAUDE.md` · `AGENTS.md` · `OPERATIONS.md` · 이 문서 | Cowork | 제안만 |
 | `src/` · `public/` · `android/` · `test/` · `migrations/` | **티켓 락 보유자** | 손대지 않는다 |
 | `README0722.md` | Claude Code | 제안만 |
 | git (commit · push) | Claude Code | 하지 않는다 |
@@ -148,7 +148,7 @@ WIP: T-07 (codex, 07-30 14:20) — public/app.js, public/index.html
 
 **판단 근거**: 고치는 데 드는 시간보다 **왜 그렇게 돼 있는지 설명하는 데 드는 시간이 더 크면** 넘기지 않는다.
 
-반대로 **설계가 이미 확정됐고 배선만 남은 것**은 전부 Codex로 간다 — UI 폼, 테스트 추가, 반복 리팩터.
+반대로 **설계가 이미 확정됐고 배선만 남은 것**은 전부 Antigravity로 간다 — UI 폼, 테스트 추가, 반복 리팩터.
 
 ---
 
@@ -240,7 +240,7 @@ T-08′ 검토가 `max_level`을 화면에 찍는 한 줄을 불합격으로 판
 
 **티켓의 누락은 발행자의 실수다.** 처리는 층마다 다르다.
 
-- **Codex는 멈춘다.** 판단 권한이 없는 자리다. 범위를 넓혀 메우면 그 판단을 아무도 검토하지 않는다
+- **Antigravity는 멈춘다.** 판단 권한이 없는 자리다. 범위를 넓혀 메우면 그 판단을 아무도 검토하지 않는다
 - **Claude Code는 메우고 보고한다.** 세 조건을 전부 만족할 때만:
   ① 설계 문서·ADR이 **이미 요구하는 것**일 것 (새 결정이 아니다)
   ② 범위 확장이 최소일 것
@@ -293,7 +293,7 @@ T-41이 `.ics` fixture를 ADR의 실측 기록에서 되살렸다. 형식 셋(`M
 
 ## 7. 멈추고 올려야 하는 순간
 
-### Codex → Claude Code
+### Antigravity → Claude Code
 
 - 티켓 범위 밖 파일을 고쳐야 한다
 - 설계 문서·ADR과 어긋나 보인다
@@ -352,8 +352,8 @@ T-15에서 사용자가 "증상 사라짐"을 확인했고 그것을 검토 통�
 ```
 사용자      "Me 탭 붙이자"
 Cowork      설계 확인 → T-07 발행 → 사용자 승인
-Claude Code 티켓 분해 → 락 → Codex에 지시
-Codex       구현 → verify → 보고(숫자)
+Claude Code 티켓 분해 → 락 → Antigravity에 지시
+Antigravity       구현 → verify → 보고(숫자)
 Claude Code 1차 검토 → 통과면 STATE·APP-BUILD 갱신 → commit
 Cowork      설계 정합 검토 → 사용자에게 승인/재작업 요청
 사용자      승인 → push · deploy · 폰 확인

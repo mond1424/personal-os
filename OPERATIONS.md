@@ -1,6 +1,6 @@
 # OPERATIONS — 사용자 운영 가이드
 
-에이전트 셋(Cowork · Claude Code · Codex CLI)을 굴리면서 **사용자가 하는 일**만 모은 문서.
+에이전트 셋(Cowork · Claude Code · Antigravity CLI)을 굴리면서 **사용자가 하는 일**만 모은 문서.
 경계와 권한은 `AGENT-CHAIN.md`, 코드 규약은 `CLAUDE.md`, 현재 상태는 `STATE.md`.
 
 ---
@@ -19,7 +19,7 @@
 ```
 ① 나 → Cowork        "○○ 하고 싶어" · "T-NN 티켓 써줘"
 ② 나 → Claude Code   "T-NN 티켓이 들어왔다. 읽고 판단해라"
-③ 나 → Codex CLI     "AGENTS.md 읽고 T-NN 수행해라"        (Claude Code가 넘긴 경우만)
+③ 나 → Antigravity CLI     "AGENTS.md 읽고 T-NN 수행해라"        (Claude Code가 넘긴 경우만)
 ④ 나 → Claude Code   "T-NN 보고가 들어왔다. 검토해라"
 ⑤ 나 → Cowork        "T-NN 끝났어"
 ⑥ 나                 승인 → 마이그레이션 · deploy · 빌드 · 폰 확인
@@ -36,18 +36,18 @@
 
 ```
 docs/tickets/T-NN-*.md 티켓이 들어왔다. 읽고 판단해라.
-직접 할 것인지 Codex에 넘길 것인지 정하고 이유를 말해라.
+직접 할 것인지 Antigravity에 넘길 것인지 정하고 이유를 말해라.
 넘긴다면 APP-BUILD.md 락을 걸어라.
 ```
 
-### Codex CLI — 구현 지시
+### Antigravity CLI — 구현 지시
 
 ```
 AGENTS.md를 먼저 읽어라. 그다음 docs/tickets/T-NN-*.md를 읽고 그대로 수행해라.
 끝나면 티켓 파일의 '보고' 절에 결과를 채워 넣어라.
 ```
 
-**이게 Codex에 주는 지시의 전부다.** 길어진다면 티켓이 부실한 것이지,
+**이게 Antigravity에 주는 지시의 전부다.** 길어진다면 티켓이 부실한 것이지,
 설명으로 메울 일이 아니다 — 티켓을 다시 받는다.
 
 ### Claude Code — 검토·마무리
@@ -180,7 +180,7 @@ Claude Code나 Cowork가 "끝났다"고 할 때, 다음이 없으면 승인하�
 
 ## 5. 동시에 돌리지 않는다
 
-**같은 리포에 실행 에이전트를 둘 붙이지 않는다.** Claude Code와 Codex가 동시에
+**같은 리포에 실행 에이전트를 둘 붙이지 않는다.** Claude Code와 Antigravity가 동시에
 파일을 만지면 머지 비용이 병렬로 버는 것보다 크다.
 
 `APP-BUILD.md` 맨 위의 락 줄이 비어 있어야 새 작업을 시작한다.
@@ -197,7 +197,7 @@ WIP: (없음)
 
 | 증상 | 어디로 |
 |---|---|
-| Codex가 범위 밖을 고쳐야 한다고 한다 | Claude Code에 "범위 판단해라" |
+| Antigravity가 범위 밖을 고쳐야 한다고 한다 | Claude Code에 "범위 판단해라" |
 | Claude Code가 설계 판단을 요구한다 | Cowork에 "이 결정 필요하대" |
 | Cowork가 실측을 요구한다 | 폰에서 직접 확인 |
 

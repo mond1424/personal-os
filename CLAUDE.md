@@ -15,8 +15,10 @@ Cloudflare Worker (Hono / TS) + D1 + `[assets]` 정적 서빙.
 
 ## 에이전트 체인
 
-**사용자 → Cowork → Claude Code → Codex CLI.** 경계·소유권·보고 형식은 `AGENT-CHAIN.md`.
-Codex의 진입 파일은 `AGENTS.md`(이 문서를 원본으로 가리킨다 — 규약을 복사하면 반드시 갈라진다).
+**사용자 → Cowork → Claude Code → Antigravity CLI.** 경계·소유권·보고 형식은 `AGENT-CHAIN.md`.
+Antigravity의 진입 파일은 `AGENTS.md`(이 문서를 원본으로 가리킨다 — 규약을 복사하면 반드시 갈라진다).
+⚠️ **`GEMINI.md`·`~/.gemini/AGENTS.md`·`.agents/`를 두지 않는다** — Antigravity가 자동으로 읽어
+**규약이 두 벌이 된다.** 전역 파일은 리포 밖이라 이 층이 보지도 못한다(`AGENTS.md` 머리 참조).
 
 이 층(Claude Code)이 지는 것: **`STATE.md`·`APP-BUILD.md`·`docs/*`·git의 유일한 편집자**,
 `npm run verify`로 숫자를 만드는 유일한 층, 위임 금지 영역(트리거·마이그레이션·귀속일·Guard 발동 경로) 직접 구현.
@@ -132,7 +134,9 @@ npm run deploy
     끝까지 안 닫혔다. **둘 다 `verify`가 초록인 채로 `assembleRelease`만이 잡았다.**
     APK가 붙은 티켓에서 **"verify 통과 = 안 깨졌다"로 읽지 않는다.**
 14. **검사는 "끝났다"를 관측이 아니라 계약으로 알아야 한다.** 세 번 물렸다:
-    T-42는 고정 `sleep`(추측), T-53은 토스트, T-48은 `until(DOM 변화)`.
+    T-42는 고정 `sleep`(추측), T-53은 토스트, T-54는 `until(DOM 변화)`.
+    ⚠️ **`until`은 T-43이 고정 `sleep`을 없애려고 넣은 것이다** — 상한은 생겼지만
+    *"끝났다"* 를 여전히 **관측으로** 안다. 그것이 T-54에서 세 번째로 물린 모양이다.
     **`until`은 `refreshToday()` 도중에 바뀌는 문구를 보고 먼저 빠져나온다** — 그 잔여 핸들러가
     **다음 검사의 스파이에 섞이고**, `until(calls.length >= 2)`는 **남의 한 벌을 자기 것으로 세고
     초록이 된다.** ⚠️ **대기를 늘리는 것은 경합을 없애는 게 아니라 미루는 것이다**(4초→20초로
