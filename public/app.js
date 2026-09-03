@@ -583,6 +583,36 @@ function renderLogs() {
  * 한 번에 하나만 묻는다. 여러 개를 늘어놓으면 대충 눌러 치우게 되고,
  * 그렇게 들어온 outcome은 없는 것보다 나쁘다(보정을 잘못된 방향으로 끈다).
  */
+/* 물음 한 줄이 무엇을 말할지 (T-56 · ADR-044 ②) ─────────────────────
+ *
+ * 셋이 갈린다. 첫째는 **여기 오지도 않는다** — 답이 있으면 `outcome IS NULL` 필터가
+ * 이미 걸러서 물음 자체가 사라진다.
+ *
+ * ```
+ * 답이 있다                   여기 안 온다 (물음이 사라진다)
+ * 답 없고 · 뒤에 발동 있다     "못 한 것으로 보여요"   ★ 버튼은 남는다
+ * 답 없고 · 뒤에 발동 없다     묻는다 (지금 모양)
+ * ```
+ *
+ * ⚠️ **단정하지 않는다.** *"못 했어요"* 가 아니라 *"못 한 것으로 보여요"* 다 —
+ *    관측의 강도가 다르고, 그 차이가 **고칠 수 있다는 신호**가 된다.
+ * ⚠️ **버튼을 없애지 않는다.** 자동 판정은 사용자의 답을 대체하지 않고 **자리를 대신 채운다.**
+ *    `outcome`이 비어 있으므로 트리거가 안 막고, 누르면 그 답이 이긴다(ADR-044 ②).
+ *
+ * 추론은 **상태가 아니라 이 줄의 성질**이라 `data-state`를 늘리지 않는다 —
+ * 늘리면 `ask`(버튼이 뜬다)와 갈라져 버튼이 사라지는 길이 생긴다. T-54가 결과를 상태에서
+ * 떼어낸 것과 같은 자리다.
+ */
+function guardAskLine(r) {
+  const what = r.event_title || "그 일";
+  const when = r.event_date ? md(r.event_date) : md(r.on_date);
+  const lv = r.reaction === "override" ? "넘어갔던" : "받아들였던";
+  const head = `<b>${when} ${esc(what)}</b> — ${lv} 개입이었어요.`;
+  return r.outcome_inferred === "failure"
+    ? { inferred: "failure", html: `${head} 뒤에 또 깨어 있어서 <b>못 한 것으로 보여요</b> — 아니면 눌러서 고쳐 주세요.` }
+    : { inferred: "", html: `${head} 결과가 어땠나요?` };
+}
+
 async function loadGuardOutcome() {
   const bar = $("#td-guard");
   /* 세 상태를 남긴다 (T-33). **화면 동작은 하나도 안 바뀐다** — 여전히 `ask`만 뜬다.
@@ -593,8 +623,11 @@ async function loadGuardOutcome() {
    *
    * 상태는 **DOM에만** 둔다 — 검사가 DOM으로 보고, 두 곳에 두면 갈라진다.
    * 사용자에게 보이는 것은 늘리지 않는다. 늘어나는 것은 기록뿐이다. */
-  const set = (state) => {
+  // `inferred`도 여기를 지난다 — 남겨 두면 다음 줄에 **남의 판정이 붙는다**(T-54가 결과를
+  // 안 지운 채 상태만 다시 그렸을 때와 같은 모양). 상태와 함께 매번 새로 정한다.
+  const set = (state, inferred = "") => {
     bar.dataset.state = state;
+    bar.dataset.inferred = inferred;
     bar.style.display = state === "ask" ? "flex" : "none";
   };
   try {
@@ -602,10 +635,8 @@ async function loadGuardOutcome() {
     const r = rows?.[0];
     if (!r) return void set("none");
 
-    const what = r.event_title || "그 일";
-    const when = r.event_date ? md(r.event_date) : md(r.on_date);
-    const lv = r.reaction === "override" ? "넘어갔던" : "받아들였던";
-    $("#td-guard-text").innerHTML = `<b>${when} ${esc(what)}</b> — ${lv} 개입이었어요. 결과가 어땠나요?`;
+    const line = guardAskLine(r);
+    $("#td-guard-text").innerHTML = line.html;
 
     const send = (outcome) => run(async () => {
       await Api.guardOutcome(r.id, outcome);
@@ -616,9 +647,10 @@ async function loadGuardOutcome() {
       toast(outcome === "success" ? "기록했어요" : "기록했어요 — 다음 판단에 쓰여요");
       return loadGuardOutcome();   // 남은 게 또 있으면 이어서 묻는다
     });
+    // ★ 추론이 붙어도 **버튼은 그대로 둘 다** 산다 — 자리를 채운 것이지 답을 정한 것이 아니다.
     $("#td-guard-ok").onclick = () => send("success");
     $("#td-guard-no").onclick = () => send("failure");
-    set("ask");
+    set("ask", line.inferred);
   } catch {
     // 화면은 막지 않는다 — Guard가 아직 없는 기기에서도 Today는 떠야 한다.
     // 그 판단은 옳았고, 바뀐 것은 **이 실패가 이제 이름을 갖는다**는 것뿐이다.

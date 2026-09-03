@@ -792,13 +792,31 @@ export const guardEventsUnreacted = (env: Env, before: string) =>
   q(env, "SELECT * FROM guard_events WHERE reaction IS NULL AND fired_at < ? ORDER BY fired_at")
     .bind(before).all<GuardEventRow>();
 
-/** outcome 미확정 — Today의 확정 카드가 이걸 읽는다. */
+/**
+ * outcome 미확정 — Today의 확정 카드가 이걸 읽는다.
+ *
+ * ★ **`later_fires` = 뒤따른 발동의 수** (T-56 · ADR-044 ①). `GuardWatch`는 화면이 계속
+ *   켜져 있어야 뜨므로, 뒤에 또 발동이 있었다는 것은 **그 사이에 자지 않았다는 관측**이다.
+ *
+ * ⚠️ **저장하지 않는다.** `guard_events`를 보면 언제든 나오므로 컬럼도 마이그레이션도 없다
+ *    (원칙 1: 파생값은 저장하지 않는다). 저장하면 그 순간 닫힌 `CHECK`와 append-only
+ *    트리거를 상대해야 하고 얻는 것이 없다.
+ * ⚠️ **레벨로 거르지 않는다** — L2도 화면이 켜져야 뜨므로 증거로는 같다(ADR-044 ③).
+ * ⚠️ 범위는 **같은 귀속일**이다. 경계는 설정값이고 `on_date`가 이미 그 판정을 담고 있어
+ *    여기에 시각을 적을 일이 없다.
+ *
+ * **뜻은 여기서 정하지 않는다** — *"그래서 실패로 보인다"* 는 도메인 판단이라 `services/guard.ts`다.
+ */
 export const guardEventsPendingOutcome = (env: Env) =>
-  q(env, `SELECT g.*, e.title AS event_title, e.date AS event_date
+  q(env, `SELECT g.*, e.title AS event_title, e.date AS event_date,
+                 (SELECT COUNT(*) FROM guard_events l
+                   WHERE l.on_date = g.on_date AND l.fired_at > g.fired_at) AS later_fires
           FROM guard_events g LEFT JOIN events e ON e.id = g.event_id
           WHERE g.outcome IS NULL AND g.reaction IS NOT NULL
           ORDER BY g.fired_at DESC LIMIT 20`)
-    .all<GuardEventRow & { event_title: string | null; event_date: string | null }>();
+    .all<GuardEventRow & {
+      event_title: string | null; event_date: string | null; later_fires: number;
+    }>();
 
 /**
  * 그날 개입 집계 — 마감 요약이 읽는다 (T-45). **세는 것이지 새 칸을 만들지 않는다**(원칙 1).

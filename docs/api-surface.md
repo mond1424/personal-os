@@ -74,7 +74,7 @@
 | POST `/api/guard/verify` | `{client_id, cause, level_candidate:4, event_id?, risk_snapshot?, foreground_app?}` | `{level:3\|4, approved, reason, ai_used, cached, source}` · **어떤 경우에도 200** — 판정 불가는 `level:3`. `source` = `ai\|cache\|cap\|timeout\|error\|off`. `level_candidate≠4`는 400(격상 전용) | `guard.verifyLevel4` |
 | POST `/api/guard/events/:id/react` | `{reaction, reason?, reacted_at?}` | `{id, reaction, reacted_at}` · 두 번째는 409 | `guard.react` |
 | POST `/api/guard/events/:id/outcome` | `{outcome}` | `{id, outcome, outcome_at}` · 재확정 409 | `guard.setOutcome` |
-| GET `/api/guard/pending-outcome` | — | outcome 미확정 rows(+event_title) | `guard.pendingOutcome` |
+| GET `/api/guard/pending-outcome` | — | outcome 미확정 rows(+`event_title`) · **`later_fires`**(같은 `on_date`의 더 뒤 발동 수 · 사실) · **`outcome_inferred`**(`"failure"\|null` · 뜻). ⚠️ **`outcome`은 안 건드린다** — 추론은 저장하지 않고 조회할 때 계산한다(ADR-044 · 원칙 1). 레벨로 안 거른다 | `guard.pendingOutcome` |
 | GET `/api/collected/pending` | — | `[{id, source, summary, starts_at}]` · **`state='new'`이고 `starts_at`이 `[t.now, +7일]`인 것만**(T-42 결정 ①). 창 밖·과거·`dismissed`·`starts_at IS NULL`은 안 준다. **`description`은 안 싣는다** — 카드가 원문 한 줄만 쓴다 | `collected.pending` |
 | POST `/api/collected/:id/accept` | — | `{id, event_id, state:'accepted', duplicate}` · `events` 행 하나를 만든다(`title` = `summary` **원문 그대로** · `date`·`time` = `starts_at`). **보호 규칙은 안 붙인다**. ⚠️ **멱등** — 이미 `accepted`면 `events`를 또 만들지 않고 `duplicate:true`로 있던 id를 준다(순차 한정) | `collected.accept` |
 | POST `/api/collected/:id/dismiss` | — | `{id, state:'dismissed'}` · **다시 묻지 않는다** — `last_modified`가 바뀌어도 그대로다(T-41의 touch가 `state`를 안 건드린다) | `collected.dismiss` |

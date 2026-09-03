@@ -1677,6 +1677,75 @@ ok("★ none과 error는 화면에서 같고 기록에서만 다르다",
   `${t33None.state}/${t33None.display} vs ${t33Err.state}/${t33Err.display}`);
 await ev(`(async()=>{ Api.guardPending = window.__t33.old[0]; Api.guardOutcome = window.__t33.old[1]; })()`);
 
+// ── T-56 · 뒤에 또 깨어 있었으면 묻지 않아도 안다 (ADR-044) ──────────────────
+//
+// ★ 추론은 **사용자의 답을 대체하지 않고 자리를 대신 채운다.** 그래서 화면 검사의 본체는
+//   *"문구가 바뀌었다"* 가 아니라 **"버튼이 그대로 살아 있고 눌리면 그 답이 간다"** 다.
+// ⚠️ 신호에 토스트도 `until`도 안 쓴다(함정 14) — `onclick()`이 `run(...)`의 프라미스를 준다.
+console.log("\n[T-56] 추론은 자리를 채우되 답을 선점하지 않는다");
+
+const t56Bar = $("#td-guard");
+// 함정 12 — 고정 날짜를 안 쓴다. 서버가 준 오늘에서 잡는다(문구 조립에만 쓰인다).
+const t56Day = ev(`S.today.date`);
+const t56Row = (id, inferred) => ({
+  id, on_date: t56Day, reaction: "accepted", event_title: "확률론 시험", event_date: t56Day,
+  outcome: null, outcome_inferred: inferred,
+});
+await ev(`(async()=>{
+  window.__t56 = { pending: [], sent: [], old: [Api.guardPending, Api.guardOutcome] };
+  Api.guardPending = async () => window.__t56.pending;
+  Api.guardOutcome = async (id, outcome) => {
+    window.__t56.sent.push(id + ":" + outcome);
+    window.__t56.pending = window.__t56.pending.filter((r) => r.id !== id);
+    return {};
+  };
+})()`);
+const t56Snap = () => ({
+  state: t56Bar.dataset.state, inferred: t56Bar.dataset.inferred,
+  display: t56Bar.style.display, text: txt("#td-guard-text"),
+  wired: typeof $("#td-guard-ok").onclick === "function" && typeof $("#td-guard-no").onclick === "function",
+});
+const t56Load = async (rows) => {
+  await ev(`(async()=>{
+    window.__t56.pending = ${JSON.stringify(rows)}; window.__t56.sent = [];
+    await loadGuardOutcome();
+  })()`);
+  return t56Snap();
+};
+
+const t56Inf = await t56Load([t56Row("t56-i", "failure")]);
+ok("1 뒤에 발동이 있었으면 '못 한 것으로 보여요'로 자리를 채운다 · 버튼은 남는다",
+  t56Inf.state === "ask" && t56Inf.display === "flex" && t56Inf.inferred === "failure"
+  && /보여요/.test(t56Inf.text) && !/못 했어요/.test(t56Inf.text) && t56Inf.wired,
+  JSON.stringify(t56Inf));
+
+const t56Ask = await t56Load([t56Row("t56-a", null)]);
+ok("2 ★ 뒤에 발동이 없으면 지금 모양 그대로 묻는다 (1의 짝 · 두 문구가 다르다)",
+  t56Ask.state === "ask" && t56Ask.inferred === "" && !/보여요/.test(t56Ask.text)
+  && t56Ask.text !== t56Inf.text && t56Ask.wired,
+  JSON.stringify(t56Ask));
+
+/* 3 ★ **이 티켓의 화면 쪽 본체.** 추론과 **반대되는** 답을 눌러 그것이 그대로 가는지 본다 —
+ *   자리를 채운 것이지 답을 정한 것이 아니다. 버튼을 없애거나 추론값을 대신 보내는 구현이
+ *   1·2를 전부 통과하므로, 이것이 없으면 그 셋이 아무것도 안 지킨다. */
+await t56Load([t56Row("t56-w", "failure")]);
+await $("#td-guard-ok").onclick();
+ok("3 ★ 추론이 failure여도 사용자가 누른 success가 그대로 간다",
+  ev(`window.__t56.sent.join("|")`) === "t56-w:success", ev(`window.__t56.sent.join("|")`));
+
+/* 4 ★ **없는 것을 세는 검사** — 앞 줄의 추론이 다음 줄에 남으면 **남의 판정이 붙는다.**
+ *   `set()`을 안 지나고 문구만 다시 쓰는 구현에서 정확히 그 모양이 난다(T-54가 겪은 자리). */
+await t56Load([t56Row("t56-x", "failure"), t56Row("t56-y", null)]);
+const t56First = t56Bar.dataset.inferred;
+await $("#td-guard-no").onclick();          // 첫 줄을 답하면 둘째가 이어 뜬다
+const t56Second = t56Snap();
+ok("4 ★ 앞 줄의 추론이 다음 줄에 안 남는다 (없는 것을 세는 검사)",
+  t56First === "failure" && t56Second.inferred === "" && t56Second.state === "ask"
+  && !/보여요/.test(t56Second.text),
+  `${t56First} → ${JSON.stringify(t56Second)}`);
+
+await ev(`(async()=>{ Api.guardPending = window.__t56.old[0]; Api.guardOutcome = window.__t56.old[1]; })()`);
+
 console.log("\n[수집 제안 카드 — 곧 닥치는 것만, 원문 그대로]");
 // T-33의 카드와 **같은 모양**이라 검사도 같은 모양이다. ③(none)과 ④(error)가 화면에서
 // 똑같이 안 보이므로, 여기서도 **둘을 가르는 것이 짝**이다 — 그 자리를 네 번 물렸다.

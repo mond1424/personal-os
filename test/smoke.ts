@@ -825,6 +825,97 @@ ok("⑤ 집계는 fired·last_at·ignored 셋뿐 — level·ai_verdict를 안 �
   JSON.stringify(Object.keys(g45AfterIgn).sort()) === JSON.stringify(["fired", "ignored", "last_at"]),
   JSON.stringify(Object.keys(g45AfterIgn)));
 
+// (7.8) 뒤에 또 깨어 있었으면 묻지 않아도 안다 (T-56 · ADR-044)
+//
+// ⚠️ **고정 날짜를 안 쓴다**(함정 12) — 오늘에서 상대로 잡는다. 그리고 이 블록만 쓰는 밤을
+//    고른다: 앞의 발동들은 전부 D+3 이하이고 여기는 D+5부터라 **절대 시각으로도 뒤에 있다.**
+// ⚠️ **경계 아래 시각을 안 쓴다.** 22시·23시는 어느 경계에서도 같은 귀속일이라
+//    `on_date`를 가정할 필요가 없다 — 그래도 fixture가 그것을 **직접 확인한다**.
+console.log("\n[9.4c] 뒤따른 발동으로 결과를 추론한다 (T-56 · ADR-044)");
+
+const t56Fire = async (day: string, hm: string, level: number, cid: string) =>
+  (await api("POST", "/api/guard/events", {
+    cause: "watch:bedtime", level, client_id: cid,
+    fired_at: `${day}T${hm}:00+09:00`, reaction: "accepted", reacted_at: `${day}T${hm}:30+09:00`,
+  })).json;
+const t56Pending = async () => (await api("GET", "/api/guard/pending-outcome")).json as any[];
+const t56Row = async (id: string) => (await t56Pending()).find((r) => r.id === id);
+const t56Stored = async (id: string) =>
+  ((await api("GET", "/api/guard/events")).json as any[]).find((r) => r.id === id);
+
+// ── 밤 1 — 뒤따른 발동이 L3
+const t56N1 = addDays(D, 5);
+const t56A1 = await t56Fire(t56N1, "22:10", 3, "t56-a1");
+const t56B1 = await t56Fire(t56N1, "23:40", 3, "t56-b1");
+ok("fixture — 둘이 같은 귀속일이다 (값을 가정하지 않고 응답이 준 것을 본다)",
+  t56A1.on_date === t56B1.on_date, `${t56A1.on_date} / ${t56B1.on_date}`);
+const t56P1 = await t56Row(t56A1.id);
+ok("1 뒤에 발동이 있으면 추론이 붙는다",
+  !!t56P1 && t56P1.later_fires >= 1 && t56P1.outcome_inferred === "failure",
+  JSON.stringify(t56P1 && { later: t56P1.later_fires, inf: t56P1.outcome_inferred }));
+
+// ★ 1의 짝 — 마지막 발동은 뒤가 없다. **이 시점에 b1 뒤로는 아무것도 없다**(밤 2~4는 아직
+//   안 만들었다). 그래서 이 검사는 '귀속일 조건'이 아니라 **'뒤따름' 자체**만 센다.
+const t56P1b = await t56Row(t56B1.id);
+ok("2 ★ 뒤에 발동이 없으면 안 붙는다 (1의 짝)",
+  !!t56P1b && t56P1b.later_fires === 0 && t56P1b.outcome_inferred === null,
+  JSON.stringify(t56P1b && { later: t56P1b.later_fires, inf: t56P1b.outcome_inferred }));
+
+// ── 밤 2 — 뒤따른 발동이 **L2**. 화면이 켜져야 뜨는 것은 L2도 같다(ADR-044 ③).
+const t56N2 = addDays(D, 7);
+const t56A2 = await t56Fire(t56N2, "22:10", 3, "t56-a2");
+await t56Fire(t56N2, "23:40", 2, "t56-b2");
+const t56P2 = await t56Row(t56A2.id);
+// ⚠️ **1과 비교만 한다.** `=== "failure"`나 `later_fires >= 1`을 함께 쓰면
+//    *"추론을 통째로 뺀 변이"*에서 1과 함께 죽어, **레벨 필터를 겨냥한 이 검사가 자기 몫을
+//    못 센다.** L2 뒤와 L3 뒤가 **같은지**가 이 검사의 전부다.
+ok("7 L2가 뒤따라도 추론이 붙는다 (레벨로 안 가른다 · 1과 같은 값이어야 한다)",
+  !!t56P2 && t56P2.outcome_inferred === t56P1?.outcome_inferred,
+  `L2뒤=${t56P2?.outcome_inferred} L3뒤=${t56P1?.outcome_inferred}`);
+
+// ── 밤 3 — 뒤에 발동이 있지만 **다른 귀속일**이다
+const t56N3 = addDays(D, 9);
+const t56A3 = await t56Fire(t56N3, "22:10", 3, "t56-a3");
+const t56C3 = await t56Fire(addDays(t56N3, 1), "22:10", 3, "t56-c3");
+ok("fixture — 다음 날 밤은 다른 귀속일이다",
+  t56A3.on_date !== t56C3.on_date, `${t56A3.on_date} / ${t56C3.on_date}`);
+const t56P3 = await t56Row(t56A3.id);
+// ⚠️ **세는 자리를 직접 본다.** `outcome_inferred === null`을 함께 쓰면 *"항상 추론을 붙이는
+//    변이"*가 2와 함께 이것도 죽여, **귀속일을 겨냥한 이 검사가 자기 몫을 못 센다.**
+//    걸러졌는지는 `later_fires`가 0인 것으로 충분하고, 그게 이 검사가 세는 전부다.
+ok("6 다른 귀속일의 발동은 세지 않는다",
+  !!t56P3 && t56P3.later_fires === 0,
+  JSON.stringify(t56P3 && { later: t56P3.later_fires, inf: t56P3.outcome_inferred }));
+
+// ── 밤 4 — ★ 이 티켓의 회귀 검사 셋. 순서에 뜻이 있다: 4 → 5 → 3.
+const t56N4 = addDays(D, 11);
+const t56A4 = await t56Fire(t56N4, "22:10", 3, "t56-a4");
+await t56Fire(t56N4, "23:40", 3, "t56-b4");
+const t56P4 = await t56Row(t56A4.id);
+const t56S4 = await t56Stored(t56A4.id);
+// 4 — **없는 것을 세는 검사.** 추론이 붙은 채로도 저장된 칸은 비어 있어야 한다.
+//     `outcome_at`까지 본다: 값만 안 쓰고 시각을 쓰는 구현도 append-only를 건드린 것이다.
+//     ⚠️ *"pending 전체가 NULL"*로 넓히지 않는다 — `outcome IS NULL` 필터를 지우는 변이가
+//        답이 있는 옛 행을 끌고 들어와 **3을 겨냥한 그 변이가 여기까지 죽인다.**
+//        자동 기입이 내려앉을 자리는 **추론이 붙은 바로 그 행**이고, 그 한 행이면 충분하다.
+ok("4 ★ 추론이 붙어도 outcome은 여전히 NULL이다 (없는 것을 세는 검사)",
+  !!t56P4 && t56P4.outcome_inferred === "failure" && t56P4.outcome === null
+  && !!t56S4 && t56S4.outcome === null && t56S4.outcome_at === null,
+  `pending=${t56P4?.outcome} stored=${t56S4?.outcome}/${t56S4?.outcome_at}`);
+
+// 5 — ★ **4의 실물.** 트리거가 막는지는 API를 거쳐야만 알 수 있다.
+//     추론과 **반대되는** 답을 넣는다 — 자동 판정이 선점했다면 여기서 409가 난다.
+const t56Write = await api("POST", `/api/guard/events/${t56A4.id}/outcome`, { outcome: "success" });
+ok("5 ★ 추론이 붙은 뒤에도 사용자가 답을 쓸 수 있다 (트리거가 안 막는다)",
+  t56Write.status === 200 && t56Write.json.outcome === "success",
+  `${t56Write.status} ${JSON.stringify(t56Write.json)}`);
+
+// 3 — 사용자의 답이 이긴다. 그 줄은 물음에서 사라지고, 저장된 값은 추론이 아니라 사람의 것이다.
+const t56S4After = await t56Stored(t56A4.id);
+ok("3 ★ 사용자 답이 있으면 추론이 그것을 덮지 않는다",
+  !!t56S4After && t56S4After.outcome === "success" && !(await t56Row(t56A4.id)),
+  `stored=${t56S4After?.outcome} 물음에 남았나=${!!(await t56Row(t56A4.id))}`);
+
 // (8) 감시 목록 — PC 확장 자리 (ADR-022)
 ok("watch app 추가 201",
   (await api("POST", "/api/guard/watch-apps", { source: "pc", identifier: "Code.exe", label: "VS Code" })).status === 201);

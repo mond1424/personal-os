@@ -509,8 +509,24 @@ export async function setOutcome(env: Env, t: TimeCtx, id: string, outcome: stri
   return { id, outcome, outcome_at: t.now };
 }
 
+/**
+ * 뒤따른 발동이 있었으면 **그 사이에 자지 않은 것이다** (T-56 · ADR-044).
+ *
+ * ★ **`outcome`에 쓰지 않는다.** 그 칸은 append-only라 시스템이 먼저 박으면 사용자가
+ *   *"아니 그건 잤다가 깬 거였다"* 라고 답할 길이 **DB 층에서 막힌다.** 그리고 §6.5가
+ *   전례를 읽을 때 *"사람이 말한 것"* 과 *"기계가 추론한 것"* 이 한 칸에 섞인다 —
+ *   T-50이 `ai_*`를 따로 지킨 것과 같은 이유다. **판단의 출처를 섞지 않는다.**
+ *
+ * 그래서 **다른 이름으로 나간다.** 화면은 이것으로 자리를 채우되 버튼을 남기고,
+ * 사용자가 누르면 그 답이 `outcome`에 들어가 이긴다.
+ */
+const outcomeInferred = (laterFires: number) => (laterFires > 0 ? "failure" : null);
+
 export const pendingOutcome = async (env: Env) =>
-  (await db.guardEventsPendingOutcome(env)).results;
+  (await db.guardEventsPendingOutcome(env)).results.map((r) => ({
+    ...r,
+    outcome_inferred: outcomeInferred(r.later_fires ?? 0),
+  }));
 
 /**
  * 반응 없이 남은 발동을 `ignored`로 확정한다 — **루프의 닫는 쪽**.
