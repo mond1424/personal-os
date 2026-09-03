@@ -50,11 +50,18 @@ class CalPlugin : Plugin() {
         status(call)
     }
 
-    /** 고를 수 있는 캘린더 목록. 권한이 없으면 빈 목록이고, 그것도 사실이다. */
+    /**
+     * 고를 수 있는 캘린더 목록. 권한이 없으면 빈 목록이고, 그것도 사실이다.
+     *
+     * ★ **`total`·`hidden`·`error`를 함께 싣는다**(T-55 ③). 목록만 주면 *"provider가 안 줬다"*와
+     *   *"우리가 다 걸렀다"*가 화면에서 같은 0이 되고, 다음에 또 0이 되면 진단을 처음부터 한다.
+     *   **문구는 여기서 안 만든다** — 사실만 준다(T-53의 구조).
+     */
     @PluginMethod
     fun calendars(call: PluginCall) {
+        val list = CalendarReader.calendars(context)
         val arr = com.getcapacitor.JSArray()
-        CalendarReader.calendars(context).forEach {
+        list.items.forEach {
             arr.put(
                 JSObject().put("id", it.id).put("name", it.name)
                     .put("account", it.account).put("visible", it.visible),
@@ -65,6 +72,9 @@ class CalPlugin : Plugin() {
         call.resolve(
             JSObject().put("permission", CalendarReader.hasPermission(context))
                 .put("calendars", arr)
+                .put("total", list.total)
+                .put("hidden", list.hidden)
+                .put("error", list.error)
                 .put("targets", targets),
         )
     }

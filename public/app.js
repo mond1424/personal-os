@@ -756,6 +756,31 @@ function calResultLine(r) {
   return { kind: "ok", text: `일정 ${r.sent}개를 맞췄어요` };
 }
 
+/* 고를 것이 없을 때 (T-55 ①③) ──────────────────────────────────────
+ *
+ * ★ **`total 0`과 `total N · hidden N`은 다른 문장이다.** 앞은 provider가 한 행도 안 준 것이고
+ *   뒤는 **우리가 다 걸러낸 것**이다. 고칠 곳이 서로 반대편인데 화면에서는 둘 다 그냥 '비었다'로
+ *   보였고, 그래서 0이 될 때마다 진단을 처음부터 다시 했다(T-55의 본체).
+ *
+ * 여기도 `calResultLine`과 같은 규칙이다 — **네이티브는 사실(`total`·`hidden`·`error`)만 주고
+ * 문구는 웹이 정한다.** 두 곳에서 정하면 갈라진다.
+ *
+ * 목록이 있으면 `null`이다 — *"비었다"*는 말은 실제로 비었을 때만 한다.
+ */
+function calListLine(r) {
+  if (((r && r.calendars) || []).length) return null;
+  if (r && r.error) {
+    // 사유를 문장으로 뭉개지 않는다(T-43과 같은 이유) — 다음에 다른 사유가 와도 같은 문장이 된다.
+    return r.error === "no_cursor"
+      ? "폰 캘린더 앱이 목록을 안 줬어요 — 캘린더 앱이 꺼져 있는지 확인해 주세요"
+      : `캘린더 목록을 읽다 막혔어요 — ${r.error}`;
+  }
+  const total = Number((r && r.total) || 0);
+  const hidden = Number((r && r.hidden) || 0);
+  if (!total) return "이 폰에 캘린더가 하나도 없어요 — 캘린더 앱에서 계정을 추가하면 여기 떠요";
+  return `읽을 수 있는 캘린더가 없어요 — ${total}개가 다 삭제 대기예요 (걸러낸 ${hidden}개)`;
+}
+
 /** 결과를 화면에 놓는다. **시트 안의 한 줄이 원본이고 토스트는 사본이다** —
  *  시트가 닫힌 채로 부른 경로(Today 한 줄의 [다시 시도])에서도 말이 닿아야 한다.
  *  ⚠️ 토스트는 사라지므로 **판정의 근거로 쓰지 않는다**(검사도 이 줄을 본다). */
@@ -815,7 +840,10 @@ async function calSyncNow() {
 /** 대상 캘린더 선택 (티켓 ③). **선택 전에는 아무것도 안 가져온다** — 기기가 그것을 지킨다. */
 async function openCalSheet() {
   const C = globalThis.Capacitor?.Plugins?.Cal;
-  const body = $("#cal-list");
+  // ⚠️ **`#cal-list`가 아니다.** 그 id는 캘린더 화면의 '몰아 읽기' 뷰가 먼저 쓰고 있었고,
+  //    `querySelector`가 문서 순서로 앞의 것을 주는 바람에 목록 12개가 **숨은 칸에** 들어갔다.
+  //    시트는 늘 비어 있었고 `#diary-list`는 덤으로 지워졌다(T-55 진단 · index.html 주석).
+  const body = $("#cal-targets");
   const note = $("#cal-note");
   const save = $("#cal-save");
   // 지난 결과를 다음 열기까지 끌고 가지 않는다 — 낡은 문장은 방금 한 일로 읽힌다.
@@ -847,7 +875,9 @@ async function openCalSheet() {
       <input type="checkbox" ${targets.has(Number(c.id)) ? "checked" : ""}>
       <span class="en">${esc(c.name)}<span class="cap"> · ${esc(c.account || "")}</span></span>
     </label>`).join("")
-    || `<div class="evrow"><span class="cap">이 기기에 캘린더가 없어요</span></div>`;
+    // ① 비면 **왜 비었는지**를 말한다. 옛 문구는 `이 기기에 캘린더가 없어요` 한 줄이었는데
+    //    그건 확인하지 않은 주장이다 — 이 폰에는 캘린더가 12개 있었고 목록만 비어 있었다.
+    || `<div class="evrow"><span class="cap">${esc(calListLine(r) || "")}</span></div>`;
   save.onclick = () => run(async () => {
     const ids = [...body.querySelectorAll("[data-cid]")]
       .filter((el) => el.querySelector("input")?.checked)

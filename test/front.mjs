@@ -2801,7 +2801,10 @@ ok("1 빈 선택으로 저장하면 그 사실이 사용자에게 닿는다",
  *     통과한다. 저장이 실제로 기기까지 갔는지(`set:7`)도 함께 센다. */
 t54Calls.length = 0;
 await w.openCalSheet();
-$("#cal-list [data-cid='7'] input").checked = true;
+// ⚠️ **`#cal-list`였다.** 그 선택자는 시트가 아니라 캘린더 화면의 숨은 칸을 가리켰고,
+//    구현이 **같은 잘못된 칸에** 써 넣었기 때문에 이 검사는 초록인 채로 아무것도 안 봤다
+//    (T-55). 검사와 구현이 같은 오타를 공유하면 검사는 오타를 못 센다.
+$("#sh-cal #cal-targets [data-cid='7'] input").checked = true;
 await $("#cal-save").onclick();
 const t54Chosen = { ...t54Res(), calls: t54Calls.join("|") };
 ok("2 ★ 하나 이상 고르면 그 경고가 안 닿는다 (1의 짝)",
@@ -2893,6 +2896,106 @@ ok("7 ★ 상태 줄은 넷 그대로다 — 결과가 섞이지 않았다 (없�
   && t54AllStates.every((s) => ["off", "noperm", "notarget", "error", "ok"].includes(s))
   && ev(`Object.keys(CAL_ACT).length`) === 3,
   `결과별=${t54ByResult.join(",")} 전체=${[...new Set(t54AllStates)].join(",")}`);
+
+// ── T-55 · 고를 것이 없으면 그렇게 말한다 (그리고 왜 없는지 밝힌다) ──────────
+//
+// ★ **진단이 (a)~(c) 어느 것도 아니었다.** 폰 실측(2026-09-03): `Cal.calendars()`는 **12개를
+//   그대로 줬다.** 목록은 `#cal-list`라는 **중복 id** 때문에 캘린더 화면의 숨은 칸으로 갔고,
+//   시트의 자리는 늘 비어 있었다. 네이티브를 재는 검사로는 절대 안 잡혔을 결함이다 —
+//   그래서 아래 7이 **문서에 같은 id가 둘 있는지**를 센다.
+//
+// ⚠️ 신호에 토스트도 `until`도 안 쓴다(§함정 14) — `openCalSheet`이 주는 프라미스를 `await`한다.
+console.log("\n[T-55] 목록이 비는 이유가 화면에 남는다");
+
+const t55Body = () => $("#sh-cal #cal-targets");
+const t55Open = async (r) => {
+  w.Capacitor = { Plugins: { Cal: { ...t54Cal({ ok: true, sent: 0 }), calendars: async () => r } } };
+  await w.openCalSheet();
+  const b = t55Body();
+  return {
+    text: (b ? b.textContent : "").trim(),
+    rows: b ? b.querySelectorAll("[data-cid]").length : -1,
+  };
+};
+const t55Line = (o) => ev(`calListLine(${JSON.stringify(o)})`);
+
+/* 1 — 비면 **그 사실이 화면에 뜬다.** 문구는 구현에서 가져온다(두 벌로 적으면 갈라진다). */
+const t55Zero = await t55Open({ permission: true, targets: [], calendars: [], total: 0, hidden: 0 });
+const t55L0 = t55Line({ calendars: [], total: 0, hidden: 0 });
+ok("1 목록이 비면 그 사실이 화면에 뜬다",
+  t55Zero.rows === 0 && t55Zero.text.length > 0 && t55Zero.text === t55L0,
+  `${JSON.stringify(t55Zero)} ← 문구 ${JSON.stringify(t55L0)}`);
+
+/* 2 ★ 1의 짝 — **목록이 있으면 안 뜬다.** 1만 보면 *"항상 비었다고 말하는 구현"*이 통과하고,
+ *     그게 바로 옛 `이 기기에 캘린더가 없어요`였다(폰에는 12개가 있었다). */
+const t55Some = await t55Open({
+  permission: true, targets: [],
+  calendars: [{ id: 7, name: "수업", account: "a@b" }, { id: 9, name: "휴일", account: "a@b" }],
+  total: 3, hidden: 1,
+});
+ok("2 ★ 목록이 있으면 그 문구가 안 뜬다 (1의 짝)",
+  t55Some.rows === 2 && t55Some.text !== t55Zero.text && !/없어요/.test(t55Some.text)
+  && t55Line({ calendars: [{ id: 7 }], total: 3, hidden: 1 }) === null,
+  JSON.stringify(t55Some));
+
+/* 3 ★ 기기 쪽 — **몇 개 중 몇 개를 걸렀는지**가 응답에 실린다. 목록만 주면
+ *     *"provider가 안 줬다"*와 *"우리가 다 걸렀다"*가 화면에서 같은 0이 된다. */
+const T55_PUT_TOTAL = /\.put\("total", list\.total\)/;
+const T55_PUT_HIDDEN = /\.put\("hidden", list\.hidden\)/;
+ok("3 ★ total·hidden 이 네이티브 응답에 실린다 (센 자리는 커서다)",
+  T55_PUT_TOTAL.test(t53Plugin) && T55_PUT_HIDDEN.test(t53Plugin)
+  && /data class CalendarList\(/.test(t53Reader)
+  && /total\+\+/.test(t53Reader) && /total - out\.size/.test(t53Reader),
+  `plugin=${T55_PUT_TOTAL.test(t53Plugin)}/${T55_PUT_HIDDEN.test(t53Plugin)}`
+  + ` reader=${/total - out\.size/.test(t53Reader)}`);
+
+/* 4 ★ 3의 짝 · **이 티켓의 본체.** 3만 보면 *"숫자는 싣는데 화면이 안 쓰는 구현"*이 통과하고,
+ *     그러면 다음에 0이 됐을 때 또 처음부터 진단한다. 셋이 서로 달라야 한다. */
+const t55L8 = t55Line({ calendars: [], total: 8, hidden: 8 });
+const t55LErr = t55Line({ calendars: [], total: 0, hidden: 0, error: "no_cursor" });
+ok("4 ★ 'provider가 0'·'우리가 다 걸렀다'·'읽다 막혔다'가 서로 다른 문구다 (3의 짝)",
+  new Set([t55L0, t55L8, t55LErr]).size === 3 && [t55L0, t55L8, t55LErr].every(Boolean)
+  && /8/.test(t55L8) && !/8/.test(t55L0),
+  `0=${t55L0} / 8=${t55L8} / err=${t55LErr}`);
+
+/* 5 — 목록은 **Calendars**를 읽는다. 그리고 **selection을 좁히지 않는다**:
+ *     `VISIBLE=1`로 거르면 캘린더 앱에서 체크를 꺼 둔 것이 목록에서 사라지는데,
+ *     *"안 보이게 해 둔 것"*과 *"안 가져올 것"*은 사용자가 따로 정하는 값이다. */
+const T55_OPEN_SEL = /Calendars\.CONTENT_URI, cols, null, null,/;
+ok("5 목록 쿼리가 Calendars 를 읽고 selection 을 좁히지 않는다 (스캐너)",
+  T55_OPEN_SEL.test(t53Reader) && /CalendarContract\.Calendars\.DELETED/.test(t53Reader)
+  && !/Calendars\.VISIBLE\s*\+\s*"\s*=/.test(t53Reader),
+  `열린selection=${T55_OPEN_SEL.test(t53Reader)}`);
+
+/* 6 ★ 5의 짝 — 5가 초록인 것이 *"열려 있다"*인지 *"정규식이 눈멀었다"*인지 가른다. */
+const t55Narrow = `                CalendarContract.Calendars.CONTENT_URI, cols, VISIBLE + "=1", null,`;
+const t55Wide = `                CalendarContract.Calendars.CONTENT_URI, cols, null, null,`;
+ok("6 ★ 5의 스캐너가 살아 있다 — 좁힌 selection 은 잡고, 주석은 안 잡는다",
+  !T55_OPEN_SEL.test(t55Narrow) && T55_OPEN_SEL.test(t55Wide)
+  && !T55_OPEN_SEL.test(t46Bare("  // " + t55Wide)),
+  `좁힘=${T55_OPEN_SEL.test(t55Narrow)} 넓힘=${T55_OPEN_SEL.test(t55Wide)}`);
+
+/* 7 ★ **진짜 원인을 세는 검사.** `querySelector`는 문서 순서로 앞의 것을 준다 —
+ *     같은 id가 둘이면 뒤의 것은 **영영 안 잡히고 화면은 조용하다.** 전수로 센다. */
+const t55DupOf = (s) => {
+  const a = [...s.matchAll(/\sid="([^"]+)"/g)].map((m) => m[1]);
+  return [...new Set(a.filter((v, i) => a.indexOf(v) !== i))];
+};
+const t55Dup = t55DupOf(html);
+ok("7 ★ index.html 에 같은 id 가 둘 없다 — T-55의 진짜 원인이었다",
+  t55Dup.length === 0 && /\sid="cal-targets"/.test(html),
+  `중복=${t55Dup.join(",") || "없음"}`);
+
+/* 7의 짝 ★ 스캐너가 살아 있는가 — 합성 문서로 가른다. */
+ok("7 ★ 7의 스캐너가 살아 있다 (합성 중복을 잡는다)",
+  t55DupOf(`<div id="a"></div><i id="b"></i><p id="a"></p>`).join() === "a"
+  && t55DupOf(`<div id="a"></div><i id="b"></i>`).length === 0);
+
+/* ★ 중복 id 가 남긴 **두 번째 피해** — 시트를 열면 `innerHTML`이 그 숨은 칸을 덮어써
+ *   `#diary-list`(몰아 읽기 뷰)가 통째로 사라졌다. 폰에서 실제로 사라져 있었다. */
+ok("★ 시트를 열어도 '몰아 읽기' 뷰가 살아남는다 (같은 원인의 두 번째 피해)",
+  !!$("#scr-cal #diary-list") && $("#scr-cal #cal-list").querySelectorAll("[data-cid]").length === 0,
+  `diary=${!!$("#scr-cal #diary-list")}`);
 
 delete w.Capacitor;
 await w.loadCalStatus();

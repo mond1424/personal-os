@@ -162,14 +162,124 @@ assembleRelease BUILD SUCCESSFUL · npx cap sync android 성공
 
 ## 보고 (담당이 채운다)
 
+### ★ 진단 — (a)·(b)·(c) 어느 것도 아니었다. **네이티브는 12개를 그대로 줬다**
+
+**2026-09-03 실측** (adb + 폰 CDP · 설치 APK `4f3e67e9…` = T-53 빌드):
+
+| 무엇 | 값 |
+|---|---|
+| provider 직접 조회 (`content query … /calendars`) | **12행** (cal 1·2·3·7·9·10·11·12·13·14·15·16) |
+| `await Cal.calendars()` (앱 안에서) | `permission:true` · **`calendars.length === 12`** · `targets:[]` |
+| `document.querySelectorAll('#cal-list').length` | **2** |
+| 그 둘이 어디 있나 | `#scr-cal` 안(**`display:none`**) **12행** · `#sh-cal` 안 **0행** |
+| `document.getElementById('diary-list')` | **없다** |
+| `index.html`의 중복 id 전수 | **`cal-list` 하나뿐** (id 229개 중) |
+
+**모순은 애초에 없었다** — `Calendars`는 0행이 아니었다. 티켓의 갈래 (a)~(d)는 전부
+**네이티브 쪽 가설**인데, 결함은 **웹의 DOM 셀렉터**에 있었다.
+
+```
+index.html:138   <div id="cal-list" style="display:none">   ← 캘린더 화면의 '몰아 읽기' 뷰 (원래 주인)
+index.html:306   <div id="cal-list" style="margin-top:12px"> ← T-53이 시트에 놓은 것 (같은 이름)
+```
+
+`querySelector`는 **문서 순서로 앞의 것**을 준다. 그래서 `openCalSheet`의
+`$("#cal-list").innerHTML = …`는 캘린더 12개를 **`display:none`인 숨은 칸에** 써 넣었고,
+시트의 자리는 **한 번도 채워진 적이 없다.**
+
+⚠️ **9/1 진단이 못 본 이유가 티켓의 추측과도 다르다.** *"UI를 안 거쳤다"*가 아니라
+**UI를 거친 검사(front `2`)가 구현과 똑같이 `#cal-list`를 썼다.** 검사가 숨은 칸을 읽고
+숨은 칸이 채워졌으니 초록이었다 — **검사와 구현이 같은 오타를 공유하면 검사는 오타를 못 센다.**
+
+★ **두 번째 피해**: 그 `innerHTML =`가 숨은 칸의 내용을 덮어써 **`#diary-list`를 통째로 지웠다.**
+폰에서 실제로 사라져 있었다 — 시트를 한 번이라도 연 뒤 캘린더 탭의 '몰아 읽기'를 누르면
+`renderDiaryList`가 `null.innerHTML`로 죽는다. **아무도 신고하지 않은 채 있었다.**
+
+### 고친 것
+
 ```
 티켓: T-55
 바꾼 파일:
-기준선: typecheck · smoke 385(변화 없음) · front 385 → ? · verify exit 0
-       assembleRelease · cap sync · APK MD5
-진단: (a)~(c) 중 무엇이었나 · Instances 26행과 Calendars 0행의 모순을 무엇이 설명했나
-① 빈 목록 문구를 어디에 뒀나 · 네이티브가 준 사실은 무엇인가:
-③ total·hidden 을 어떻게 셌나 · 화면이 둘을 어떻게 가르나:
-검사 4가 "total 0"과 "hidden 이 다 걸렀다"를 실제로 가르는가:
-변이 여섯이 각각 하나씩만 죽였는가:
+  public/index.html                      시트의 목록 id → `cal-targets` (중복 해소 · 진짜 원인)
+  public/app.js                          `$("#cal-targets")` · `calListLine()` 신설 · 빈 목록 문구
+  android/.../cal/CalendarReader.kt       `CalendarList(items,total,hidden,error)` · DELETED 필터
+  android/.../cal/CalPlugin.kt            total·hidden·error 를 응답에 실음
+  test/front.mjs                          검사 9개 · T-54 검사 2의 선택자 교정
+기준선: typecheck 통과 · smoke 385(변화 없음) · front 385 → 394 · 실패 0 · verify exit 0
 ```
+
+**① 빈 목록 문구를 어디에 뒀나** — 목록이 들어갈 자리(`#cal-targets`) 그대로다.
+`calStatusLine`의 상태 넷은 안 늘렸고 `#cal-result`도 안 건드렸다.
+**네이티브가 준 사실**: `total`(커서가 준 행 수) · `hidden`(우리가 뺀 수) · `error`(던진 사유 · `no_cursor`).
+문구는 웹의 `calListLine()` 하나가 정한다 — `calResultLine`이 선 자리와 같다.
+
+옛 문구 `이 기기에 캘린더가 없어요`는 **침묵이 아니라 거짓말이었다.** 폰에는 12개가 있었다.
+
+**③ total·hidden 을 어떻게 셌나** — `Calendars` 커서를 **한 행씩 돌면서** `total++`,
+`hidden = total - out.size`. selection은 여전히 `null`이다(좁히지 않는다).
+거르는 것은 **삭제 대기(`DELETED=1`) 하나뿐** — 골라도 읽을 것이 없어 *"0건 성공"*이 되는
+유일한 부류다. `VISIBLE`은 **거르지 않고 실어 보낸다**: *"안 보이게 해 둔 것"*과
+*"안 가져올 것"*은 사용자가 따로 정하는 값이다.
+
+**화면이 둘을 어떻게 가르나** — 세 문장이 서로 다르다:
+
+```
+total 0            이 폰에 캘린더가 하나도 없어요 — 캘린더 앱에서 계정을 추가하면 여기 떠요
+total 8 · hidden 8 읽을 수 있는 캘린더가 없어요 — 8개가 다 삭제 대기예요 (걸러낸 8개)
+error              캘린더 목록을 읽다 막혔어요 — <사유>  /  폰 캘린더 앱이 목록을 안 줬어요 …
+```
+
+**검사 4가 실제로 가르는가** — 셋을 `Set`에 넣어 **크기 3**을 세고, `total 8`쪽에만 `8`이
+들어 있는지까지 본다. 셋을 한 문자열로 만드는 구현은 4에서 죽는다.
+
+★ **`error`는 티켓에 없던 셋째 갈래다.** `runCatching`이 예외를 삼키고 빈 목록을 주던 자리(갈래 c)가
+그대로 남아 있었다 — 이번 원인은 아니었지만 **다음에 그것이 원인이면 또 조용하다.** 커서가
+`null`인 경우(`no_cursor`)까지 사유를 만들어 세 갈래를 화면에서 갈랐다.
+
+### 변이 — 여덟을 돌렸고 하나가 티켓에 없던 것이다
+
+| 변이 | 죽은 것 | |
+|---|---|---|
+| M1 빈 목록 문구를 뺀다 | **1**만 | 393/1 |
+| M2 목록이 있어도 비었다고 말한다 | **2**만 | 393/1 |
+| M3 `total`·`hidden`을 안 싣는다 | **3**만 | 393/1 |
+| M4 두 원인을 같은 문구로 | **4**만 | 393/1 |
+| M5a 목록을 `Events`로 만든다 | **5 + T-53 ⑦** | 392/2 |
+| M5b `selection`을 좁힌다 | **5**만 | 393/1 |
+| M6 5의 스캐너를 눈멀게 한다 | **6**만 (5는 초록) | 393/1 |
+| M7 id를 `cal-list`로 되돌린다 | ★ **러너가 통째로 죽는다** | 요약 줄 없음 |
+| M8 무해한 중복 id를 심는다 | **7**만 | 393/1 |
+
+⚠️ **M5a는 둘을 죽였고 그게 맞다.** T-53 ⑦이 `CalendarReader.kt` **전체**에 대고
+*"`Events.CONTENT_URI`가 없다"*를 세므로, 목록을 Events로 옮기면 ⑦도 함께 죽는다.
+검사 5의 고유 신호는 M5b가 갈라 준다 — **selection만 좁히면 5 하나만** 죽는다.
+
+★ **M7이 티켓의 표와 다르게 나왔고, 그것이 M8을 낳았다.** id를 되돌리면
+`$("#cal-targets")`가 `null`이라 `openCalSheet`이 `TypeError`로 죽고 **러너가 T-55 블록에
+닿기도 전에 끝난다** — 검사 7은 **실행되지 않는다.** 그래서 *"7이 정말 중복을 세는가"*는
+그 변이로는 알 수 없다. **런타임에 무해한 중복**(`#cal-note`를 하나 더)을 심는 M8을 따로
+만들었고 **7 하나만** 죽었다. 화면 동작은 하나도 안 변한 채 검사만 빨간불이 된다 —
+7이 세는 것이 **동작이 아니라 문서의 성질**이라는 뜻이다.
+
+⚠️ **배터리 자신이 한 번 거짓말을 했다.** 1차에서 M3·M7이 `통과 -1 · 실패 -1`로 나왔고
+스크립트는 그것을 *"아무것도 안 죽었다"*로 찍었다 — 실제로는 **요약 줄이 없었던 것**,
+즉 러너가 먼저 죽은 경우다. 둘을 원문까지 다시 떴다: M7은 위의 `TypeError`가 맞고,
+**M3는 재측정에서 393/1로 3 하나만 죽였다**(1차의 조용한 종료는 재현되지 않았다 — 원인을
+못 짚었고, 짚기 전엔 아는 척하지 않는다). *"요약이 없다"*와 *"아무도 안 죽었다"*를 같은
+칸에 찍은 것이 **이 티켓이 고친 결함과 정확히 같은 모양**이다.
+
+### 기준선
+
+```
+typecheck 통과 · smoke 385(변화 없음) · front 385 → 394 · 실패 0 · verify exit 0
+npx cap sync android           Sync finished (exit 0)
+gradlew assembleRelease        BUILD SUCCESSFUL in 4m 14s  ★ Kotlin이 컴파일된다 (Calendars.DELETED)
+새 APK MD5                     4cce9640c9de6a459dd3a3787beec654
+```
+
+⚠️ **설치·배포는 이 층이 안 한다** — 위 해시는 *방금 만든 물건*의 것이고 폰에 무엇이 깔려
+있는지는 `CLAUDE.md` §확인법으로 사용자가 판단한다.
+
+★ **둘의 순서가 다르다.** 진짜 원인(중복 id)은 `index.html`·`app.js`에 있어 **배포만으로 폰에
+닿는다** — APK는 `total`·`hidden`·`error`를 위해서만 필요하다. 목록이 뜨는지는 **배포 직후**
+확인할 수 있고, 그때도 안 뜨면 그건 다른 결함이다.

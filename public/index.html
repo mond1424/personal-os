@@ -303,7 +303,13 @@
   <div class="grip"></div>
   <div class="sh-t">폰 캘린더</div>
   <p class="cap" id="cal-note" style="margin-top:4px"></p>
-  <div id="cal-list" style="margin-top:12px"></div>
+  <!-- ⚠️ **`cal-list`가 아니다.** T-53이 여기에 `id="cal-list"`를 놓았는데 그 이름은
+       위 캘린더 화면의 '몰아 읽기' 뷰(`#scr-cal` 안, `display:none`)가 이미 쓰고 있었다.
+       `querySelector`는 **문서 순서로 앞의 것**을 주므로 `openCalSheet`은 12개를 그 숨은
+       칸에 써 넣었고, 시트의 이 자리는 영원히 비어 있었다(T-55 진단). 게다가 그 쓰기가
+       `#diary-list`를 통째로 지워 몰아 읽기 뷰까지 같이 죽었다.
+       **한 문서에 같은 id 둘을 두지 않는다** — 검사가 그것을 센다. -->
+  <div id="cal-targets" style="margin-top:12px"></div>
   <button class="btn" id="cal-save" style="margin-top:12px;width:100%">저장하고 지금 동기화</button>
   <!-- 방금 한 행동의 결과 (T-54 ②) — 위 `#td-cal`의 '상태'와 **다른 것**이다.
        상태 줄은 지금 어떤 상태인지, 이 줄은 방금 무슨 일이 있었는지를 말한다.

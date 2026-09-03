@@ -40,6 +40,24 @@ object CalendarReader {
         val visible: Boolean,
     )
 
+    /**
+     * 목록과 **그 목록이 어떻게 그 크기가 됐는지** (T-55 ③).
+     *
+     * ★ `items`만 주면 **0건의 두 원인이 화면에서 같아진다**: provider가 한 행도 안 준 것과
+     *   우리가 다 걸러낸 것. 그러면 0이 될 때마다 진단을 처음부터 다시 해야 한다 —
+     *   T-43의 `last_seen_count`가 선 자리와 같다.
+     *
+     * @param total  provider가 커서로 준 행 수 (거른 것 포함)
+     * @param hidden 그중 우리가 뺀 수 = `total - items.size`
+     * @param error  provider가 던졌거나 커서를 안 준 사유. ⚠️ **삼키고 빈 목록을 주지 않는다.**
+     */
+    data class CalendarList(
+        val items: List<CalendarInfo>,
+        val total: Int,
+        val hidden: Int,
+        val error: String?,
+    )
+
     /** 창 범위의 일정 하나. 서버 `POST /api/cal/sync`의 `items[]` 한 항목과 1:1이다. */
     data class Item(
         val extUid: String,
@@ -49,21 +67,38 @@ object CalendarReader {
         val allDay: Boolean,
     )
 
-    fun calendars(ctx: Context): List<CalendarInfo> {
-        if (!hasPermission(ctx)) return emptyList()
+    /**
+     * 고를 수 있는 캘린더 전부.
+     *
+     * ⚠️ **selection은 `null`이다 — 좁히지 않는다.** `VISIBLE=1`이나 `SYNC_EVENTS=1`로 거르면
+     *    캘린더 앱에서 체크를 꺼 둔 캘린더가 목록에서 사라지는데, *"안 보이게 해 둔 것"*과
+     *    *"가져오지 않을 것"*은 사용자가 따로 정하는 값이다. `visible`은 **실어서 보내고**
+     *    쓸지는 화면이 정한다.
+     *
+     * 거르는 것은 **삭제 대기(`DELETED=1`)** 하나뿐이다 — 골라도 읽을 것이 없어
+     * *"0건 성공"*이 되는 유일한 부류다. 그리고 **몇 개를 걸렀는지 세어 함께 준다**(③).
+     */
+    fun calendars(ctx: Context): CalendarList {
+        // 권한 없음은 `permission` 필드가 이미 말한다 — 여기서 사유를 한 번 더 만들지 않는다.
+        if (!hasPermission(ctx)) return CalendarList(emptyList(), 0, 0, null)
         val cols = arrayOf(
             CalendarContract.Calendars._ID,
             CalendarContract.Calendars.CALENDAR_DISPLAY_NAME,
             CalendarContract.Calendars.ACCOUNT_NAME,
             CalendarContract.Calendars.VISIBLE,
+            CalendarContract.Calendars.DELETED,
         )
         val out = ArrayList<CalendarInfo>()
-        runCatching {
-            ctx.contentResolver.query(
+        var total = 0
+        val error = runCatching {
+            val cur = ctx.contentResolver.query(
                 CalendarContract.Calendars.CONTENT_URI, cols, null, null,
                 CalendarContract.Calendars.ACCOUNT_NAME + " ASC",
-            )?.use { c ->
+            ) ?: return@runCatching "no_cursor"
+            cur.use { c ->
                 while (c.moveToNext()) {
+                    total++
+                    if (!c.isNull(4) && c.getInt(4) == 1) continue      // 삭제 대기
                     out.add(
                         CalendarInfo(
                             id = c.getLong(0),
@@ -74,8 +109,9 @@ object CalendarReader {
                     )
                 }
             }
-        }
-        return out
+            null
+        }.getOrElse { it.javaClass.simpleName }
+        return CalendarList(out, total, total - out.size, error)
     }
 
     /**
