@@ -20,7 +20,7 @@ Cowork Claude          설계 · 판단 · 티켓 발행 · 최종 검토      [
 Claude Code            회귀 민감 영역 직접 구현 · verify · 커밋 · 1차 검토
   │  하위 티켓
   ▼
-Antigravity CLI              범위가 명확한 구현만
+Antigravity CLI        범위가 명확한 구현만
 ```
 
 **한 칸씩만 오간다.** Antigravity는 사용자에게 직접 결론을 내지 않고 Claude Code에 보고한다.
@@ -353,7 +353,7 @@ T-15에서 사용자가 "증상 사라짐"을 확인했고 그것을 검토 통�
 사용자      "Me 탭 붙이자"
 Cowork      설계 확인 → T-07 발행 → 사용자 승인
 Claude Code 티켓 분해 → 락 → Antigravity에 지시
-Antigravity       구현 → verify → 보고(숫자)
+Antigravity 구현 → verify → 보고(숫자)
 Claude Code 1차 검토 → 통과면 STATE·APP-BUILD 갱신 → commit
 Cowork      설계 정합 검토 → 사용자에게 승인/재작업 요청
 사용자      승인 → push · deploy · 폰 확인
