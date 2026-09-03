@@ -4,15 +4,48 @@
 const API_BASE =
   ((typeof location !== "undefined" && location.protocol === "file:") ? "http://localhost:8787" : "") + "/api";
 
-async function _req(method, path, body) {
+/* ── 응답을 기다리는 상한 (T-57) ───────────────────────────
+ *
+ * **앱의 기다림에도 상한이 있어야 한다.** 없으면 워커가 응답을 한 번 놓쳤을 때 `fetch`가
+ * 영원히 매달리고, 화면은 *"눌렀는데 아무 일도 안 일어남"* 으로 멈춘다 —
+ * T-54·T-55가 두 티켓에 걸쳐 없앤 **조용한 실패**가 상한 하나가 없어 돌아오는 자리다.
+ * 2026-09-04 실측: 소켓 셋이 살아 있는 채로 280초 넘게 응답이 안 왔다(요청은 갔다).
+ * 응답이 늦는 순간은 네트워크가 나쁜 새벽이고, 그때가 Guard가 일해야 하는 시각이다.
+ *
+ * ⚠️ **자리는 `_req` 하나다.** 아래 `Api`의 호출부마다 걸면 **빠뜨린 곳이 조용히 남는다** —
+ *    T-52가 방벽을 SQL에 둔 것과 같은 판단이다.
+ */
+const REQ_TIMEOUT_MS = 15_000;
+/** ⚠️ **모델을 부르는 길은 오래 걸리는 것이 정상이다** — 서버가 2-pass로 두 번 부른다
+ *  (`services/analysis.ts`). 짧은 상한을 씌우면 **상한이 정상 동작을 끊는다.**
+ *  자리는 여전히 `_req` 하나이고 값만 갈린다. */
+const REQ_TIMEOUT_SLOW_MS = 180_000;
+/** 그 긴 쪽을 쓰는 길 — 서버에서 `callModel`에 닿는 셋이다. **`_req`이 고른다.** */
+const SLOW_REQ = ["POST /analyses", "POST /ai/test", "POST /daily/classify-feelings"];
+/** ★ **상한에 걸린 것과 실패한 것은 사용자가 할 일이 다르다.** `HTTP 500`은 신고할 것이고
+ *  *"아무 답도 없음"*은 다시 눌러 볼 것이다 — 뭉개면 그 구별이 사라진다(T-43·T-53과 같은 판단). */
+const REQ_TIMEOUT_TEXT = "응답이 안 와요 — 잠시 뒤 다시 해 주세요";
+const _timeoutError = () => Object.assign(new Error(REQ_TIMEOUT_TEXT), { timeout: true });
+
+/** 요청 한 번. **상한 값은 `_req`이 정해서 넘긴다** — 여기서 다시 고르지 않는다. */
+async function _send(method, path, body, ms) {
   const headers = {};
   if (body !== undefined) headers["Content-Type"] = "application/json";
   const tok = (typeof localStorage !== "undefined") && localStorage.getItem("api_token");
   if (tok) headers["Authorization"] = "Bearer " + tok;
-  const res = await fetch(API_BASE + path, {
+  const init = {
     method, headers,
     body: body === undefined ? undefined : JSON.stringify(body),
-  });
+  };
+  // 죽은 요청은 **끊어 준다** — 안 끊으면 브라우저의 연결 자리를 계속 물고 있다.
+  if (typeof AbortSignal !== "undefined" && AbortSignal.timeout) init.signal = AbortSignal.timeout(ms);
+  let res;
+  try {
+    res = await fetch(API_BASE + path, init);
+  } catch (e) {
+    // abort로 끊긴 것도 **같은 문구**로 나가야 한다 — 두 겹이 두 문구가 되면 위 구별이 무너진다.
+    throw (e && (e.name === "TimeoutError" || e.name === "AbortError")) ? _timeoutError() : e;
+  }
   let json = null;
   try { json = await res.json(); } catch { /* 본문 없음 */ }
   if (!res.ok) {
@@ -25,6 +58,25 @@ async function _req(method, path, body) {
     throw e;
   }
   return json;
+}
+
+/**
+ * ★ **상한이 서는 유일한 자리.**
+ *
+ * 두 겹인 데는 이유가 있다: `AbortSignal`은 **죽은 요청을 끊고**, 시계는 **앱을 빼낸다.**
+ * fetch가 abort를 안 지키거나 프라미스를 영영 정산하지 않아도 앱은 상한 안에 빠져나온다 —
+ * **상한은 원인이 무엇이든 서야 한다.**
+ */
+async function _req(method, path, body) {
+  const ms = SLOW_REQ.includes(method + " " + path.split("?")[0])
+    ? REQ_TIMEOUT_SLOW_MS : REQ_TIMEOUT_MS;
+  let timer = null;
+  const cap = new Promise((_, reject) => { timer = setTimeout(() => reject(_timeoutError()), ms); });
+  try {
+    return await Promise.race([_send(method, path, body, ms), cap]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 const Api = {

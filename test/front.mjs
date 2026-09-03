@@ -38,7 +38,19 @@ const dom = new JSDOM(html.replace(/<script src="[^"]+"><\/script>/g, ""), {
   runScripts: "dangerously", pretendToBeVisual: true, virtualConsole: vc, url: BASE + "/",
 });
 const w = dom.window;
-w.fetch = (u, o) => fetch(u, o);
+/** jsdom 창을 node 의 `fetch` 에 잇는다.
+ *
+ * ⚠️ **`fetch` 만 갈아 끼우면 안 된다** — jsdom 의 `AbortSignal` 은 node 의 것과 **다른 클래스**라
+ * `api.js` 가 만든 signal 을 node fetch 가 통째로 거절한다(실측:
+ * `RequestInit: Expected signal ("AbortSignal {}") to be an instance of AbortSignal`).
+ * 브라우저에는 이 틈이 없다 — **하니스가 두 런타임을 이으면서 생긴 틈이라 하니스가 메운다.**
+ */
+const bridgeFetch = (win, impl) => {
+  win.AbortController = AbortController;
+  win.AbortSignal = AbortSignal;
+  win.fetch = impl;
+};
+bridgeFetch(w, (u, o) => fetch(u, o));
 w.localStorage.clear();
 // jsdom에 없는 API 최소 보강
 w.HTMLElement.prototype.setPointerCapture = () => {};
@@ -2028,7 +2040,7 @@ const t46Boot = async (fakeApp) => {
     runScripts: "dangerously", pretendToBeVisual: true, virtualConsole: vcx, url: BASE + "/",
   });
   const wx = domx.window;
-  wx.fetch = (u, o) => fetch(u, o);
+  bridgeFetch(wx, (u, o) => fetch(u, o));
   wx.HTMLElement.prototype.setPointerCapture = () => {};
   wx.HTMLElement.prototype.scrollTo = () => {};
   wx.Capacitor = { Plugins: { App: fakeApp } };
@@ -3071,6 +3083,118 @@ await w.loadCalStatus();
 w.closeAll();
 await sleep(120);
 
+// ── T-57 · 앱의 기다림에도 상한이 있다 ────────────────────────────
+//
+// **러너의 안전망 420초는 마지막 방벽이지 설계가 아니다.** 워커가 응답을 한 번 놓치면
+// `fetch`가 영원히 매달리고, 폰에서는 *"눌렀는데 아무 일도 안 일어남"*으로 보인다 —
+// T-54·T-55가 두 티켓에 걸쳐 없앤 조용한 실패가 상한 하나가 없어 돌아오는 자리다.
+console.log("\n[T-57 · fetch 상한]");
+
+/** 관측된 hang 그대로 — **영영 정산되지 않는 프라미스**이고 abort도 안 지킨다.
+ *  ⚠️ signal을 지키는 스텁을 쓰면 검사는 `AbortSignal`만 보고 **진짜 hang은 못 센다.** */
+const t57Dead = () => new Promise(() => {});
+const t57Ask = `Api.today().then((r) => ({ ok: !!(r && r.date) }),
+  (e) => ({ ok: false, msg: e.message, status: e.status ?? null, timeout: !!e.timeout }))`;
+
+const t57Real = w.fetch;
+w.fetch = t57Dead;
+const t57At = Date.now();
+// ⚠️ 이 시계는 *"끝났다"*를 아는 장치가 아니다(함정 14) — **상한이 없을 때 러너가 안전망까지
+//    끌려가 요약을 통째로 잃지 않게** 하는 것뿐이다. 통과를 정하는 것은 아래 `timeout` 계약이다.
+const t57Cut = await Promise.race([ev(t57Ask), sleep(60_000).then(() => ({ hung: true }))]);
+const t57CutMs = Date.now() - t57At;
+
+w.fetch = () => Promise.resolve({ ok: false, status: 500, json: async () => ({ error: "서버가 터졌어요" }) });
+const t57Http = await ev(t57Ask);
+w.fetch = () => Promise.reject(new Error("연결 거부"));
+const t57Refused = await ev(t57Ask);
+w.fetch = t57Real;
+const t57Live = await ev(t57Ask);
+
+/** 셸을 새로 띄운다 — `fetch`를 통째로 갈아 끼운 채. `boot()`는 `loadData()`를 **await**하므로
+ *  상한이 없으면 부팅이 거기서 멈추고 그 뒤의 `syncGuardNative()`가 **영영 안 돈다.** */
+const t57Shell = async (fakeFetch) => {
+  const errs = [];
+  const vc7 = new VirtualConsole();
+  vc7.on("jsdomError", (e) => errs.push(String(e.message)));
+  const dom7 = new JSDOM(html.replace(/<script src="[^"]+"><\/script>/g, ""), {
+    runScripts: "dangerously", pretendToBeVisual: true, virtualConsole: vc7, url: BASE + "/",
+  });
+  const w7 = dom7.window;
+  bridgeFetch(w7, fakeFetch);
+  w7.HTMLElement.prototype.setPointerCapture = () => {};
+  w7.HTMLElement.prototype.scrollTo = () => {};
+  const heard = [];
+  w7.Capacitor = { Plugins: { Guard: {
+    configure: async () => { heard.push("configure"); },
+    sync: async () => { heard.push("sync"); return { ok: true }; },
+  } } };
+  for (const code of [apiJs, appJs]) {
+    const s = w7.document.createElement("script");
+    s.textContent = code;
+    w7.document.body.appendChild(s);
+  }
+  w7.document.dispatchEvent(new w7.Event("DOMContentLoaded"));
+  // **끝을 아는 것은 화면이 아니라 플러그인 계약이다** — 예약이 돌았는가가 곧 주장이다.
+  const ran = await until(() => heard.includes("sync"), 60_000);
+  return { ran, heard, errs, $: (s) => w7.document.querySelector(s) };
+};
+const t57ShellFail = await t57Shell(() => Promise.reject(new Error("연결 거부")));
+const t57ShellCut = await t57Shell(t57Dead);
+const t57BootFail = (t57ShellFail.$("#boot-msg").textContent || "").trim();
+const t57BootCut = (t57ShellCut.$("#boot-msg").textContent || "").trim();
+
+// ⚠️ **여기서 `timeout` 플래그를 같이 세면 안 된다** — 그 플래그는 3의 몫이고, 겹쳐 세면
+//    3을 겨냥한 변이가 1까지 죽여 **1이 자기 몫을 못 센다**(T-56에서 겪은 그 모양이다).
+//    안 정산되는 fetch에서 거절이 오는 길은 상한 하나뿐이라 이것만으로 충분하다.
+ok("1 응답이 안 오면 상한에서 끊긴다 (영영 안 정산되는 fetch)",
+  !t57Cut.hung && t57Cut.ok === false,
+  `${t57CutMs}ms ${JSON.stringify(t57Cut)}`);
+
+ok("2 ★ 정상 응답은 안 끊긴다 (1의 짝)",
+  t57Live.ok === true && !t57Live.timeout, JSON.stringify(t57Live));
+
+ok("3 ★ 상한에 걸린 것과 실패한 것이 다른 문구로 나온다 (사용자가 할 일이 다르다)",
+  t57Cut.timeout === true && t57Http.timeout === false && t57Refused.timeout === false
+  && !!t57Cut.msg && t57Cut.msg !== t57Http.msg && t57Cut.msg !== t57Refused.msg
+  && !!t57BootCut && !!t57BootFail && t57BootCut !== t57BootFail,
+  `상한="${t57Cut.msg}" HTTP="${t57Http.msg}" 거부="${t57Refused.msg}"`
+  + ` · 부팅 상한="${t57BootCut}" 실패="${t57BootFail}"`);
+
+/* 4 ★ **상한이 `_req` 한 곳에 있는가.** 1~3은 상한이 *있다*를 보고, 이것은 *한 곳에 있다*를 본다 —
+ *   호출부마다 걸면 빠뜨린 곳이 조용히 남는다(T-52가 방벽을 SQL에 둔 것과 같은 판단). */
+const t57ApiSrc = readFileSync(join(here, "../public/api.js"), "utf8");
+const t57CapWords = /AbortSignal|setTimeout|REQ_TIMEOUT/;
+/** `const Api = {` 아래 — 호출부 전부. 여기 상한 재료가 보이면 흩어진 것이다. */
+const t57Callers = (src) => src.slice(src.indexOf("const Api = {"));
+/** 원문에서 `fetch(`를 부르는 자리 (메서드 호출 `.fetch(`는 안 센다) */
+const t57FetchSites = (src) => (src.match(/(?<![.\w$])fetch\s*\(/g) || []).length;
+const t57AppFetch = /(?<![.\w$])fetch\s*\(/.test(appJs);
+ok("4 ★ 상한이 _req 한 곳에 있다 — 호출부에 흩어져 있지 않다",
+  t57FetchSites(t57ApiSrc) === 1 && !t57CapWords.test(t57Callers(t57ApiSrc)) && !t57AppFetch,
+  `fetch자리=${t57FetchSites(t57ApiSrc)} 호출부상한=${t57CapWords.test(t57Callers(t57ApiSrc))}`
+  + ` app직접fetch=${t57AppFetch}`);
+
+/* 5 ★ **4의 스캐너가 살아 있는가.** 4가 초록인 것이 *"한 곳에 있다"*인지 *"정규식이 눈멀었다"*인지
+ *   구별이 안 되면 4는 아무것도 안 세는 검사다(T-53 ⑧·T-54 6의 짝이 선 그 자리). */
+const t57Scattered = `const Api = {\n  today: () => _req("GET", "/today", { signal: AbortSignal.timeout(9000) }),\n};`;
+const t57Clean = `const Api = {\n  today: () => _req("GET", "/today"),\n};`;
+const t57TwoFetch = `async function a(){ await fetch(x); }\nasync function b(){ await fetch(y); }`;
+ok("5 ★ 4의 스캐너가 살아 있다 — 흩어진 상한은 잡고 깨끗한 호출부는 안 잡는다",
+  t57CapWords.test(t57Callers(t57Scattered)) && !t57CapWords.test(t57Callers(t57Clean))
+  && t57FetchSites(t57TwoFetch) === 2 && t57FetchSites(t57Clean) === 0,
+  `흩어짐=${t57CapWords.test(t57Callers(t57Scattered))} 깨끗=${t57CapWords.test(t57Callers(t57Clean))}`
+  + ` 둘=${t57FetchSites(t57TwoFetch)} 없음=${t57FetchSites(t57Clean)}`);
+
+/* 6 ★ 티켓 ④ — **캘린더가 안 와도 보호 일정 예약은 돈다**(T-53 `runCatching`과 같은 원칙).
+ *   `boot()`가 `await loadData()` **뒤에** `syncGuardNative()`를 부르므로, 상한이 없으면
+ *   응답이 안 오는 것만으로 **Guard 예약이 인질이 된다.** 그 순서를 상한이 깨지 않는지 본다. */
+ok("6 ★ 응답이 안 와도 Guard 예약은 돈다 — 부팅이 인질이 되지 않는다 (티켓 ④)",
+  t57ShellCut.ran && t57ShellCut.heard.join("|") === "configure|sync"
+  && t57ShellFail.ran && t57ShellCut.errs.length === 0,
+  `안옴=${t57ShellCut.heard.join("|")}(${t57ShellCut.ran})`
+  + ` 실패=${t57ShellFail.heard.join("|")}(${t57ShellFail.ran}) 오류=${t57ShellCut.errs.join("/")}`);
+
 console.log("\n[부팅 · 연결 실패 복구]");
 ok("로드 후 부팅 오버레이 닫힘", !$("#boot").classList.contains("on"));
 
@@ -3083,7 +3207,7 @@ ok("로드 후 부팅 오버레이 닫힘", !$("#boot").classList.contains("on")
     runScripts: "dangerously", pretendToBeVisual: true, virtualConsole: vc2, url: BASE + "/",
   });
   const w2 = dom2.window;
-  w2.fetch = () => Promise.reject(new Error("연결 거부"));
+  bridgeFetch(w2, () => Promise.reject(new Error("연결 거부")));
   w2.HTMLElement.prototype.setPointerCapture = () => {};
   w2.HTMLElement.prototype.scrollTo = () => {};
   for (const code of [apiJs.replace(BASE, "http://127.0.0.1:9"), appJs]) {

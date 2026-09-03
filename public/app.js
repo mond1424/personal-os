@@ -3625,6 +3625,10 @@ async function loadData() {
     if (!localStorage.getItem("tutorial_done")) showTutorial(0);
   } catch (e) {
     if (e.status === 401) bootUI("auth", "인증이 필요해요.<br>이 기기에 API 토큰을 넣어 주세요.");
+    // ③ **못 붙은 것과 답이 없는 것은 다르다** (T-57). 앞은 서버·회선을 볼 일이고
+    //    뒤는 **다시 눌러 볼 일**이다 — 한 문구로 뭉개면 사용자가 할 일이 사라진다.
+    //    문구의 원본은 `api.js`의 상한 하나다. 여기서 다시 짓지 않는다.
+    else if (e.timeout) bootUI("error", `${esc(e.message)}<br><span class="cap">연결은 됐는데 서버가 답을 안 줬어요.</span>`);
     else bootUI("error", `서버에 연결하지 못했어요.<br><span class="cap">${esc(e.message)}</span>`);
   }
 }
