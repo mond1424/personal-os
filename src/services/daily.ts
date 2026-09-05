@@ -4,6 +4,7 @@ import * as db from "../db";
 import { ApiError, type Env, type TimeCtx } from "../types";
 import { attributionOfIso, diffDays } from "../lib/time";
 import { aiConfig, callModel, parseModelJson } from "../lib/ai";
+import { classesIn } from "./timetable";
 
 const WAIT_LIMIT = 21; // 1.4 대기 최대 체류
 
@@ -24,6 +25,10 @@ export async function assembleToday(env: Env, t: TimeCtx) {
     //    마감 자체를 못 한다(§금지 8행). 실패는 `null`로 접고 화면이 조각을 뺀다.
     db.guardDayTally(env, t.d).catch(() => null),
   ]);
+  // 시간표 (T-58) — **저장된 행이 아니라 규칙에서 지금 전개한 것**이다(원칙 1).
+  // `events`와 한 배열에 섞지 않는다: 저쪽은 고칠 수 있는 원본이고 이것은 파생이라,
+  // 같은 이름에 담으면 화면이 파생에 × 버튼을 붙인다(T-55가 배운 모양).
+  const classes = await classesIn(env, t.d, t.d);
   // 대기 일수 = 귀속일 기준 경과 + 1 ("n일째"). 경계 이전의 새벽 연장도 어긋나지 않는다.
   const waitRows = waiting.results
     .map((w) => ({ ...w, age: diffDays(t.d, attributionOfIso(w.wait_anchor_at, t.boundary)) + 1 }))
@@ -42,6 +47,7 @@ export async function assembleToday(env: Env, t: TimeCtx) {
     done: done.results,
     reassign: reassign.results, // 재배정 대기 — Todo 아래 행 (1.2)
     events: todayEvents.results, // 오늘의 일정 — 할 일이 아니라 사건
+    classes, // 오늘의 수업 — 규칙에서 전개한 파생 (T-58)
     waiting: {
       n: waitRows.length,
       max_age: waitRows[0]?.age ?? null,
@@ -208,12 +214,14 @@ export async function assembleDay(env: Env, t: TimeCtx, k: string) {
     db.memosAt(env, k),
     db.eventsAt(env, k),
   ]);
+  const classes = await classesIn(env, k, k);   // 파생 — 저장하지 않는다 (T-58)
   return {
     date: k,
     relation: k === t.d ? "today" : k > t.d ? "future" : "past",
     periods: periods.results,
     tasks: cls.results,
     events: evs.results, // 일정 — task와 별개 (0004)
+    classes, // 수업 — 규칙에서 전개한 파생 (T-58)
     daily: daily ?? null,
     feelings: feelings.results,
     logs: logs.results,
@@ -236,6 +244,7 @@ export async function calendar(env: Env, start: string, end: string) {
   return {
     periods: periods.results, entries: entries.results,
     diary: diary.results, events: evs.results, memos: memos.results,
+    classes: await classesIn(env, start, end), // 창만큼만 전개 — 저장 없음 (T-58)
   };
 }
 

@@ -43,6 +43,9 @@
 | GET `/api/periods/:id` | — | period + `{goals}` | `periods.getPeriodDetail` |
 | PATCH `/api/periods/:id` | `{title?, start_date?, end_date?, color?, goals?}` | `{id}` | `periods.updatePeriod` |
 | DELETE `/api/periods/:id` | — | `{id}` (task 참조 시 FK 409) | `periods.deletePeriod` |
+| GET `/api/timetable` | — | `{rules[], term:{start,end}\|null}` | `timetable.list` |
+| POST `/api/timetable/parse` | `{text}` | `{rules[], unread[{line,text,reason}], term\|null}` · **순수 — 저장 안 함** | `timetable.parseText` |
+| PUT `/api/timetable` | `{rules[{subject,weekday,start_time,end_time}], term_start, term_end}` | `{rules[], term}` · **전체 교체** · 범위 없으면 400 | `timetable.replace` |
 | POST `/api/events` | `{title, date, time?, period_id?, note?}` | `{id, ...}` | `events.create` |
 | PATCH `/api/events/:id` | `{title?, date?, time?, period_id?, note?}` | `{...}` (마감일 409) | `events.update` |
 | DELETE `/api/events/:id` | — | `{id, deleted}` (마감일 409) | `events.remove` |
@@ -136,6 +139,21 @@
 - `create(env, t, input)` → `{id, ...}` · 마감된 날에도 추가 가능(불변)
 - `update(env, id, input)` → `{...}` · 마감일 트리거 409
 - `remove(env, id)` → `{id, deleted}` · 마감일 트리거 409
+
+### timetable.ts — 시간표 (0021 · ADR-045 · T-58)
+- **규칙을 저장하고 날짜는 조회 시 전개한다.** 인스턴스는 **어디에도 저장되지 않는다**(원칙 1)
+- `parseText(text)` → `{rules[], unread[], term|null}` — **순수 함수**. `<요일> <시>시-<시>시 <과목>[, …]`
+  - ⚠️ **모델을 부르지 않는다**(비결정론·비용·오프라인). 정확성은 파서가 아니라 **확인 화면**이 진다
+  - ★ **못 읽은 줄을 버리지 않는다** — `unread`에 `{line, text, reason}`으로 원문 그대로 실어 보낸다
+  - `공강`·빈 줄은 읽은 것이고 규칙이 없는 것이 맞다 → `unread`에 안 들어간다
+  - `학기 YYYY-MM-DD~YYYY-MM-DD` 줄이 있으면 `term`으로 딴다
+- `replace(env, t, {rules, term_start, term_end})` → `list()` — **전체 교체**(부분 수정 없음)
+  - ⚠️ **학기 범위 기본값이 없다** — 없으면 400. 박아 두면 다음 학기에 조용히 틀린 날짜로 전개된다
+- `expand(rules, start, end)` → `ClassInstance[]` `{date, subject, start_time, end_time, rule_id}`
+  - 창 상한 400일 — 넘으면 **빈 배열이 아니라 400**(빈 시간표와 구별돼야 한다)
+  - 학기 밖 날짜는 안 만든다
+- `classesIn(env, start, end)` — `assembleToday`·`assembleDay`·`calendar`가 부르는 자리
+  - ⚠️ 응답에서 `events`와 **다른 키(`classes`)** 다: 저쪽은 고칠 수 있는 원본, 이쪽은 파생이다
 
 ### calsync.ts — 폰 캘린더 미러 (0020 · ADR-029 · T-52)
 - `CAL_SRC` = `'devcal'` — `events.ext_src`에 그대로 들어간다. **NULL이면 앱이 만든 일정**
@@ -260,6 +278,8 @@
 **guard(0010)** — `guardEventsList(env, limit)` · `guardEventGet(env, id)` · `stInsertGuardEvent(env, e)` · `stReactGuardEvent(env, id, reaction, reason, at)`(`AND reaction IS NULL`) · `stClassifyOverride` · `stSetGuardOutcome`(`AND outcome IS NULL`) · `guardEventsUnreacted(env, before)` · `guardEventsPendingOutcome(env)` · `guardAiCallsOn(env, onDate)`(ADR-024 일일 상한) · `guardAiVerdictFor(env, onDate, eventId)`(ADR-024 캐시 — `'unavailable'`은 제외, `fired_at DESC, id DESC`)
 **guard_modes** — `guardModes(env)` · `guardActiveMode(env)` · `stClearActiveMode` · `stSetActiveMode` (부분 유니크 인덱스 때문에 **해제 → 설정** 순서)
 **watch_apps** — `watchApps(env, source?)` · `stAddWatchApp` · `stRemoveWatchApp`
+**시간표 (0021)** — `timetableRules(env)` → `TimetableRule[]` · `stClearTimetable(env)` · `stInsertTimetableRule(env, id, subject, weekday, start, end, termStart, termEnd, now)`
+  ⚠️ **전개 SQL은 없다** — 규칙만 읽어 오고 날짜 전개는 `services/timetable.expand`가 한다(파생을 SQL로 물화하지 않는다)
 **guard(구)** — `guardEventsList(env)`
 
 **뷰(스키마)**: `v_task_stats`(**state**=상태의 유일한 진실 `not_finished`/`finished`/`cancelled` · cancelled_at·cancelled_on·cancel_reason·cancelled_by(0009, append-only) · entry_count·defer_count·latest_date·current_rate·is_waiting) · `v_period_achievement`(달성률=current_rate 평균, **취소 제외**). 상태 판정은 언제나 `state`(status는 원시 컬럼).

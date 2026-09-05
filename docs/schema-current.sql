@@ -1,6 +1,6 @@
 -- docs/schema-current.sql — 스키마 스냅샷 (자동 생성)
 -- migrations/ 전체를 인메모리 sqlite에 적용한 뒤 sqlite_master를 덤프한 것.
--- 최신 마이그레이션: 0020_cal_sync.sql  ·  갱신 2026-08-28
+-- 최신 마이그레이션: 0021_timetable.sql  ·  갱신 2026-09-05
 -- 0013·0014는 DDL을 바꾸지 않는다: 0013 = analyses backfill(트리거를 원문 그대로 복원) ·
 --   0014 = lm_schema.body에 title 얹기(UPDATE만).
 -- 0015 = me_history에 reason TEXT 추가(ADR-027 — 모드 하향 사유). ALTER라 컬럼이 표 끝에 붙는다.
@@ -31,6 +31,12 @@
 --   ⚠️ **마감된 날 방어는 스키마에 없다** — `events`엔 `_ins` 트리거가 없어서(함정 6)
 --   `services/calsync.ts`가 유일한 방어선이다. UPDATE·DELETE는 트리거가 막지만 그건 409로
 --   배치를 통째로 깨는 모양이라, 어느 쪽이든 서버가 먼저 판단해서 건너뛴다.
+-- 0021 = timetable_rules 신설(T-58 · ADR-045 — 시간표). **규칙만 저장하고 날짜는 조회 시 전개한다.**
+--   15주치 인스턴스를 만들어 두면 학기·시각이 바뀔 때 그 전부를 손봐야 한다(원칙 1).
+--   ★ end_time이 이 표의 존재 이유다 — 포털 그리드는 시작 칸만 그려 길이를 말하지 않는데
+--   같은 과목이 요일마다 길이가 다르다(월 3시간 · 목 2시간). 시작만 담으면 조용히 틀린다.
+--   term_start·term_end는 매 학기 바뀌므로 **입력으로 받는다** — 코드에 박으면 다음 학기에 어긋난다.
+--   ⚠️ `*_frozen_*` 트리거를 두지 않는다: 규칙은 '그날 있었던 일'이 아니라 학기 내내 유효한 설정이다.
 -- 손으로 고치지 않는다 — 마이그레이션을 추가하고 다시 덤프한다 (CLAUDE.md 세션 종료 규칙).
 
 -- ==========================================================
@@ -281,6 +287,22 @@ CREATE TABLE tasks (
   CHECK (status = 'not_finished' OR finished_on IS NOT NULL)
 );
 
+CREATE TABLE timetable_rules (
+  id         TEXT PRIMARY KEY,
+  subject    TEXT NOT NULL,
+  weekday    INTEGER NOT NULL,          -- 1=월 … 7=일 (ISO-8601)
+  start_time TEXT NOT NULL,             -- 'HH:MM'
+  end_time   TEXT NOT NULL,             -- 'HH:MM'
+  term_start TEXT NOT NULL,             -- 'YYYY-MM-DD' — 매 학기 바뀌므로 입력으로 받는다
+  term_end   TEXT NOT NULL,             --              코드에 박으면 다음 학기에 조용히 틀린다
+  created_at TEXT NOT NULL,
+  CHECK (weekday BETWEEN 1 AND 7),
+  CHECK (start_time GLOB '[0-2][0-9]:[0-5][0-9]'),
+  CHECK (end_time   GLOB '[0-2][0-9]:[0-5][0-9]'),
+  CHECK (end_time > start_time),
+  CHECK (term_end >= term_start)
+);
+
 CREATE TABLE wait_extensions (
   id             INTEGER PRIMARY KEY,
   task_id        TEXT NOT NULL REFERENCES tasks(id),
@@ -373,6 +395,8 @@ CREATE INDEX idx_memos_date ON memos(date);
 CREATE INDEX idx_tasks_period ON tasks(period_id);
 
 CREATE INDEX idx_tasks_status ON tasks(status);
+
+CREATE INDEX idx_timetable_weekday ON timetable_rules(weekday);
 
 CREATE INDEX idx_wait_ext_task ON wait_extensions(task_id, extended_at);
 

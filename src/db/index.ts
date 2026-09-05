@@ -955,3 +955,25 @@ export const stAddWatchApp = (env: Env, source: string, identifier: string, labe
 
 export const stRemoveWatchApp = (env: Env, source: string, identifier: string) =>
   q(env, "DELETE FROM watch_apps WHERE source=? AND identifier=?").bind(source, identifier);
+
+// ── 시간표 (0021 · ADR-045) ───────────────────────────────────
+// **규칙만 산다.** 전개는 `services/timetable.ts`가 조회할 때 한다 — 여기 전개 SQL은 없다.
+export interface TimetableRule {
+  id: string; subject: string; weekday: number;
+  start_time: string; end_time: string;
+  term_start: string; term_end: string; created_at: string;
+}
+
+export const timetableRules = (env: Env) =>
+  q(env, "SELECT * FROM timetable_rules ORDER BY weekday, start_time, subject").all<TimetableRule>();
+
+export const stClearTimetable = (env: Env) => q(env, "DELETE FROM timetable_rules");
+
+export const stInsertTimetableRule = (
+  env: Env, id: string, subject: string, weekday: number,
+  startTime: string, endTime: string, termStart: string, termEnd: string, now: string,
+) =>
+  q(env, `INSERT INTO timetable_rules
+    (id,subject,weekday,start_time,end_time,term_start,term_end,created_at)
+    VALUES (?,?,?,?,?,?,?,?)`)
+    .bind(id, subject, weekday, startTime, endTime, termStart, termEnd, now);

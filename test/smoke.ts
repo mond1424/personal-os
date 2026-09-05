@@ -17,7 +17,7 @@ import type { Env } from "../src/types";
 import { makeD1, rawOf } from "./d1shim";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const schema = ["0001_init.sql", "0002_models.sql", "0003_ai_provider.sql", "0004_events.sql", "0005_delete_scope.sql", "0006_fix_model_high.sql", "0007_defer_reason.sql", "0008_cancel_task.sql", "0009_cancel_reason.sql", "0010_guard.sql", "0011_guard_sync.sql", "0012_life_model.sql", "0013_analysis_backfill.sql", "0014_schema_titles.sql", "0015_me_history_reason.sql", "0016_guard_unavailable_reason.sql", "0017_ai_reason.sql", "0018_collected_items.sql", "0019_guard_ai_immutable.sql", "0020_cal_sync.sql"]
+const schema = ["0001_init.sql", "0002_models.sql", "0003_ai_provider.sql", "0004_events.sql", "0005_delete_scope.sql", "0006_fix_model_high.sql", "0007_defer_reason.sql", "0008_cancel_task.sql", "0009_cancel_reason.sql", "0010_guard.sql", "0011_guard_sync.sql", "0012_life_model.sql", "0013_analysis_backfill.sql", "0014_schema_titles.sql", "0015_me_history_reason.sql", "0016_guard_unavailable_reason.sql", "0017_ai_reason.sql", "0018_collected_items.sql", "0019_guard_ai_immutable.sql", "0020_cal_sync.sql", "0021_timetable.sql"]
   .map((f) => readFileSync(join(here, "../migrations/" + f), "utf8")).join("\n");
 const env: Env = { DB: makeD1(schema) };
 const raw = rawOf(env.DB);
@@ -2225,6 +2225,105 @@ const calMineRow = raw.prepare("SELECT id, ext_src FROM events WHERE id=?").get(
 ok("⑦ ★ ext_src IS NULL 인 일정은 창 안이어도 안 지워진다 (동기화가 사용자의 것을 안 건드린다)",
   !!calMineRow && calMineRow.ext_src === null,
   `행=${JSON.stringify(calMineRow)}`);
+
+// ── 시간표 (T-58 · ADR-045) — 규칙을 저장하고 날짜는 전개한다 ──
+console.log("\n[T-58] 시간표 — 규칙만 저장 · 전개는 조회 시");
+
+// ⚠️ **고정 날짜를 쓰지 않는다**(함정 12). 학기 범위도 오늘에서 상대로 잡는다 —
+//    박아 두면 언젠가 반드시 현재가 되고, 그날 이 검사 전부가 뜻 없이 빨간불이 된다.
+const ttTermStart = addDays(D, -60), ttTermEnd = addDays(D, 60);
+const ttText = [
+  "월요일 10시-13시 전자기및연습1, 14시-16시 역학및연습2",
+  "화요일 공강",
+  "수요일 10시-13시 양자물리및연습2, 14시-17시 수리물리1",
+  "목요일 10시-12시 전자기및연습1, 14시-17시 역학및연습2",
+  "금요일 10시-12시 양자물리및연습2, 14시-17시 인간과인공지능",
+].join("\n");
+
+const mins = (t: string) => Number(t.slice(0, 2)) * 60 + Number(t.slice(3));
+const ttLen = (rs: any[], w: number) => {
+  const r = rs.find((x) => x.subject === "전자기및연습1" && x.weekday === w);
+  return r ? mins(r.end_time) - mins(r.start_time) : null;
+};
+
+const ttParsed = await api("POST", "/api/timetable/parse", { text: ttText });
+const ttSubjects = new Set((ttParsed.json?.rules ?? []).map((r: any) => r.subject));
+ok("1 붙여넣은 텍스트가 규칙으로 파싱된다 (8칸 · 5과목 · 화요일 0 · 길이 보존)",
+  ttParsed.status === 200 && ttParsed.json.rules.length === 8 && ttSubjects.size === 5
+  && ttParsed.json.rules.filter((r: any) => r.weekday === 2).length === 0
+  && ttParsed.json.unread.length === 0
+  && ttLen(ttParsed.json.rules, 1) === 180 && ttLen(ttParsed.json.rules, 4) === 120,
+  `${ttParsed.status} 칸=${ttParsed.json?.rules?.length} 과목=${ttSubjects.size}`
+  + ` 화=${ttParsed.json?.rules?.filter((r: any) => r.weekday === 2).length}`
+  + ` 월=${ttLen(ttParsed.json?.rules ?? [], 1)} 목=${ttLen(ttParsed.json?.rules ?? [], 4)}`
+  + ` 못읽음=${JSON.stringify(ttParsed.json?.unread)}`);
+
+/* ⚠️ 아래 검사들은 **파서 출력을 쓰지 않는다.** 저장으로 오는 것은 파서가 아니라
+ *   *확인 화면이 고친 값*이고(ADR-045 ③), 그렇게 떼어 놔야 파서를 겨냥한 변이가
+ *   저장·전개 검사까지 함께 죽이지 않는다 — T-56·T-57에서 겪은 그 자리다. */
+const ttWant = [
+  { subject: "전자기및연습1", weekday: 1, start_time: "10:00", end_time: "13:00" },
+  { subject: "역학및연습2", weekday: 1, start_time: "14:00", end_time: "16:00" },
+  { subject: "양자물리및연습2", weekday: 3, start_time: "10:00", end_time: "13:00" },
+  { subject: "수리물리1", weekday: 3, start_time: "14:00", end_time: "17:00" },
+  { subject: "전자기및연습1", weekday: 4, start_time: "10:00", end_time: "12:00" },
+  { subject: "역학및연습2", weekday: 4, start_time: "14:00", end_time: "17:00" },
+  { subject: "양자물리및연습2", weekday: 5, start_time: "10:00", end_time: "12:00" },
+  { subject: "인간과인공지능", weekday: 5, start_time: "14:00", end_time: "17:00" },
+];
+const ttSaved = await api("PUT", "/api/timetable",
+  { rules: ttWant, term_start: ttTermStart, term_end: ttTermEnd });
+
+/* 4 ★ **없는 것을 세는 검사** — 규칙만 남고 인스턴스는 어디에도 안 생겼는가.
+ *   창을 넓게 열어 전개시킨 **뒤에** 센다: 전개가 행을 만들면 여기서 늘어난다. */
+const ttEventsBefore = (raw.prepare("SELECT COUNT(*) AS n FROM events").get() as any).n;
+const ttWide = await api("GET", `/api/calendar?start=${addDays(D, -28)}&end=${addDays(D, 28)}`);
+const ttRuleRows = (raw.prepare("SELECT COUNT(*) AS n FROM timetable_rules").get() as any).n;
+const ttEventsAfter = (raw.prepare("SELECT COUNT(*) AS n FROM events").get() as any).n;
+// ⚠️ **여기서 "전개가 일어났는가"를 같이 세지 않는다** — 그건 5의 몫이다. 겹쳐 세면
+//    전개를 없앤 변이가 4까지 죽여 **4가 자기 몫(행이 안 생겼는가)을 못 센다.**
+//    4만 보면 *"아무것도 전개 안 하는 구현"*이 통과하는 것은 맞고, 그래서 5가 짝으로 선다.
+ok("4 ★ 규칙만 저장된다 — 전개해도 인스턴스 행이 안 생긴다 (없는 것을 세는 검사)",
+  ttSaved.status === 200 && ttRuleRows === 8 && ttEventsAfter === ttEventsBefore,
+  `규칙행=${ttRuleRows} events=${ttEventsBefore}→${ttEventsAfter} 전개=${ttWide.json?.classes?.length}`);
+
+/* 5 ★ 4의 짝 — **전개가 실제로 일어나는가.** 4만 보면 *"아무것도 전개 안 하는 구현"*이 통과한다.
+ *   한 주(월~일) 창에는 정확히 8칸이 있어야 하고, **각 인스턴스의 시각이 자기 규칙과 같아야** 한다. */
+const ttMon = mondayOf(D);
+const ttWeek = await api("GET", `/api/calendar?start=${ttMon}&end=${addDays(ttMon, 6)}`);
+const ttRules = (await api("GET", "/api/timetable")).json.rules as any[];
+const ttTimesMatch = (ttWeek.json?.classes ?? []).every((c: any) => {
+  const r = ttRules.find((x) => x.id === c.rule_id);
+  return !!r && r.start_time === c.start_time && r.end_time === c.end_time;
+});
+ok("5 ★ 규칙이 창 범위만큼 전개된다 — 한 주 8칸 · 시각이 규칙 그대로 (4의 짝)",
+  ttWeek.status === 200 && ttWeek.json.classes.length === 8 && ttTimesMatch,
+  `한주=${ttWeek.json?.classes?.length} 시각일치=${ttTimesMatch}`);
+
+/* 6 ★ **이 티켓이 존재하는 이유.** 포털 그리드는 시작 칸만 그려 길이를 말하지 않는데,
+ *   같은 과목이 요일마다 길이가 다르다. 같은 길이로 뭉개는 구현이 통과하면
+ *   **시간표가 틀린 채 학기를 가고** Guard가 그 값으로 보호 일정을 건다. */
+// ⚠️ **전개된 인스턴스로 세지 않는다** — 전개를 없앤 변이가 6까지 죽인다.
+//    전개가 규칙의 시각을 그대로 싣는지는 **5의 `시각일치`가** 이미 센다. 여기는 저장된 규칙만 본다.
+ok("6 같은 과목이 요일마다 다른 길이를 갖는다 (월 3시간 · 목 2시간)",
+  ttLen(ttRules, 1) === 180 && ttLen(ttRules, 4) === 120,
+  `규칙 월=${ttLen(ttRules, 1)} 목=${ttLen(ttRules, 4)}`);
+
+// 7 학기 밖 — 방학에 수업이 뜨면 그 화면 전체가 못 믿을 것이 된다.
+const ttOut = await api("GET", `/api/calendar?start=${addDays(ttTermEnd, 7)}&end=${addDays(ttTermEnd, 13)}`);
+ok("7 학기 범위 밖 날짜에는 안 뜬다",
+  ttOut.status === 200 && ttOut.json.classes.length === 0,
+  `밖=${ttOut.json?.classes?.length}`);
+
+/* 8 ★ **학기 범위가 입력에서 온다.** 코드에 박으면 다음 학기에 조용히 틀린 날짜로 전개된다.
+ *   행동(범위 없이 보내면 거절)과 원문(서비스에 날짜 리터럴이 없다)을 **함께** 센다 —
+ *   앞만 보면 기본값을 두고 검증만 남긴 구현이 통과한다. */
+const ttNoTerm = await api("PUT", "/api/timetable", { rules: ttWant });
+const ttSrc = readFileSync(join(here, "../src/services/timetable.ts"), "utf8");
+const ttDateLiteral = /["'`]\d{4}-\d{2}-\d{2}["'`]|["'`]\d{2}-\d{2}["'`]/.test(ttSrc);
+ok("8 ★ 학기 범위가 입력에서 온다 — 거절하고, 코드에 날짜가 없다 (스캐너)",
+  ttNoTerm.status === 400 && !ttDateLiteral,
+  `범위없음=${ttNoTerm.status} 날짜리터럴=${ttDateLiteral}`);
 
 // ── 결과 ─────────────────────────────────────────────────────
 console.log(`\n${"=".repeat(46)}\n통과 ${passN} · 실패 ${fails.length}`);

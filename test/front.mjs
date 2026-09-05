@@ -587,7 +587,9 @@ const rows = [...$("#set-list").querySelectorAll(".srow")].map((r) => r.textCont
 // ⚠️ **검사를 고쳤다** — T-43이 설정 맨 아래에 수집 상태 한 줄을 더한다(11 → 12).
 //    이 검사는 "행이 조용히 늘거나 줄지 않는다"를 세는 것이므로, 늘린 티켓이 숫자를 옮긴다.
 // ⚠️ **검사를 또 고쳤다** — T-53이 폰 캘린더 줄을 하나 더한다(12 → 13). 같은 이유다.
-ok("설정 13행 (AI 연결 통합 + 상태 두 줄)", rows.length === 13, String(rows.length));
+// ⚠️ **또 고쳤다** — T-58이 시간표 줄을 하나 더한다(13 → 14). 세는 것은 여전히
+//    *"행이 조용히 늘거나 줄지 않는다"*이므로, 늘린 티켓이 숫자를 옮기는 것이 이 검사의 규칙이다.
+ok("설정 14행 (AI 연결 통합 + 시간표 + 상태 두 줄)", rows.length === 14, String(rows.length));
 // ⚠️ **"맨 아래가 수집 상태"에서 옮겼다.** 이 검사가 지키던 것은 *"그 줄이 사라지지 않는다"*이고,
 //    이제 같은 자리에 줄이 둘이라 **둘 다** 봐야 그 뜻이 남는다. 순서까지 고정하는 이유는
 //    **둘이 서로 다른 것**이기 때문이다: 학사 캘린더는 서버가 iCal을 긁는 것(T-41)이고,
@@ -3194,6 +3196,70 @@ ok("6 ★ 응답이 안 와도 Guard 예약은 돈다 — 부팅이 인질이 �
   && t57ShellFail.ran && t57ShellCut.errs.length === 0,
   `안옴=${t57ShellCut.heard.join("|")}(${t57ShellCut.ran})`
   + ` 실패=${t57ShellFail.heard.join("|")}(${t57ShellFail.ran}) 오류=${t57ShellCut.errs.join("/")}`);
+
+// ── T-58 · 시간표 — 한 번 붙여넣으면 학기가 채워진다 ──────────────
+//
+// 서버 쪽(파싱 수·전개·요일별 길이·학기 범위)은 `smoke.ts`가 센다. **여기가 지는 것은
+// 화면이다**: 못 읽은 줄이 보이는가 · 표에서 고친 값이 저장되는가 · Today 에 수업이 뜨는가.
+console.log("\n[T-58 · 시간표]");
+
+// ⚠️ 고정 날짜를 쓰지 않는다(함정 12) — 학기 범위도 오늘에서 상대로 잡는다.
+const t58Start = ev(`addDaysStr(S.today.date, -60)`);
+const t58End = ev(`addDaysStr(S.today.date, 60)`);
+const t58Cell = (i, cls) => w.document.querySelector(`#tt-rows [data-tt="${i}"] .${cls}`);
+
+await w.openTimetable();
+$("#tt-text").value = [
+  "월요일 10시-13시 전자기및연습1, 14시-16시 역학및연습2",
+  "화요일 공강",
+  "목요일 10시-12시 전자기및연습1",
+  "이건 무슨 줄이지",                       // ← 파서가 못 읽는 줄
+].join("\n");
+// ⚠️ **핸들러가 주는 프라미스를 그대로 기다린다**(함정 14) — 시계로 끝을 재지 않는다.
+await $("#tt-read").onclick();
+const t58Un = {
+  보임: $("#tt-unread").style.display !== "none",
+  글: $("#tt-unread").textContent,
+  칸: w.document.querySelectorAll("#tt-rows [data-tt]").length,
+};
+ok("2 ★ 못 읽은 줄이 사용자에게 보인다 — 조용히 버리지 않는다",
+  t58Un.보임 && t58Un.글.includes("이건 무슨 줄이지") && t58Un.칸 === 3,
+  `보임=${t58Un.보임} 칸=${t58Un.칸} 글=${t58Un.글.slice(0, 60)}`);
+
+/* 3 ★ 2의 짝 — **확인 화면이 장식이 아니다.** 표에서 고친 값이 그대로 저장돼야
+ *   *"형식이 다음 학기에 바뀌어도 손으로 고친다"*가 성립한다. */
+// ⚠️ **칸이 없으면 러너가 아니라 이 검사가 죽어야 한다.** 앞이 아무것도 못 읽은 변이에서
+//    `null.value =`로 러너가 통째로 넘어가면 **요약 줄을 잃고**, 배터리가 그것을
+//    *"아무도 안 죽었다"*로 읽는다 — T-55·T-56이 그 칸에서 두 번 물렸다.
+// ⚠️ **시각이 아니라 과목을 고친다.** 시각까지 세면 *"시각을 다시 쓰는"* 변이(요일별 길이 통일)가
+//    3의 몫을 가져가 3이 자기 것을 못 센다. 3이 지는 것은 **확인 화면의 수정이 저장으로 간다**
+//    하나이고, 시각을 지키는 것은 smoke 6의 몫이다.
+const t58N = t58Cell(0, "tt-n");
+if (t58N) t58N.value = "고친과목";
+$("#tt-start").value = t58Start;
+$("#tt-end").value = t58End;
+await $("#tt-save").onclick();
+const t58Saved = await ev(`Api.timetable()`);
+const t58Fixed = (t58Saved.rules || []).find((r) => r.subject === "고친과목");
+ok("3 ★ 확인 화면에서 고친 값이 저장된다 (2의 짝)",
+  !!t58Fixed && (t58Saved.rules || []).length === 3
+  && t58Saved.term && t58Saved.term.start === t58Start,
+  `${JSON.stringify(t58Fixed)} 칸=${t58Saved.rules?.length} 학기=${JSON.stringify(t58Saved.term)}`);
+
+/* ★ **이 프로젝트가 8/19 이래 겨눠 온 것** — 아무것도 안 넣어도 볼 것이 있다.
+ *   ⚠️ 요일에 기대지 않으려고 이레 전부를 채운다. *"오늘이 평일이면"* 으로 두면
+ *   토·일에 도는 검사가 조용히 아무것도 안 본다(함정 12와 같은 종류의 시계 의존이다). */
+await w.openTimetable();
+$("#tt-text").value = ["월", "화", "수", "목", "금", "토", "일"]
+  .map((d) => `${d}요일 09시-10시 매일수업`).join("\n");
+await $("#tt-read").onclick();
+$("#tt-start").value = t58Start;
+$("#tt-end").value = t58End;
+await $("#tt-save").onclick();
+const t58Td = { disp: $("#td-classes").style.display, 글: $("#td-classes").textContent };
+ok("★ 오늘이 어떤 요일이든 Today 에 수업이 뜬다 (T-52~55가 못 닿은 그 목적)",
+  t58Td.disp !== "none" && t58Td.글.includes("매일수업") && t58Td.글.includes("09:00"),
+  `disp=${t58Td.disp} 글=${t58Td.글.slice(0, 60)}`);
 
 console.log("\n[부팅 · 연결 실패 복구]");
 ok("로드 후 부팅 오버레이 닫힘", !$("#boot").classList.contains("on"));

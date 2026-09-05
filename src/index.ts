@@ -14,6 +14,7 @@ import * as me from "./services/me";
 import * as analysis from "./services/analysis";
 import * as collected from "./services/collected";
 import * as events from "./services/events";
+import * as timetable from "./services/timetable";
 import * as calsync from "./services/calsync";
 import { PROVIDERS, aiConfig, testConnection } from "./lib/ai";
 import * as guard from "./services/guard";
@@ -190,6 +191,15 @@ app.put("/api/settings/:key", async (c) => {
   const b = await body<{ value: string }>(c);
   return c.json(await me.putSetting(c.env, c.req.param("key"), b.value));
 });
+
+// ── 시간표 (T-58 · ADR-045) — 규칙만 저장하고 날짜는 조회 시 전개한다 ──
+// `parse`는 **순수하다** — 저장하지 않는다. 확인 화면이 그 결과를 고쳐서 `PUT`으로 보낸다.
+// ⚠️ 그래서 `parse`와 `PUT`이 갈라져 있다. 한 문으로 합치면 확인할 자리가 사라진다.
+app.get("/api/timetable", async (c) => c.json(await timetable.list(c.env)));
+app.post("/api/timetable/parse", async (c) =>
+  c.json(timetable.parseText((await body<{ text?: unknown }>(c)).text)));
+app.put("/api/timetable", async (c) =>
+  c.json(await timetable.replace(c.env, c.get("t"), await body(c))));
 
 // ── 일정(event) — 캘린더 전용 ───────────────────────────────
 app.post("/api/events", async (c) => c.json(await events.create(c.env, c.get("t"), await body(c))));

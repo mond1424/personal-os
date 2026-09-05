@@ -124,6 +124,10 @@ const Api = {
   providers: () => _req("GET", "/ai/providers"),
   connections: () => _req("GET", "/ai/connections"),
   aiTest: (which) => _req("POST", "/ai/test", { which }),
+  // 시간표 (T-58) — parse는 **저장하지 않는다.** 확인 화면이 그 사이에 선다
+  timetable: () => _req("GET", "/timetable"),
+  timetableParse: (text) => _req("POST", "/timetable/parse", { text }),
+  timetableSave: (rules, term_start, term_end) => _req("PUT", "/timetable", { rules, term_start, term_end }),
   createEvent: (b) => _req("POST", "/events", b),
   updateEvent: (id, b) => _req("PATCH", "/events/" + id, b),
   deleteEvent: (id) => _req("DELETE", "/events/" + id),

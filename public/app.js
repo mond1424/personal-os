@@ -464,6 +464,15 @@ function renderToday() {
     `<span class="chip"><i class="dot" style="background:${p.color}"></i>${esc(p.title)}` +
     (p.d_end === 0 ? " · 마지막 날" : "") + `</span>`).join("");
 
+  // 오늘의 수업 (T-58) — **일정과 같은 칸에 담지 않는다.** 저쪽은 고칠 수 있는 원본이고
+  // 이것은 규칙에서 전개한 파생이라, 한 배열에 섞으면 화면이 파생에 ×를 붙인다(T-55가 배운 모양).
+  const clsToday = T.classes || [];
+  const clsBox = $("#td-classes");
+  if (clsBox) {
+    clsBox.style.display = clsToday.length ? "" : "none";
+    if (clsToday.length) clsBox.innerHTML = classesHtml(clsToday);
+  }
+
   // 오늘의 일정 — 할 일 위에, 사건으로 따로
   const evsToday = T.events || [];
   const evBox = $("#td-events");
@@ -930,6 +939,105 @@ async function openCalSheet() {
   openSheet("sh-cal");
 }
 
+/* ── 시간표 (T-58 · ADR-045) ────────────────────────────────
+ *
+ * **규칙을 저장하고 날짜는 서버가 조회할 때 전개한다.** 화면은 전개된 것을 받아 그리기만 한다 —
+ * 여기서 요일을 다시 계산하면 서버와 두 벌이 되고, 두 벌은 반드시 갈라진다.
+ *
+ * ⚠️ **읽은 결과를 바로 저장하지 않는다.** 형식은 다음 학기에 사용자가 다르게 쓸 수 있고,
+ *    그때 조용히 어긋나면 이 기능이 무의미해진다. `읽기` → **확인 표** → `저장` 세 걸음이 전부다.
+ */
+const WEEK_KO = ["월", "화", "수", "목", "금", "토", "일"];
+
+/** 수업 목록 — 일정과 **다른 칸**에 그린다. 고칠 수 없는 파생이라 ×도 제목 버튼도 없다. */
+function classesHtml(list) {
+  return `<div class="sec-h"><span class="sec-t">수업</span><span class="cnt">${list.length} · 시간표에서 관리</span></div>
+    <div class="card" style="padding:4px 14px">` + list.map((c) =>
+      `<div class="evrow"><span class="et mono">${esc(c.start_time)}–${esc(c.end_time)}</span>` +
+      `<span class="en">${esc(c.subject)}</span><span class="cap ev-cal-badge">시간표</span></div>`).join("") + `</div>`;
+}
+
+/** 확인 표가 들고 있는 규칙 — **저장 전까지 서버에 없다.** */
+let ttDraft = [];
+
+/** 표에 손댄 값을 걷는다 — **화면이 원본이다.** 안 걷으면 고친 값이 저장에서 사라진다. */
+function ttCollect() {
+  ttDraft = [...$$("#tt-rows [data-tt]")].map((el) => ({
+    weekday: Number(el.querySelector(".tt-w").value),
+    start_time: el.querySelector(".tt-s").value.trim(),
+    end_time: el.querySelector(".tt-e").value.trim(),
+    subject: el.querySelector(".tt-n").value.trim(),
+  }));
+  return ttDraft;
+}
+function ttDrop(i) { ttCollect(); ttDraft.splice(i, 1); ttRenderRows(); }
+
+function ttRenderRows() {
+  $("#tt-rows").innerHTML = ttDraft.map((r, i) => `
+    <div class="evrow" data-tt="${i}">
+      <select class="tt-w">${WEEK_KO.map((w, k) =>
+        `<option value="${k + 1}"${r.weekday === k + 1 ? " selected" : ""}>${w}</option>`).join("")}</select>
+      <input class="tt-s mono" value="${esc(r.start_time)}" inputmode="numeric">
+      <input class="tt-e mono" value="${esc(r.end_time)}" inputmode="numeric">
+      <input class="tt-n" value="${esc(r.subject)}">
+      <button class="ex" onclick="ttDrop(${i})">×</button>
+    </div>`).join("") || `<div class="evrow"><span class="cap">읽은 수업이 없어요</span></div>`;
+  const subjects = new Set(ttDraft.map((r) => r.subject));
+  $("#tt-count").textContent = `수업 ${ttDraft.length}칸 · 과목 ${subjects.size}개`;
+  for (const id of ["#tt-count", "#tt-term", "#tt-actions"]) $(id).style.display = "";
+}
+
+/** ★ **못 읽은 줄을 조용히 버리지 않는다.** 원문을 그대로 보이면 사용자가 표에서 손으로 고친다
+ *  (T-54·T-55가 두 번 배운 자리 — 반만 든 시간표가 학기를 가는 것이 가장 나쁘다). */
+function ttRenderUnread(unread) {
+  const box = $("#tt-unread");
+  box.style.display = unread.length ? "" : "none";
+  if (!unread.length) return;
+  box.innerHTML = `<div class="card" style="padding:8px 14px">
+    <div class="cap" style="color:var(--brick)">못 읽은 줄 ${unread.length}개 — 아래 표에서 직접 넣어 주세요</div>`
+    + unread.map((u) =>
+      `<div class="evrow"><span class="et mono">${u.line}</span>` +
+      `<span class="en">${esc(u.text)}</span><span class="cap">${esc(u.reason)}</span></div>`).join("") + `</div>`;
+}
+
+async function openTimetable() {
+  const cur = await Api.timetable();
+  ttDraft = (cur.rules || []).map((r) =>
+    ({ weekday: r.weekday, start_time: r.start_time, end_time: r.end_time, subject: r.subject }));
+  $("#tt-text").value = "";
+  ttRenderUnread([]);
+  if (ttDraft.length) ttRenderRows();
+  else {
+    $("#tt-rows").innerHTML = "";
+    for (const id of ["#tt-count", "#tt-term", "#tt-actions"]) $(id).style.display = "none";
+  }
+  $("#tt-start").value = cur.term ? cur.term.start : "";
+  $("#tt-end").value = cur.term ? cur.term.end : "";
+  openSheet("sh-tt");
+}
+
+async function ttRead() {
+  const r = await Api.timetableParse($("#tt-text").value);
+  ttDraft = r.rules || [];
+  ttRenderUnread(r.unread || []);
+  ttRenderRows();
+  // 학기를 텍스트에 같이 적었으면 그것을 쓴다 — 안 적었으면 사용자가 아래에서 고른다.
+  if (r.term) { $("#tt-start").value = r.term.start; $("#tt-end").value = r.term.end; }
+}
+
+async function ttSave() {
+  ttCollect();
+  const s = $("#tt-start").value, e = $("#tt-end").value;
+  // ⚠️ 학기 범위에 기본값을 두지 않는다 — 매 학기 바뀌고, 박아 두면 다음 학기에 조용히 틀린다.
+  if (!s || !e) { toast("학기 시작일과 종료일을 골라 주세요", "warn"); return; }
+  const saved = await Api.timetableSave(ttDraft, s, e);
+  closeSheet("sh-tt");
+  invalidateCalendarCache();
+  await refreshToday();
+  toast(`시간표를 저장했어요 — ${(saved.rules || []).length}칸`, "ok");
+  return saved;
+}
+
 /* 세 번 밀린 일의 출구 (T-35 · ADR-036) ─────────────────────
  *
  * **알림이 목적이 아니라 출구가 목적이다.** *"이거 세 번 미뤘어요"*만 말하면 잔소리이고,
@@ -1293,6 +1401,9 @@ async function openDay(k) {
     // 막히므로 시트에서 경고한다. 삭제(×)는 '마감 안 된 날'에만 보인다(마감된 날은 트리거가 막는다).
     const evs = day.events || [];
     const closed = !!(day.daily && day.daily.status === "closed");
+    // 수업 — 규칙에서 전개한 파생이라 일정보다 먼저, **다른 칸**에 그린다 (T-58)
+    const cls = day.classes || [];
+    if (cls.length) h += `<div style="margin-top:16px">` + classesHtml(cls) + `</div>`;
     h += `<div class="sec-h" style="margin-top:16px"><span class="sec-t">일정</span><span class="cnt">${evs.length}</span></div>`;
     h += `<div class="card" style="padding:4px 14px">` + (evs.map((e) => {
       evxItems.set(e.id, e);
@@ -2591,6 +2702,8 @@ async function renderMe() {
       Api.collectedStatus().catch(() => null),
     ]);
   S.collectStatus = collectSt;
+  // 시간표 (T-58) — 옛 배포에는 이 라우트가 없다. Me 탭을 인질로 잡지 않는다(위와 같은 이유).
+  S.tt = await Api.timetable().catch(() => null);
   // 폰 캘린더는 **서버가 아니라 기기가** 안다 — `Promise.all`에 못 얹는다(응답이 아니라 다리다).
   // 네이티브가 없으면 null이고, 그 자체가 화면에서 '앱에서만 돼요'로 읽힌다.
   S.calStatus = await calNativeStatus();
@@ -2636,6 +2749,7 @@ async function renderMe() {
     ["하루 경계 시각", `${S.settings.day_boundary || "05:00"} ›`, "day_boundary"],
     ["Feelings 필드 구성", `${ff} ›`, "feelings_fields"],
     ["테마", `${theme} ›`, "theme"],
+    ["시간표 — 붙여넣기", `${S.tt && S.tt.rules.length ? S.tt.rules.length + "칸" : "없음"} ›`, "timetable"],
     ["튜토리얼 다시 보기", "5단계 ›", "tutorial"],
     ["AI 연결 — 제공자·키", `${connSummary()} ›`, "ai"],
     ["앱 접근 토큰", `${tok ? "설정됨 ›" : "없음 ›"}`, "api_token"],
@@ -2646,6 +2760,7 @@ async function renderMe() {
     ["Guard 규칙 · 이력", `규칙 0 · 이벤트 ${guard.length}`, ""],
   ];
   const act = (key) => key === "tutorial" ? 'onclick="showTutorial(0)"'
+    : key === "timetable" ? 'onclick="openTimetable()"'
     : key === "ai" ? 'onclick="openAi()"'
     : key ? `onclick="openSetting('${key}')"` : 'style="opacity:.5"';
   $("#set-list").innerHTML = rows.map(([k, v, key]) =>
@@ -3787,6 +3902,9 @@ async function boot() {
   $("#cal-next").onclick = () => calGo(1);
   $("#btn-add-period").onclick = () => openPeriod(null);
   $("#btn-run-anal").onclick = runAnalysis;
+  // ⚠️ **핸들러가 프라미스를 돌려준다** — 검사가 `await el.onclick()`으로 끝을 계약으로 안다(함정 14).
+  $("#tt-read").onclick = () => run(ttRead);
+  $("#tt-save").onclick = () => run(ttSave);
   $("#feel-classify").onclick = () => run(async () => {
     const r = await Api.classifyFeelings();
     toast(`분류 완료 — ${Object.entries(r.values).map(([k, v]) => k + " " + v).join(" · ")}`);

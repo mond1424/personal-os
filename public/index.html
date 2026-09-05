@@ -56,6 +56,8 @@
       <button class="go" id="td-cal-act"></button>
     </span>
   </div>
+  <!-- 수업 — 시간표 규칙에서 전개한 파생. 일정(#td-events)과 **다른 칸이다** (T-58) -->
+  <div class="sec" id="td-classes" style="display:none"></div>
   <div class="sec" id="td-events" style="display:none"></div>
 
   <div class="sec">
@@ -457,6 +459,23 @@
     <button class="btn ghost" id="st-unlock" style="width:auto;padding:10px 14px;display:none;flex:none">변경</button>
   </div>
   <div class="actrow"><button class="btn" style="flex:1" id="st-save">저장</button></div>
+</div>
+
+<!-- 시간표 붙여넣기 (T-58 · ADR-045) — 읽은 것을 보이고, 고치게 하고, 그 다음에 저장한다 -->
+<div class="sheet" id="sh-tt">
+  <div class="grip"></div>
+  <div class="sh-t">시간표</div>
+  <p class="cap" style="margin-top:4px">요일마다 한 줄 — <span class="mono">월요일 10시-13시 과목, 14시-16시 과목</span></p>
+  <textarea rows="6" id="tt-text" style="margin-top:10px" placeholder="월요일 10시-13시 전자기및연습1, 14시-16시 역학및연습2&#10;화요일 공강"></textarea>
+  <div class="actrow"><button class="btn ghost" style="flex:1" id="tt-read">읽기</button></div>
+  <!-- 못 읽은 줄 — **조용히 버리지 않는다** (T-54·T-55가 두 번 배운 자리) -->
+  <div id="tt-unread" style="display:none;margin-top:10px"></div>
+  <p class="cap" id="tt-count" style="margin-top:10px;display:none"></p>
+  <div id="tt-rows" style="margin-top:6px"></div>
+  <div class="tokrow" id="tt-term" style="display:none">
+    <input type="date" id="tt-start" name="tt-start"><input type="date" id="tt-end" name="tt-end">
+  </div>
+  <div class="actrow" id="tt-actions" style="display:none"><button class="btn" style="flex:1" id="tt-save">저장</button></div>
 </div>
 
 <!-- Log 수정 -->
