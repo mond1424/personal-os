@@ -447,6 +447,7 @@ async function refreshToday() {
   loadGuardNag();    // 밤 개입이 연속으로 그냥 지나갔는가 (T-60 ③)
   loadCollected();
   loadCalStatus();   // 폰 캘린더가 조용히 죽어 있지 않은가 (T-53 ②)
+  loadPlaceStatus(); // 장소 관측이 조용히 멈춰 있지 않은가 (T-59 · ADR-046 ⑤)
   if (!S.staleShown && S.today.overdue.length) { S.staleShown = true; showStale(S.today.overdue[0]); }
   maybeCarryPrompt();   // 세 번 밀린 일의 출구 (T-35). 조건을 넘는 게 없으면 아무 일도 없다.
 }
@@ -984,6 +985,214 @@ async function openCalSheet() {
     if ($("#me-set").style.display === "") renderMe();   // 설정 줄도 따라온다
   });
   openSheet("sh-cal");
+}
+
+/* ── 장소 (T-59 · ADR-046) ─────────────────────────────────
+ *
+ * **어디 있었는지는 WiFi가 말한다.** 사용자가 붙인 이름이 있는 네트워크만 판정하고,
+ * 모르는 곳에서는 **아무것도 안 남긴다** — 추측이 틀리는 날은 하필 평소와 다른 날이다.
+ *
+ * ★ 여기도 `calStatusLine`이 세운 규칙 그대로다 — **네이티브는 사실만 주고 문구는 웹이 정한다.**
+ *   다른 것 하나: 사실의 출처가 둘이다. 권한·스위치는 기기가, **등록된 곳의 수는 서버가** 안다.
+ *   기기에도 두면 두 벌이 되고, 갈라진 쪽이 조용해진다.
+ */
+const PLACE_ACT = {
+  noperm: "허용하기", nolocation: "위치 켜기", noplace: "이름 붙이기",
+  nobg: "항상 허용", stale: "지금 확인", error: "다시 시도",
+};
+
+/** 이만큼 관측이 없으면 *"돌던 것이 멈췄다"* 로 본다. 배경 권한이 있으면 붙을 때마다 온다. */
+const PLACE_STALE_MS = 36 * 3600_000;
+
+/**
+ * 순수 함수 — 사실에서 상태와 문구를 정한다. **다섯이 각자의 문구를 갖는다**(ADR-046 ⑤).
+ *
+ * ⚠️ 순서가 곧 *"먼저 할 일"* 이다. 권한·스위치가 없으면 아무것도 못 읽고, 읽어도 등록된
+ *    곳이 없으면 판정할 것이 없다. **배경 권한은 그 뒤다 — 없어도 반쪽으로 돌기 때문이다**(⑥).
+ */
+function placeStatusLine(st) {
+  if (!st) return { state: "off", text: "" };
+  if (st.unreadable) return { state: "error", text: "장소 상태를 못 읽었어요" };
+  if (!st.permission) return { state: "noperm", text: "어디 있었는지 못 읽어요 — 위치 권한이 꺼져 있어요" };
+  // ★ 권한과 **다른 축이다**(진단 ④). 사용자가 갈 곳도 다르다 — 앱 설정이 아니라 시스템 토글.
+  if (!st.locationEnabled) return { state: "nolocation", text: "위치 서비스가 꺼져 있어요 — 권한이 있어도 못 읽어요" };
+  if (!st.places) return { state: "noplace", text: "이름 붙인 네트워크가 없어요 — 지금 붙은 WiFi에 이름을 붙여요" };
+  // ★ **실패가 아니라 반쪽이다.** 기능을 끄지 않고 그 사실만 말한다(ADR-046 ⑥).
+  if (!st.backgroundPermission) return { state: "nobg", text: "앱을 열 때만 확인해요 — '항상 허용'이면 그때그때 남아요" };
+  const seen = st.lastSeenAt ? Date.parse(st.lastSeenAt) : NaN;
+  if (!Number.isFinite(seen)) return { state: "stale", text: "아직 한 번도 확인하지 못했어요" };
+  if (Date.now() - seen > PLACE_STALE_MS)
+    return { state: "stale", text: `장소 확인이 멈춘 것 같아요 — 마지막이 ${collectAgo(st.lastSeenAt)}` };
+  return { state: "ok", text: "" };
+}
+
+/* 방금 한 행동의 결과 — **상태가 아니다**(T-54가 가른 자리).
+ *
+ * ★ `unknown_network`가 여기 있는 것이 ADR-046 ②의 실물이다. 모르는 곳에서 아무것도 안
+ *   남기는 것은 맞지만, **그 사실을 말하지 않으면 "안 남았다"와 "고장 났다"가 같아 보인다.** */
+function placeResultLine(r) {
+  if (!r) return { kind: "", text: "" };
+  if (r.outcome === "ok") {
+    const name = r.place || "그곳";
+    if (r.reason === "recorded") return { kind: "ok", text: `${name}에 온 것을 남겼어요` };
+    if (r.reason === "same_place") return { kind: "ok", text: `그대로 ${name}이에요 — 새로 남길 건 없어요` };
+    if (r.reason === "unknown_network")
+      return { kind: "warn", text: "이름 붙이지 않은 네트워크예요 — 아무것도 남기지 않았어요" };
+    return { kind: "warn", text: `서버가 모르는 답을 줬어요 — ${r.reason || "사유 없음"}` };
+  }
+  if (r.outcome === "skipped") {
+    return {
+      kind: "warn",
+      text: {
+        no_permission: "위치 권한이 없어서 못 읽었어요",
+        location_off: "위치 서비스가 꺼져 있어서 못 읽었어요",
+        no_wifi: "지금 WiFi에 붙어 있지 않아요",
+      }[r.reason] || `읽지 않았어요 — ${r.reason || "사유 없음"}`,
+    };
+  }
+  // 사유를 문장으로 뭉개지 않는다(T-43과 같은 이유) — 다음에 다른 사유가 와도 같은 문장이 된다.
+  return { kind: "err", text: `장소를 못 보냈어요 — ${r.reason || "사유를 못 읽었어요"}` };
+}
+
+/** 결과를 시트 안 한 줄에 놓는다. **토스트는 사본이다** — 사라지므로 판정의 근거로 쓰지 않는다. */
+function showPlaceResult(v) {
+  const el = $("#place-result");
+  if (el) { el.dataset.kind = v.kind; el.textContent = v.text; }
+  if (v.text) toast(v.text, v.kind === "ok" ? "ok" : v.kind === "err" ? "err" : "warn");
+  return v;
+}
+
+async function placeNativeStatus() {
+  const P = globalThis.Capacitor?.Plugins?.Place;
+  if (!P?.status) return null;                       // 브라우저·구버전 APK — 폴백
+  try { return await P.status(); } catch { return { unreadable: true }; }
+}
+
+/**
+ * Today 한 줄. **정상일 때는 안 뜬다** — 뜨는 것은 할 일이 있을 때뿐이다.
+ *
+ * ★ **배경 권한이 없을 때만 여기서 한 번 줍는다**(ADR-046 ⑥). 그 모양에서는 앱을 여는
+ *   지금이 *"그 사이 바뀐 것"* 을 잡는 유일한 기회다. 있으면 콜백이 이미 잡고 있으므로
+ *   왕복을 더하지 않는다 — 늘 부르면 앱을 열 때마다 쓸데없는 관측이 하나씩 붙는다.
+ */
+async function loadPlaceStatus() {
+  const bar = $("#td-place");
+  if (!bar) return null;                             // 옛 index.html에서도 안 죽는다
+  let st = await placeNativeStatus();
+  const P = globalThis.Capacitor?.Plugins?.Place;
+  if (st && !st.unreadable && st.permission && !st.backgroundPermission && P?.syncNow) {
+    const r = await P.syncNow().catch(() => null);
+    if (r && r.status) st = r.status;
+  }
+  // 등록 수는 **서버가 안다.** 네이티브가 없으면 물어보지도 않는다 — 브라우저에는 WiFi가 없고,
+  // 없는 기능의 상태를 매 새로고침마다 왕복해 가져오는 것은 값이 없다.
+  if (st) S.places = await Api.places().catch(() => null);
+  const facts = st ? {
+    ...st,
+    places: ((S.places && S.places.places) || []).length,
+    lastVisit: (S.places && S.places.last) || null,
+  } : null;
+  S.placeStatus = facts;
+  const v = placeStatusLine(facts);
+  bar.dataset.state = v.state;
+  // 행동이 있는 상태만 보인다 — `off`·`ok`는 같은 '안 보임'이고 기록에서만 갈린다(T-33).
+  bar.style.display = PLACE_ACT[v.state] ? "flex" : "none";
+  $("#td-place-text").textContent = v.text;
+  const b = $("#td-place-act");
+  b.textContent = PLACE_ACT[v.state] || "";
+  b.onclick = () => run(async () => {
+    const N = globalThis.Capacitor?.Plugins?.Place;
+    if (v.state === "noperm") { await N?.requestPermission?.(); return loadPlaceStatus(); }
+    // ⚠️ 둘을 한 버튼으로 합치지 않는다 — 엉뚱한 화면에서 없는 스위치를 찾게 된다.
+    if (v.state === "nolocation") { await N?.openSettings?.({ which: "location" }); return loadPlaceStatus(); }
+    if (v.state === "nobg") { await N?.openSettings?.({ which: "background" }); return loadPlaceStatus(); }
+    if (v.state === "noplace") return openPlaceSheet();
+    return placeSyncNow();
+  });
+  return v;
+}
+
+/** 수동 확인. 앱 열 때와 네트워크가 바뀔 때는 **기기가** 한다. */
+async function placeSyncNow() {
+  const P = globalThis.Capacitor?.Plugins?.Place;
+  if (!P?.syncNow) return null;
+  const r = await P.syncNow();
+  // ★ **`r`을 버리지 않는다**(T-54 ②). `skipped`·`unknown_network`는 서버에 흔적을 안 남기므로
+  //   다시 그린 상태 줄이 **누르기 전과 글자 하나 안 다르다.** 결과는 다른 자리에 적는다.
+  showPlaceResult(placeResultLine(r));
+  await loadPlaceStatus();
+  return r;
+}
+
+/**
+ * 장소 등록 (ADR-046 ①②) — **이름은 사용자가 붙인다.**
+ *
+ * ⚠️ 네트워크 **이름**을 화면에 띄우지 않는다. 이름 자체가 장소를 말하므로 기기가 해시만
+ *    준다 — 사용자는 *"지금 붙어 있는 것"* 으로 알아본다.
+ */
+async function openPlaceSheet(keepResult) {
+  const note = $("#place-note"), nowBox = $("#place-now"), list = $("#place-list");
+  // 지난 결과를 **다음 열기까지** 끌고 가지 않는다 — 낡은 문장은 방금 한 일로 읽힌다.
+  // ⚠️ 방금 저장·삭제하고 **다시 그리는** 경로는 예외다. 거기서도 지우면 결과 줄이
+  //    비어서 나가고, 그러면 시트가 조용히 다시 그려진 것이 성공 신호로 읽힌다(T-54 ①).
+  if (!keepResult) showPlaceResult({ kind: "", text: "" });
+  const st = await placeNativeStatus();
+  S.places = await Api.places().catch(() => null);
+  const rows = (S.places && S.places.places) || [];
+  const known = new Set(rows.map((p) => p.net_id));
+
+  if (!st || st.unreadable) {
+    note.textContent = "이 기기에서는 붙은 네트워크를 읽을 수 없어요 — 앱(안드로이드)에서만 돼요.";
+    nowBox.innerHTML = "";
+  } else if (!st.permission || !st.locationEnabled) {
+    // 여기서도 둘을 가른다 — 시트만 열어 둔 채 상태 줄을 못 보는 경로가 있다.
+    const v = placeStatusLine({ ...st, places: rows.length });
+    note.textContent = v.text;
+    nowBox.innerHTML = `<button class="btn" id="place-fix" style="width:100%">${esc(PLACE_ACT[v.state] || "")}</button>`;
+    $("#place-fix").onclick = () => run(async () => {
+      const N = globalThis.Capacitor?.Plugins?.Place;
+      if (v.state === "noperm") await N?.requestPermission?.();
+      else await N?.openSettings?.({ which: "location" });
+      await loadPlaceStatus();
+      return openPlaceSheet();
+    });
+  } else if (!st.netId) {
+    note.textContent = "지금 WiFi에 붙어 있지 않아요 — 이름 붙일 네트워크가 있는 곳에서 열어 주세요.";
+    nowBox.innerHTML = "";
+  } else if (known.has(st.netId)) {
+    const mine = rows.find((p) => p.net_id === st.netId);
+    note.textContent = `지금 붙은 네트워크는 "${mine.name}"이에요.`;
+    nowBox.innerHTML = "";
+  } else {
+    note.textContent = "지금 붙은 네트워크에 이름을 붙여요. 이름 붙인 곳에서만 기록이 남아요.";
+    nowBox.innerHTML = `<input type="text" id="place-name" placeholder="집 · 학교 · 일터" maxlength="40">
+      <button class="btn" id="place-save" style="margin-top:10px;width:100%">이 네트워크에 이름 붙이기</button>`;
+    $("#place-save").onclick = () => run(async () => {
+      const name = ($("#place-name").value || "").trim();
+      // 빈 이름으로 시트가 조용히 닫히면 **그것이 성공 신호로 읽힌다**(T-54 ①).
+      if (!name) { showPlaceResult({ kind: "warn", text: "이름을 적어 주세요" }); return; }
+      await Api.placeRegister(st.netId, name);
+      showPlaceResult({ kind: "ok", text: `"${name}"으로 저장했어요` });
+      await loadPlaceStatus();
+      if ($("#me-set").style.display === "") renderMe();
+      return openPlaceSheet(true);
+    });
+  }
+
+  list.innerHTML = rows.length
+    ? rows.map((p) => `<div class="evrow" data-pid="${esc(p.id)}">
+        <span class="en">${esc(p.name)}<span class="cap"> · ${p.visits}번</span></span>
+        <button class="ex" data-del="${esc(p.id)}">×</button></div>`).join("")
+    : `<div class="evrow"><span class="cap">아직 이름 붙인 네트워크가 없어요</span></div>`;
+  list.querySelectorAll("[data-del]").forEach((b) => {
+    b.onclick = () => run(async () => {
+      await Api.placeDelete(b.dataset.del);
+      showPlaceResult({ kind: "ok", text: "지웠어요 — 그곳의 기록도 함께 지워졌어요" });
+      await loadPlaceStatus();
+      return openPlaceSheet(true);
+    });
+  });
+  openSheet("sh-place");
 }
 
 /* ── 시간표 (T-58 · ADR-045) ────────────────────────────────
@@ -2813,7 +3022,8 @@ async function renderMe() {
   $("#set-list").innerHTML = rows.map(([k, v, key]) =>
     `<button class="srow" ${act(key)}>${k}<em>${esc(v)}</em></button>`).join("")
     + collectStatusRow(S.collectStatus)
-    + calStatusRow(S.calStatus);
+    + calStatusRow(S.calStatus)
+    + placeStatusRow(S.placeStatus);
 }
 
 /* 학사 캘린더 수집 상태 — 설정 안 한 줄 (T-43) ────────────────
@@ -2879,6 +3089,28 @@ function calStatusRow(st) {
   const bad = v.state === "error" || v.state === "noperm" || v.state === "notarget";
   return `<button class="srow${bad ? " srow-alert" : ""}" id="set-cal" data-state="${v.state}"`
     + ` onclick="openCalSheet()">폰 캘린더<em>${esc(label)}</em></button>`;
+}
+
+/* 장소 줄 (T-59 · ADR-046) — **네트워크에 이름을 붙이는 유일한 입구다.**
+ * Today 한 줄은 정상이면 사라지므로, 등록을 고치거나 지우려면 여기로 들어온다.
+ * 위 두 줄과 합치지 않는다 — 셋은 서로 다른 것이 죽는 자리다. */
+function placeStatusRow(st) {
+  const v = placeStatusLine(st);
+  const n = (st && st.places) || 0;
+  const last = st && st.lastVisit;
+  const label = {
+    off: "앱에서만 돼요",
+    error: "상태를 못 읽었어요 ›",
+    noperm: "권한 없음 ›",
+    nolocation: "위치 꺼짐 ›",
+    noplace: "이름 붙인 곳 없음 ›",
+    nobg: "앱 열 때만 ›",
+    stale: "확인 멈춤 ›",
+    ok: `${n}곳 · ${last ? `${collectAgo(last.at)} ${last.name}` : "아직 기록 없음"} ›`,
+  }[v.state] || "";
+  const bad = v.state !== "ok" && v.state !== "off";
+  return `<button class="srow${bad ? " srow-alert" : ""}" id="set-place" data-state="${v.state}"`
+    + ` onclick="openPlaceSheet()">장소<em>${esc(label)}</em></button>`;
 }
 
 function toggleSet(on) { $("#me-main").style.display = on ? "none" : ""; $("#me-set").style.display = on ? "" : "none"; }
@@ -3847,6 +4079,9 @@ async function syncGuardNative() {
   }
   // 동기화가 끝난 뒤의 사실로 한 줄을 다시 그린다 — 부팅 직후에는 옛 결과가 남아 있다.
   loadCalStatus();
+  // ⚠️ **`configure` 뒤여야 한다.** 장소 관측은 같은 자격증명으로 서버에 보내는데,
+  //    그 전에는 `not_configured`로 죽고 그 실패가 상태 줄에 남는다.
+  loadPlaceStatus();
 }
 
 let booted = false;

@@ -50,6 +50,10 @@
 | PATCH `/api/events/:id` | `{title?, date?, time?, period_id?, note?}` | `{...}` (마감일 409) | `events.update` |
 | DELETE `/api/events/:id` | — | `{id, deleted}` (마감일 409) | `events.remove` |
 | POST `/api/cal/sync` | `{items:[{ext_uid, title, date, time?, all_day?, ext_updated?}], window:{from,to}}` | `{upserted, skipped_closed, skipped_stale, deleted, protected_kept, window}` · **멱등** · 앱 생성 일정(`ext_src IS NULL`)은 안 지운다 | `calsync.syncCal` |
+| GET `/api/places` | — | `{places[{id,name,net_id,visits,last_at}], recent[], today[], last\|null}` | `places.list` |
+| POST `/api/places` | `{net_id, name}` | `list()` (201) · 이미 이름 붙은 네트워크면 409 | `places.register` |
+| DELETE `/api/places/:id` | — | `list()` · 그곳의 전이도 CASCADE로 함께 간다 | `places.remove` |
+| POST `/api/places/observe` | `{net_id, at?}` | `{known, recorded, reason, place\|null, at, date}` · **셋 다 200** | `places.observe` |
 | GET `/api/me` | — | `{fields, now}` | `me.getMe` |
 | PUT `/api/me/:field` | `{value}` | `{field}` | `me.putMeField` |
 | GET `/api/me/history?limit` | — | 이력 rows | `me.meHistory` |
@@ -171,6 +175,21 @@
   - LWW: `ext_updated`(ISO8601 UTC 문자열)가 저장된 것보다 오래되면 무시 → `skipped_stale`
   - ⚠️ **받지 않는 것**: `protect_*`(앱 전용) · 위치·참석자·알림 · 귀속일 재계산(벽시계 그대로)
 
+### places.ts — 장소 (0022 · ADR-046 · T-59)
+- **어디 있었는지는 WiFi가 말한다.** 기기가 붙은 네트워크의 해시를 보내고 **서버가 전이만** 남긴다
+- `list(env, t)` → `{places[], recent[], today[], last}` — `last`(지금 있는 곳)는 **컬럼이 아니라 파생**이다
+- `register(env, t, {net_id, name})` — **이름은 사용자가 붙인다.** 이미 등록된 네트워크면 409
+- `remove(env, t, id)` — 그곳의 전이도 함께 간다(FK CASCADE). 이름 없는 전이는 읽을 수 없는 기록이다
+- `observe(env, t, {net_id, at?})` → `reason`이 셋으로 갈린다. **셋 다 200이다** — 기기가
+  *"안 남았다"* 와 *"못 보냈다"* 를 갈라야 하고, 400으로 뭉개면 정상 동작이 기기의 `lastError`에 실패로 적힌다
+  - `recorded` — 새 전이. 귀속일은 **관측 시각**에서 정한다(`at`이 없으면 `t.now`)
+  - `same_place` — 마지막 전이와 같은 곳 → **행을 안 만든다**(상태가 아니라 전이 · 원칙 1)
+  - `unknown_network` — 이름 안 붙은 네트워크 → **아무것도 안 남긴다.** 추측하지 않는다(ADR-046 ②)
+- ★ **전이 판정이 사는 유일한 자리다.** 기기에 두면 재설치·백업 복원으로 prefs가 빈 날
+  같은 곳이 다시 전이로 들어온다
+- ★ `net_id`는 SHA-256 앞 16자리 hex — **형식이 아니면 400.** 0022의 CHECK와 두 겹으로
+  막으므로 원문을 보내는 구현은 조용히 저장되지 않는다
+
 ### memos.ts — 어느 날짜에든 붙는 짧은 노트(3단계)
 - `addMemo(env, t, {date, ts?, text})` → `{id, date}` · 과거·오늘·미래 어디든. daily 없으면 `stOpenDaily`로 빈 open daily ensure 후 붙임(마감된 날 불변은 트리거 유지) · +daily summary stale
 
@@ -284,6 +303,8 @@
 **watch_apps** — `watchApps(env, source?)` · `stAddWatchApp` · `stRemoveWatchApp`
 **시간표 (0021)** — `timetableRules(env)` → `TimetableRule[]` · `stClearTimetable(env)` · `stInsertTimetableRule(env, id, subject, weekday, start, end, termStart, termEnd, now)`
   ⚠️ **전개 SQL은 없다** — 규칙만 읽어 오고 날짜 전개는 `services/timetable.expand`가 한다(파생을 SQL로 물화하지 않는다)
+**장소 (0022)** — `places(env)`(방문 수·마지막 시각을 **조인으로 센다**) · `placeByNet(env, netId)` · `placeById` · `stInsertPlace` · `stDeletePlace`(방문은 FK CASCADE) · `lastVisit(env)`(전이 판정이 읽는 한 행) · `visitsSince(env, fromDate, limit)` · `stInsertVisit(env, placeId, at, date, now)`
+  ⚠️ **"지금 어디인가"를 주는 SQL은 없다** — 그것은 `lastVisit` 하나에서 나오는 파생이다(원칙 1)
 **guard(구)** — `guardEventsList(env)`
 
 **뷰(스키마)**: `v_task_stats`(**state**=상태의 유일한 진실 `not_finished`/`finished`/`cancelled` · cancelled_at·cancelled_on·cancel_reason·cancelled_by(0009, append-only) · entry_count·defer_count·latest_date·current_rate·is_waiting) · `v_period_achievement`(달성률=current_rate 평균, **취소 제외**). 상태 판정은 언제나 `state`(status는 원시 컬럼).

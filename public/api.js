@@ -128,6 +128,10 @@ const Api = {
   timetable: () => _req("GET", "/timetable"),
   timetableParse: (text) => _req("POST", "/timetable/parse", { text }),
   timetableSave: (rules, term_start, term_end) => _req("PUT", "/timetable", { rules, term_start, term_end }),
+  // 장소 (T-59) — 이름은 **사용자가 붙인다.** 관측은 기기가 보내고 전이 판정은 서버가 한다
+  places: () => _req("GET", "/places"),
+  placeRegister: (net_id, name) => _req("POST", "/places", { net_id, name }),
+  placeDelete: (id) => _req("DELETE", "/places/" + encodeURIComponent(id)),
   createEvent: (b) => _req("POST", "/events", b),
   updateEvent: (id, b) => _req("PATCH", "/events/" + id, b),
   deleteEvent: (id) => _req("DELETE", "/events/" + id),

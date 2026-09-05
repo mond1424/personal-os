@@ -17,7 +17,7 @@ import type { Env } from "../src/types";
 import { makeD1, rawOf } from "./d1shim";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const schema = ["0001_init.sql", "0002_models.sql", "0003_ai_provider.sql", "0004_events.sql", "0005_delete_scope.sql", "0006_fix_model_high.sql", "0007_defer_reason.sql", "0008_cancel_task.sql", "0009_cancel_reason.sql", "0010_guard.sql", "0011_guard_sync.sql", "0012_life_model.sql", "0013_analysis_backfill.sql", "0014_schema_titles.sql", "0015_me_history_reason.sql", "0016_guard_unavailable_reason.sql", "0017_ai_reason.sql", "0018_collected_items.sql", "0019_guard_ai_immutable.sql", "0020_cal_sync.sql", "0021_timetable.sql"]
+const schema = ["0001_init.sql", "0002_models.sql", "0003_ai_provider.sql", "0004_events.sql", "0005_delete_scope.sql", "0006_fix_model_high.sql", "0007_defer_reason.sql", "0008_cancel_task.sql", "0009_cancel_reason.sql", "0010_guard.sql", "0011_guard_sync.sql", "0012_life_model.sql", "0013_analysis_backfill.sql", "0014_schema_titles.sql", "0015_me_history_reason.sql", "0016_guard_unavailable_reason.sql", "0017_ai_reason.sql", "0018_collected_items.sql", "0019_guard_ai_immutable.sql", "0020_cal_sync.sql", "0021_timetable.sql", "0022_places.sql"]
   .map((f) => readFileSync(join(here, "../migrations/" + f), "utf8")).join("\n");
 const env: Env = { DB: makeD1(schema) };
 const raw = rawOf(env.DB);
@@ -2521,6 +2521,134 @@ ok("13 ★ 세기만 하고 저장하지 않는다 — 컬럼도 없고 조회�
   t60NoCol && t60Pure && t60PureRead.streak === 1,
   `컬럼=${t60Cols.filter((c) => /ignore|streak|nag/i.test(c))} 조회순수=${t60Pure}`
   + ` 연속=${t60PureRead.streak}`);
+
+// ── 장소 (T-59 · ADR-046) — 어디 있었는지는 WiFi가 말한다 ────
+//
+// 귀가·등교는 사용자가 손으로 적을 리가 없어 지금 아무 데도 안 남는다. 기기가 붙은 네트워크를
+// 보고 **서버가 전이만** 남긴다. ★ 여기는 [4]에서 **오늘이 이미 마감된 뒤**다 —
+// 그래서 `logs`가 아닌 새 표를 쓴다는 ADR-046 ④가 이 자리에서 실물로 걸린다.
+console.log("\n[T-59] 장소 — 등록한 곳만 · 전이만 · 좌표 없이");
+
+const plVisits = () => (raw.prepare("SELECT COUNT(*) AS n FROM place_visits").get() as any).n;
+const plPlaceRows = () => (raw.prepare("SELECT COUNT(*) AS n FROM places").get() as any).n;
+const plLogs = () => (raw.prepare("SELECT COUNT(*) AS n FROM logs").get() as any).n;
+
+/** 식별자는 SHA-256 앞 16자리 hex다 — **원문은 형식에서 막힌다**(0022의 CHECK + 서비스 검증). */
+const NET_HOME = "0123456789abcdef";
+const NET_SCHOOL = "fedcba9876543210";
+const NET_CAFE = "abcdefabcdef0123";
+
+const plReg = await api("POST", "/api/places", { net_id: NET_HOME, name: "집" });
+await api("POST", "/api/places", { net_id: NET_SCHOOL, name: "학교" });
+
+const plBefore = plVisits(), plLogsBefore = plLogs();
+const plArrive = await api("POST", "/api/places/observe", { net_id: NET_SCHOOL });
+const plMid = plVisits();
+
+ok("1 등록한 네트워크에 붙으면 전이가 남는다",
+  plReg.status === 201 && plArrive.status === 200
+  && plArrive.json.recorded === true && plArrive.json.place.name === "학교"
+  && plMid === plBefore + 1,
+  `등록=${plReg.status} 관측=${plArrive.status} 사유=${plArrive.json?.reason} 행=${plBefore}→${plMid}`);
+
+/* 2 ★ **이 티켓의 핵심.** 모르는 곳에서는 판정하지 않는다(ADR-046 ②) — *"자주 있는 곳이
+ *   집이겠지"* 가 틀리는 날은 하필 평소와 다른 날이고, 이 앱이 관심 있는 날이 정확히 그날이다.
+ *   ⚠️ **장소 수까지 센다**: 모르는 네트워크에 이름을 지어 붙이는 구현이 여기서 죽는다. */
+const plPlacesBefore = plPlaceRows();
+const plCafe = await api("POST", "/api/places/observe", { net_id: NET_CAFE });
+ok("2 ★ 이름 붙이지 않은 네트워크는 아무것도 안 남긴다 (모르면 판정하지 않는다)",
+  plCafe.status === 200 && plCafe.json.known === false && plCafe.json.recorded === false
+  && plVisits() === plMid && plPlaceRows() === plPlacesBefore,
+  `사유=${plCafe.json?.reason} 행=${plVisits()} 장소=${plPlaceRows()}`);
+
+/* 3 ★ **상태가 아니라 전이다**(ADR-046 ③ · 원칙 1). *"지금 집에 있다"* 는 물으면 나오므로
+ *   저장할 이유가 없다. 매 관측을 남기는 구현이면 하루에 수십 행이 되고
+ *   *"언제 학교에 왔나"* 를 그 더미에서 다시 골라내야 한다.
+ *   ⚠️ **자기 자리를 스스로 만든다** — 위 관측들의 결과를 물려받으면 *"모르는 곳을 추측하는"*
+ *      변이가 마지막 방문을 바꿔 놓아 3까지 죽인다. 여기서 한 번 붙여 놓고, 그 다음을 센다.
+ *   ⚠️ **1의 결과를 조건에 안 넣는다** — 넣으면 *"아무것도 기록 안 하는"* 변이가 3까지 죽여
+ *      3이 자기 몫(늘지 않았는가)을 못 센다. 사유는 아래 detail 에만 싣는다. */
+await api("POST", "/api/places/observe", { net_id: NET_SCHOOL });   // 여기가 학교라고 해 두고
+const plSettled = plVisits();
+const plAgain = await api("POST", "/api/places/observe", { net_id: NET_SCHOOL });
+ok("3 ★ 같은 곳에 계속 있으면 전이가 안 쌓인다 (1의 짝)",
+  plVisits() === plSettled,
+  `행=${plSettled}→${plVisits()} 사유=${plAgain.json?.reason}`);
+
+/* 4 ★ **없는 것을 세는 검사** — 좌표도 SSID 원문도 어디에도 없다(ADR-046 ①②).
+ *   컬럼(실제로 만들어진 표)과 원문(코드) 양쪽을 본다. 주석은 벗겨 내고 센다 —
+ *   이 리포의 주석은 *"저장하지 않는다"* 라고 적으므로 안 벗기면 늘 빨간불이다. */
+const plStrip = (s: string, sql = false) => (sql
+  ? s.replace(/--[^\n]*/g, " ")
+  : s.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/(^|[^:])\/\/[^\n]*/g, "$1"));
+const PL_COORD = /latitude|longitude|\blat\b|\blng\b|\blon\b|\bgps\b|coordinate/i;
+const PL_SSID = /ssid/i;
+const plKt = (f: string) =>
+  readFileSync(join(here, `../android/app/src/main/java/dev/mond1424/personalos/place/${f}`), "utf8");
+// ⚠️ `WifiProbe`는 뺀다 — **원문을 읽는 것은 그 파일의 일이다.** 여기서 세는 것은
+//    *"원문이 그 밖으로 나가는가"* 이고, 나가는 통로가 아래 넷이다.
+const plSources: [string, string][] = [
+  ["0022_places.sql", plStrip(readFileSync(join(here, "../migrations/0022_places.sql"), "utf8"), true)],
+  ["services/places.ts", plStrip(readFileSync(join(here, "../src/services/places.ts"), "utf8"))],
+  ["PlaceWatcher.kt", plStrip(plKt("PlaceWatcher.kt"))],
+  ["PlacePlugin.kt", plStrip(plKt("PlacePlugin.kt"))],
+];
+const plDirty = plSources.filter(([, s]) => PL_COORD.test(s) || PL_SSID.test(s)).map(([n]) => n);
+const plCols = ["places", "place_visits"].flatMap((t) =>
+  (raw.prepare(`SELECT * FROM pragma_table_info('${t}')`).all() as any[]).map((c) => String(c.name)));
+ok("4 ★ 좌표도 SSID 원문도 어디에도 없다 — 컬럼에도 코드에도 (없는 것을 세는 검사)",
+  plCols.length > 0 && !plCols.some((c) => PL_COORD.test(c) || PL_SSID.test(c))
+  && plDirty.length === 0,
+  `컬럼=${plCols.join(",")} 샌곳=${plDirty.join(",") || "없음"}`);
+
+/* 5 ★ 4의 짝 — **스캐너가 눈멀면 4는 구현과 무관하게 초록이다.** 합성 줄로 가른다:
+ *   옛 모양은 잡고, "저장하지 않는다"라고 적은 주석은 안 잡아야 한다. */
+const plFakeSql = "  net_id TEXT NOT NULL, latitude REAL, longitude REAL,";
+const plFakeKt = `body.put("ssid", raw)`;
+const plFakeNote = "-- 좌표(latitude)도 ssid 원문도 저장하지 않는다";
+ok("5 ★ 4의 스캐너가 살아 있다 — 옛 모양은 잡고, 주석은 안 잡는다",
+  PL_COORD.test(plFakeSql) && PL_SSID.test(plFakeKt)
+  && !PL_COORD.test(plStrip(plFakeNote, true)) && !PL_SSID.test(plStrip(plFakeNote, true)),
+  `옛SQL=${PL_COORD.test(plFakeSql)} 옛Kt=${PL_SSID.test(plFakeKt)}`);
+
+/* ★ 4의 행동 절반 — **원문을 보내는 구현은 조용히 저장되지 않고 400으로 죽는다.**
+ *   스캐너만 두면 *"코드에는 안 적혀 있는데 값으로 흘러드는"* 경로가 남는다. */
+const plRaw = await api("POST", "/api/places/observe", { net_id: "SchoolWiFi_5G" });
+const plRawReg = await api("POST", "/api/places", { net_id: "우리집공유기", name: "집2" });
+ok("★ 해시가 아닌 값은 형식에서 막힌다 (원문이 값으로 흘러드는 경로)",
+  plRaw.status === 400 && plRawReg.status === 400 && plPlaceRows() === plPlacesBefore,
+  `관측=${plRaw.status} 등록=${plRawReg.status} 장소=${plPlaceRows()}`);
+
+/* 8 전이가 `logs`에 안 들어간다 (ADR-046 ④ · ADR-044와 같은 판단).
+ *   `logs`는 **사용자가 적은 것**이고, 자동 기입을 넣으면 *"내가 적었다"* 와
+ *   *"기계가 봤다"* 가 한 칸에 섞인다. */
+// ⚠️ **행 수만 세면 못 잡는 경로가 있다** — 여기는 [4]에서 오늘을 마감한 뒤라
+//    `logs`에 넣는 구현은 `logs_frozen_ins`에 먼저 걸려 **아무것도 안 남기고 죽는다.**
+//    그러면 `logs` 수는 그대로이고 이 검사가 초록이 된다. 그래서 원문도 함께 본다.
+const plSvcCode = plSources[1]?.[1] ?? "";
+ok("8 전이가 logs 에 안 들어간다 (사람이 적은 것과 안 섞인다)",
+  plLogs() === plLogsBefore && !/\blogs\b/.test(plSvcCode),
+  `logs=${plLogsBefore}→${plLogs()} 원문언급=${/\blogs\b/.test(plSvcCode)}`);
+
+/* 9 ★ 8의 다른 절반 — **마감된 날에도 관측이 들어간다.** 위 [4]가 오늘을 마감했으므로
+ *   `logs`·`feelings`·`schedule_entries`였다면 `*_frozen_ins`가 **추가 자체를** 막아
+ *   409로 죽었을 자리다(함정 6). 늦게 도착한 관측은 **사람이 마감한 뒤에 오는 것이 정상**이다.
+ *   ⚠️ **행이 늘었는지는 안 센다** — 그건 1의 몫이다. 여기가 세는 것은 *"막히지 않는가"* 다. */
+const plClosed = (await api("GET", `/api/days/${D}`)).json;
+const plAfterClose = await api("POST", "/api/places/observe", { net_id: NET_HOME });
+ok("9 ★ 마감된 날에도 관측이 막히지 않는다 (logs 였다면 409였다)",
+  plClosed.daily.status === "closed" && plAfterClose.status === 200,
+  `오늘=${plClosed.daily?.status} 관측=${plAfterClose.status}`);
+
+// 이름이 사라진 전이는 읽을 수 없는 기록이다 — 지울 때 함께 간다(화면도 그렇게 말한다).
+const plHomeId = (await api("GET", "/api/places")).json.places.find((p: any) => p.net_id === NET_HOME).id;
+const plOrphans = () =>
+  (raw.prepare("SELECT COUNT(*) AS n FROM place_visits WHERE place_id = ?").get(plHomeId) as any).n;
+const plDel = await api("DELETE", `/api/places/${plHomeId}`);
+ok("★ 장소를 지우면 그곳의 전이도 함께 간다 (이름 없는 전이를 남기지 않는다)",
+  plDel.status === 200 && plOrphans() === 0
+  && !plDel.json.places.some((p: any) => p.net_id === NET_HOME),
+  `남은행=${plOrphans()}`);
 
 // ── 결과 ─────────────────────────────────────────────────────
 console.log(`\n${"=".repeat(46)}\n통과 ${passN} · 실패 ${fails.length}`);

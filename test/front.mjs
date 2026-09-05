@@ -589,15 +589,19 @@ const rows = [...$("#set-list").querySelectorAll(".srow")].map((r) => r.textCont
 // ⚠️ **검사를 또 고쳤다** — T-53이 폰 캘린더 줄을 하나 더한다(12 → 13). 같은 이유다.
 // ⚠️ **또 고쳤다** — T-58이 시간표 줄을 하나 더한다(13 → 14). 세는 것은 여전히
 //    *"행이 조용히 늘거나 줄지 않는다"*이므로, 늘린 티켓이 숫자를 옮기는 것이 이 검사의 규칙이다.
-ok("설정 14행 (AI 연결 통합 + 시간표 + 상태 두 줄)", rows.length === 14, String(rows.length));
+// ⚠️ **또 고쳤다** — T-59가 장소 줄을 하나 더한다(14 → 15). 같은 규칙이다.
+ok("설정 15행 (AI 연결 통합 + 시간표 + 상태 세 줄)", rows.length === 15, String(rows.length));
 // ⚠️ **"맨 아래가 수집 상태"에서 옮겼다.** 이 검사가 지키던 것은 *"그 줄이 사라지지 않는다"*이고,
 //    이제 같은 자리에 줄이 둘이라 **둘 다** 봐야 그 뜻이 남는다. 순서까지 고정하는 이유는
 //    **둘이 서로 다른 것**이기 때문이다: 학사 캘린더는 서버가 iCal을 긁는 것(T-41)이고,
 //    폰 캘린더는 기기가 CalendarContract를 읽는 것(T-53)이다. 한 줄로 합치면 어느 쪽이
 //    죽었는지 못 읽는다 — 이 티켓이 실패 문구를 셋으로 가른 것과 같은 규칙이다.
-ok("맨 아래 두 줄이 상태 줄이다 — 학사 캘린더 · 폰 캘린더 순서 (둘 다 안 사라진다)",
-  rows[rows.length - 2]?.includes("학사 캘린더") && rows[rows.length - 1]?.includes("폰 캘린더"),
-  rows.slice(-2).join(" | "));
+// ⚠️ **셋으로 늘렸다** — T-59의 장소 줄이 같은 자리에 선다. 이것도 서로 다른 것이다:
+//    기기가 붙은 네트워크를 읽는 것(T-59)이라 앞 둘 중 어느 쪽이 죽어도 이것은 살아 있다.
+ok("맨 아래 세 줄이 상태 줄이다 — 학사 캘린더 · 폰 캘린더 · 장소 순서 (셋 다 안 사라진다)",
+  rows[rows.length - 3]?.includes("학사 캘린더") && rows[rows.length - 2]?.includes("폰 캘린더")
+  && rows[rows.length - 1]?.includes("장소"),
+  rows.slice(-3).join(" | "));
 ok("Low 모델 표시", rows.some((r) => r.includes("Low") && r.includes("haiku")), rows.join(" | "));
 ok("High 모델 표시", rows.some((r) => r.includes("High") && r.includes("claude")), rows.join(" | "));
 ok("AI 연결 행 · 토큰 위", rows.findIndex((r) => r.includes("AI 연결")) < rows.findIndex((r) => r.includes("앱 접근 토큰")), rows.join(" | "));
@@ -3359,6 +3363,182 @@ await ev(`(async()=>{
   Api.guardL2Nag = window.__t60.old[0]; Api.guardL2NagAck = window.__t60.old[1];
   globalThis.Capacitor = window.__t60.old[2];
 })()`);
+
+// ── T-59 · 어디 있었는지는 WiFi가 말한다 (ADR-046) ─────────────────────────
+//
+// ⚠️ **jsdom은 WifiManager를 못 본다.** 여기서 진짜로 돌려 보는 것은 **화면이 다섯 실패를
+//    가르는가**와 **이름을 붙이는 길이 이어져 있는가**이고, 기기 쪽(권한·읽기)은 스캐너다.
+//    진짜 판정은 §확인 절차 — 집을 나갔다 학교 WiFi에 붙어 보는 것이다.
+console.log("\n[T-59] 장소 — 다섯 실패가 각자의 문구를 가진다");
+
+const t59Kt = (p) => t46Bare(readFileSync(
+  join(here, "../android/app/src/main/java/dev/mond1424/personalos/" + p), "utf8"));
+const t59Plugin = t59Kt("place/PlacePlugin.kt");
+const t59Watcher = t59Kt("place/PlaceWatcher.kt");
+const t59Main = t59Kt("MainActivity.java");
+const t59Manifest = t46NoXml(readFileSync(
+  join(here, "../android/app/src/main/AndroidManifest.xml"), "utf8"));
+
+/* ★ 배선 — 등록을 빼면 `Capacitor.Plugins.Place`가 아예 없어 등록 화면도 권한 유도도 안 뜨고,
+ *   콜백을 거는 `load()`가 안 돌아 **전이가 통째로 안 남는다**(T-48·T-53이 배운 실패 모양).
+ *   ⚠️ `foregroundServiceType="location"`이 **없다는 것**을 함께 센다 — 진단 ③이 필요 없다고
+ *      답한 자리이고, 그래서 이 티켓이 `guard/`를 한 줄도 안 건드렸다. 넣는 순간 그 사실이 깨진다. */
+ok("★ Manifest가 WiFi·위치를 선언하고 · MainActivity가 PlacePlugin을 등록한다 (guard/는 그대로)",
+  /android\.permission\.ACCESS_WIFI_STATE/.test(t59Manifest)
+  && /android\.permission\.ACCESS_FINE_LOCATION/.test(t59Manifest)
+  && /android\.permission\.ACCESS_BACKGROUND_LOCATION/.test(t59Manifest)
+  && !/foregroundServiceType="[^"]*location/.test(t59Manifest)
+  && /registerPlugin\(PlacePlugin\.class\)/.test(t59Main)
+  && /@CapacitorPlugin\(\s*\n?\s*name = "Place"/.test(t59Plugin)
+  && /\/api\/places\/observe/.test(t59Watcher),
+  `wifi=${/ACCESS_WIFI_STATE/.test(t59Manifest)} bg=${/ACCESS_BACKGROUND_LOCATION/.test(t59Manifest)}`
+  + ` fgLocation=${/foregroundServiceType="[^"]*location/.test(t59Manifest)}`
+  + ` 등록=${/registerPlugin\(PlacePlugin\.class\)/.test(t59Main)}`);
+
+/* 네이티브가 없는 jsdom에 `Capacitor.Plugins.Place`를 심어 **사실만** 갈아 끼운다.
+ * 이렇게 해야 순수 함수(`placeStatusLine`)가 아니라 **배선까지** 지나간다 —
+ * 문구가 맞아도 `loadPlaceStatus`가 바를 안 켜면 화면은 여전히 침묵한다. */
+const t59Bar = $("#td-place");
+const t59Calls = [];
+const t59Native = (st) => ({
+  status: async () => st,
+  syncNow: async () => { t59Calls.push("sync"); return { outcome: "ok", reason: "same_place", place: "집", status: st }; },
+  requestPermission: async () => { t59Calls.push("perm"); return st; },
+  openSettings: async (o) => { t59Calls.push("open:" + ((o && o.which) || "?")); return st; },
+});
+const t59Show = async (st) => {
+  w.Capacitor = { Plugins: { Place: t59Native(st) } };
+  await w.loadPlaceStatus();
+  return {
+    state: t59Bar.dataset.state, display: t59Bar.style.display,
+    text: txt("#td-place-text"), act: txt("#td-place-act"),
+  };
+};
+// 시각은 **지금에서 상대로** 만든다 — 고정 날짜는 언젠가 반드시 현재가 된다(함정 12).
+const T59_NET = "00ff11ee22dd33cc";
+const t59Fresh = new Date(Date.now() - 3600_000).toISOString();
+const t59Old = new Date(Date.now() - 72 * 3600_000).toISOString();
+const t59Base = {
+  permission: true, backgroundPermission: true, locationEnabled: true,
+  wifiEnabled: true, netId: T59_NET, lastSeenAt: t59Fresh,
+};
+
+// 아직 이름 붙인 곳이 0인 상태 — 앞 셋이 여기서 갈린다.
+const t59NoPerm = await t59Show({ ...t59Base, permission: false });
+const t59NoLoc = await t59Show({ ...t59Base, locationEnabled: false });
+const t59NoPlace = await t59Show({ ...t59Base });
+
+ok("6 ★ 권한이 없으면 Today에 그 사실이 뜬다 (행동까지 붙는다)",
+  t59NoPerm.state === "noperm" && t59NoPerm.display === "flex"
+  && t59NoPerm.text.includes("권한") && t59NoPerm.act === "허용하기",
+  JSON.stringify(t59NoPerm));
+
+/* ★ **권한과 다른 축이다**(진단 ④). 권한이 다 있어도 시스템 토글이 꺼지면 못 읽고,
+ *   그때 사용자가 갈 곳은 앱 설정이 아니라 시스템 설정이다. 뭉치면 없는 스위치를 찾는다. */
+ok("6b ★ 위치 서비스 꺼짐은 권한 없음과 다른 상태·다른 문구다",
+  t59NoLoc.state === "nolocation" && t59NoLoc.display === "flex"
+  && t59NoLoc.text !== t59NoPerm.text && t59NoLoc.act !== t59NoPerm.act,
+  `${JSON.stringify(t59NoLoc)} vs ${JSON.stringify(t59NoPerm)}`);
+
+ok("6c ★ 이름 붙인 네트워크가 0이면 그 사실이 뜬다 — 읽어도 판정할 것이 없다",
+  t59NoPlace.state === "noplace" && t59NoPlace.display === "flex"
+  && t59NoPlace.act === "이름 붙이기",
+  JSON.stringify(t59NoPlace));
+
+/* ★ 등록 — **이름은 사용자가 붙인다**(ADR-046 ②). 시스템이 추측하지 않는다.
+ *   ⚠️ 신호에 토스트를 쓰지 않는다(함정 14) — `#place-result`(사라지지 않는다)와 서버를 센다.
+ *   ⚠️ `onclick()`이 `run(...)`의 프라미스를 그대로 주므로 **`await` 한다.** */
+await w.openPlaceSheet();
+const t59SheetHasInput = !!$("#place-name");
+$("#place-name").value = "집";
+await $("#place-save").onclick();
+const t59Saved = await ev(`Api.places()`);
+ok("★ 지금 붙은 네트워크에 이름을 붙이면 저장된다 (그 화면이 유일한 입구다)",
+  t59SheetHasInput
+  && ($("#place-result").textContent || "").includes("저장")
+  && (t59Saved.places || []).some((p) => p.net_id === T59_NET && p.name === "집"),
+  `입력칸=${t59SheetHasInput} 결과="${txt("#place-result")}" 저장=${JSON.stringify(t59Saved.places)}`);
+w.closeAll();
+
+// 이제 이름 붙인 곳이 1 — 뒤 둘과 정상이 여기서 갈린다.
+const t59NoBg = await t59Show({ ...t59Base, backgroundPermission: false });
+const t59Stale = await t59Show({ ...t59Base, lastSeenAt: t59Old });
+const t59Ok = await t59Show({ ...t59Base });
+
+/* ★ **실패가 아니라 반쪽이다**(ADR-046 ⑥). 기능을 끄지 않고 그 사실만 말한다 —
+ *   2026-08-28에 알림 권한을 껐다가 Guard가 통째로 죽은 것이 강요의 대가였다. */
+ok("6d ★ 배경 권한이 없으면 '반쪽'이라고 말한다 — 끄지는 않는다",
+  t59NoBg.state === "nobg" && t59NoBg.display === "flex" && t59NoBg.act === "항상 허용",
+  JSON.stringify(t59NoBg));
+
+ok("6e ★ 관측이 오래되면 그 사실이 뜬다 — 돌던 것이 멈춘 것과 처음부터 안 돈 것이 같은 칸이다",
+  t59Stale.state === "stale" && t59Stale.display === "flex",
+  JSON.stringify(t59Stale));
+
+/* 7 ★ 6의 짝 — **정상일 때는 안 뜬다.** 이것이 없으면 *"항상 띄우는 구현"*이 위 다섯을
+ *   전부 통과하고, 그러면 이 줄은 배경이 되어 아무도 안 읽는다. */
+ok("7 ★ 정상일 때는 안 뜬다 (6의 짝)",
+  t59Ok.state === "ok" && t59Ok.display === "none" && t59Ok.text === "",
+  JSON.stringify(t59Ok));
+
+/* ★ 다섯의 짝 — **서로 다른 문장인가.** 각각을 따로 보는 것만으로는 다섯을 같은 문자열로
+ *   만드는 변이가 통과한다(다섯 검사가 모두 '뜬다'만 세므로). T-53이 셋에서 배운 그 자리다. */
+const t59Five = [t59NoPerm, t59NoLoc, t59NoPlace, t59NoBg, t59Stale];
+ok("★ 다섯이 서로 다른 상태·문구다 — 무엇을 해야 할지가 화면에서 갈린다",
+  new Set(t59Five.map((x) => x.state)).size === 5
+  && new Set(t59Five.map((x) => x.text)).size === 5
+  && t59Five.every((x) => x.text.length > 0 && x.display === "flex"),
+  t59Five.map((x) => `${x.state}:${x.text}`).join(" | "));
+
+/* ★ ⑥의 나머지 절반 — **배경 권한이 없을 때만 앱을 열며 줍는다.**
+ *   없으면 그때가 *"그 사이 바뀐 것"*을 잡는 유일한 기회이고, 있으면 콜백이 이미 잡고 있어
+ *   왕복을 더할 이유가 없다. **짝이 없으면 "늘 부르는 구현"도 "안 부르는 구현"도 통과한다.** */
+t59Calls.length = 0;
+await t59Show({ ...t59Base, backgroundPermission: false });
+const t59BgPicked = t59Calls.join("|");
+t59Calls.length = 0;
+await t59Show({ ...t59Base });
+const t59OkPicked = t59Calls.join("|");
+ok("★ 배경 권한이 없을 때만 앱을 열며 한 번 줍는다 (있으면 안 부른다)",
+  t59BgPicked.includes("sync") && !t59OkPicked.includes("sync"),
+  `없을때="${t59BgPicked}" 있을때="${t59OkPicked}"`);
+
+/* ★ 둘은 **서로 다른 화면**으로 보낸다(ADR-046 ⑤). 한 버튼으로 합치면 사용자가
+ *   엉뚱한 화면에서 없는 스위치를 찾는다 — 상태를 다섯으로 가른 것이 거기서 무의미해진다. */
+t59Calls.length = 0;
+await t59Show({ ...t59Base, locationEnabled: false });
+await $("#td-place-act").onclick();
+await t59Show({ ...t59Base, backgroundPermission: false });
+await $("#td-place-act").onclick();
+ok("★ 위치 서비스와 배경 권한이 서로 다른 설정 화면으로 간다",
+  t59Calls.includes("open:location") && t59Calls.includes("open:background"),
+  t59Calls.join("|"));
+
+/* ★ **모르는 곳에서 아무것도 안 남긴 것을 화면이 말한다**(ADR-046 ②의 화면 쪽).
+ *   안 남기는 것은 맞지만, 말하지 않으면 *"안 남았다"*와 *"고장 났다"*가 같아 보인다.
+ *   ⚠️ 문구는 **구현에서 가져온다** — 여기 다시 적으면 두 벌이 되고 갈라진 쪽이 조용해진다. */
+const t59Unknown = ev(`placeResultLine({ outcome: "ok", reason: "unknown_network" })`);
+const t59Recorded = ev(`placeResultLine({ outcome: "ok", reason: "recorded", place: "학교" })`);
+const t59Same = ev(`placeResultLine({ outcome: "ok", reason: "same_place", place: "학교" })`);
+ok("★ 남긴 것 · 안 남긴 것 · 모르는 곳이 서로 다른 결과 문구다",
+  t59Unknown.kind === "warn" && t59Recorded.kind === "ok"
+  && new Set([t59Unknown.text, t59Recorded.text, t59Same.text]).size === 3,
+  `모름="${t59Unknown.text}" 남김="${t59Recorded.text}" 그대로="${t59Same.text}"`);
+
+// 브라우저(네이티브 없음)는 **실패가 아니다** — 없는 기능의 실패를 말하는 것은 잔소리다.
+await ev(`Api.placeDelete(${JSON.stringify((t59Saved.places.find((p) => p.net_id === T59_NET) || {}).id || "")})`)
+  .catch(() => {});
+delete w.Capacitor;
+await w.loadPlaceStatus();
+/* ⚠️ **`t59Ok`과 비교하지 않는다**(AGENT-CHAIN §8). 처음엔 `display === t59Ok.display`로 적었는데,
+ *   *"정상에도 행동을 붙이는"* 변이가 `t59Ok.display`를 `flex`로 만들어 **7과 이 검사가 함께**
+ *   빨간불이 됐다 — 이 검사가 자기 몫(네이티브 없음이 조용한가)을 못 센 것이다.
+ *   **남의 관측값이 아니라 계약값과 비교한다**: `off`는 `PLACE_ACT`에 행동이 없어 안 뜨고,
+ *   `ok`가 아니라는 것은 기록(`data-state`)에만 남는다. */
+ok("★ 네이티브가 없으면 아무 말도 안 한다 — 화면은 조용하고 기록에만 'off'로 남는다",
+  t59Bar.dataset.state === "off" && t59Bar.style.display === "none"
+  && t59Bar.dataset.state !== "ok" && !ev(`PLACE_ACT.off`),
+  `${t59Bar.dataset.state}/${t59Bar.style.display} · 행동=${ev(`PLACE_ACT.off ?? null`)}`);
 
 console.log("\n[부팅 · 연결 실패 복구]");
 ok("로드 후 부팅 오버레이 닫힘", !$("#boot").classList.contains("on"));

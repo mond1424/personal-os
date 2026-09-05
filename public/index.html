@@ -56,6 +56,17 @@
       <button class="go" id="td-cal-act"></button>
     </span>
   </div>
+  <!-- 장소 상태 (T-59 · ADR-046 ⑤) — **다섯이 각자의 문구로 뜬다**: 권한 없음 ·
+       위치 서비스 꺼짐 · 등록 0 · 배경 권한 없음 · 관측이 오래됨.
+       ⚠️ 앞 둘은 사용자가 할 일이 다르다 — 하나는 앱 설정이고 하나는 시스템 토글이다.
+       ⚠️ 배경 권한 없음은 **실패가 아니라 반쪽**이다(ADR-046 ⑥). 기능을 끄지 않고 유도만 한다.
+       ⚠️ 정상일 때는 안 뜬다. 뭉치면 "뭔가 안 된다"만 남고 무엇을 할지 화면이 말하지 않는다. -->
+  <div class="guardbar" id="td-place" style="display:none">
+    <span id="td-place-text"></span>
+    <span style="margin-left:auto;display:flex;gap:10px;flex:none">
+      <button class="go" id="td-place-act"></button>
+    </span>
+  </div>
   <!-- 밤 개입이 연속으로 그냥 지나갔다 (T-60 · ADR-047 ③) — **더 세게 하지 않고 끄는 길을 준다.**
        무시 횟수로 자동 강화하면 공강 전날의 무시가 쌓여 시험 전날 과잉 개입이 된다.
        ⚠️ 끌 수 없는 알림은 사용자가 OS에서 무음 처리하고, 그러면 개입도 **관측도** 잃는다. -->
@@ -328,6 +339,23 @@
        토스트는 사라지므로 여기가 원본이다. -->
   <p class="cap" id="cal-result" data-kind=""></p>
   <p class="cap" style="margin-top:10px">읽기만 해요 — 앱에서 고친 것은 폰 캘린더로 가지 않아요. 캘린더 일정은 캘린더 앱에서 고쳐요.</p>
+</div>
+
+<!-- 장소 등록 (T-59 · ADR-046 ①②) — **이름은 사용자가 붙인다.**
+     "자주 있는 곳이 집이겠지"를 쓰지 않는다: 그것이 틀리는 날은 하필 평소와 다른 날이고,
+     이 앱이 관심 있는 날이 정확히 그날이다. 등록 안 된 네트워크는 아무것도 안 남긴다.
+     ⚠️ 여기 어디에도 네트워크 **이름**이 없다 — 이름 자체가 장소를 말하기 때문에
+     기기가 해시만 준다. 사용자는 "지금 붙어 있는 것"으로 알아본다. -->
+<div class="sheet" id="sh-place">
+  <div class="grip"></div>
+  <div class="sh-t">장소</div>
+  <p class="cap" id="place-note" style="margin-top:4px"></p>
+  <div id="place-now" style="margin-top:12px"></div>
+  <div id="place-list" style="margin-top:12px"></div>
+  <!-- 방금 한 행동의 결과 — 위 `#td-place`의 '상태'와 **다른 것**이다(T-54가 가른 자리).
+       토스트는 사라지므로 여기가 원본이고, 검사도 이 줄을 본다. -->
+  <p class="cap" id="place-result" data-kind=""></p>
+  <p class="cap" style="margin-top:10px">좌표는 저장하지 않아요. 네트워크 이름도 저장하지 않고, 알아볼 수 없는 값으로 바꿔서 보관해요.</p>
 </div>
 
 <div class="sheet" id="sh-add">

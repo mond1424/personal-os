@@ -1,6 +1,6 @@
 -- docs/schema-current.sql — 스키마 스냅샷 (자동 생성)
 -- migrations/ 전체를 인메모리 sqlite에 적용한 뒤 sqlite_master를 덤프한 것.
--- 최신 마이그레이션: 0021_timetable.sql  ·  갱신 2026-09-05
+-- 최신 마이그레이션: 0022_places.sql  ·  갱신 2026-09-06
 -- 0013·0014는 DDL을 바꾸지 않는다: 0013 = analyses backfill(트리거를 원문 그대로 복원) ·
 --   0014 = lm_schema.body에 title 얹기(UPDATE만).
 -- 0015 = me_history에 reason TEXT 추가(ADR-027 — 모드 하향 사유). ALTER라 컬럼이 표 끝에 붙는다.
@@ -37,6 +37,15 @@
 --   같은 과목이 요일마다 길이가 다르다(월 3시간 · 목 2시간). 시작만 담으면 조용히 틀린다.
 --   term_start·term_end는 매 학기 바뀌므로 **입력으로 받는다** — 코드에 박으면 다음 학기에 어긋난다.
 --   ⚠️ `*_frozen_*` 트리거를 두지 않는다: 규칙은 '그날 있었던 일'이 아니라 학기 내내 유효한 설정이다.
+-- 0022 = places·place_visits 신설(T-59 · ADR-046 — 어디 있었는지는 WiFi가 말한다).
+--   ★ **좌표 컬럼이 없다.** 이 앱이 알아야 하는 것은 '집인가 학교인가'지 '북위 몇 도인가'가 아니고,
+--   좌표는 한 번 쌓이면 되돌릴 수 없는 종류의 기록이다(ADR-046 ①).
+--   ★ SSID 원문도 없다 — `net_id`는 SHA-256 앞 16자리이고 **CHECK가 그 형식만 통과시킨다.**
+--   원문을 저장하는 구현은 API를 고치는 것만으로는 못 만든다(값이 CHECK에서 죽는다).
+--   ⚠️ `*_frozen_*` 트리거를 두지 않는다 — 늦게 도착한 관측은 **사람이 그날을 마감한 뒤에
+--   오는 것이 정상**이라, `logs`에 뒀으면 `logs_frozen_ins`가 삽입 자체를 막아 409로 죽었다(함정 6).
+--   ⚠️ place_visits.place_id는 ON DELETE CASCADE다 — 이름이 사라진 전이는 읽을 수 없는 기록이다.
+--   AUTOINCREMENT라 `sqlite_sequence`가 생기는데, sql이 NULL이라 이 덤프에는 안 실린다.
 -- 손으로 고치지 않는다 — 마이그레이션을 추가하고 다시 덤프한다 (CLAUDE.md 세션 종료 규칙).
 
 -- ==========================================================
@@ -233,6 +242,29 @@ CREATE TABLE periods (
   CHECK (start_date <= end_date)
 );
 
+CREATE TABLE place_visits (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  place_id   TEXT NOT NULL REFERENCES places(id) ON DELETE CASCADE,
+  at         TEXT NOT NULL,   -- 관측 시각 (ISO8601, 오프셋 포함)
+  date       TEXT NOT NULL,   -- 귀속일 — 기록 시점에 확정. 경계를 바꿔도 과거는 안 바뀐다
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE places (
+  id         TEXT PRIMARY KEY,
+  -- 이름은 **사용자가 붙인다.** 시스템이 "자주 있는 곳이 집이겠지"를 하지 않는다 —
+  -- 그것이 틀리는 날은 하필 평소와 다른 날이고, 이 앱이 관심 있는 날이 정확히 그날이다.
+  name       TEXT NOT NULL,
+  -- SHA-256(SSID) 앞 16자리 소문자 hex. 기기의 WifiProbe.netId 와 같은 약속이다.
+  -- ⚠️ BSSID(AP 의 MAC)는 안 섞는다 — 학교처럼 AP 가 여럿인 곳에서 같은 네트워크가
+  --    AP 마다 다른 장소가 되어 버린다. 진단 프로브는 섞었고, 기능은 안 섞는다.
+  net_id     TEXT NOT NULL UNIQUE,
+  created_at TEXT NOT NULL,
+  CHECK (length(trim(name)) > 0),
+  CHECK (length(name) <= 40),
+  CHECK (length(net_id) = 16 AND net_id NOT GLOB '*[^0-9a-f]*')
+);
+
 CREATE TABLE schedule_entries (
   id          INTEGER PRIMARY KEY,
   task_id     TEXT NOT NULL REFERENCES tasks(id),
@@ -258,6 +290,8 @@ CREATE TABLE settings (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL                -- 단순 문자열 또는 JSON
 );
+
+CREATE TABLE sqlite_sequence(name,seq);
 
 CREATE TABLE summaries (
   kind         TEXT NOT NULL CHECK (kind IN ('daily','weekly','monthly')),
@@ -391,6 +425,10 @@ CREATE UNIQUE INDEX idx_lm_schema_active ON lm_schema(section) WHERE active = 1;
 CREATE INDEX idx_logs_date ON logs(date, ts);
 
 CREATE INDEX idx_memos_date ON memos(date);
+
+CREATE INDEX idx_place_visits_at ON place_visits(at);
+
+CREATE INDEX idx_place_visits_date ON place_visits(date, at);
 
 CREATE INDEX idx_tasks_period ON tasks(period_id);
 

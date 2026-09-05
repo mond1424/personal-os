@@ -16,6 +16,7 @@ import * as collected from "./services/collected";
 import * as events from "./services/events";
 import * as timetable from "./services/timetable";
 import * as calsync from "./services/calsync";
+import * as places from "./services/places";
 import { PROVIDERS, aiConfig, testConnection } from "./lib/ai";
 import * as guard from "./services/guard";
 import * as lm from "./services/lifemodel";
@@ -209,6 +210,17 @@ app.delete("/api/events/:id", async (c) => c.json(await events.remove(c.env, c.r
 // 폰 캘린더 미러 (T-52 · ADR-029) — 기기가 창 범위를 통째로 보내고 서버가 맞춘다. **멱등**.
 // 응답이 무엇을 **안 했는지**까지 센다: skipped_closed · skipped_stale · protected_kept.
 app.post("/api/cal/sync", async (c) => c.json(await calsync.syncCal(c.env, c.get("t"), await body(c))));
+
+// ── 장소 (T-59 · ADR-046) — 어디 있었는지는 WiFi가 말한다 ────
+// `observe`는 기기가 본 것 하나를 그대로 보낸다. **전이 판정은 서버가 한다**(ADR-046 ③).
+// ⚠️ 모르는 네트워크·같은 곳도 **200**이다 — 기기가 *"안 남았다"* 와 *"못 보냈다"* 를
+//    갈라야 하고, 400으로 뭉개면 정상 동작이 기기의 `lastError`에 실패로 적힌다.
+app.get("/api/places", async (c) => c.json(await places.list(c.env, c.get("t"))));
+app.post("/api/places", async (c) => c.json(await places.register(c.env, c.get("t"), await body(c)), 201));
+app.delete("/api/places/:id", async (c) =>
+  c.json(await places.remove(c.env, c.get("t"), c.req.param("id"))));
+app.post("/api/places/observe", async (c) =>
+  c.json(await places.observe(c.env, c.get("t"), await body(c))));
 
 // ── Analysis (5장) ──────────────────────────────────────────
 app.get("/api/analyses", async (c) => c.json(await analysis.list(c.env)));

@@ -71,6 +71,32 @@
 <uses-permission android:name="android.permission.READ_CALENDAR" />
 
 
+<!-- ══════════ 장소 (T-59 · ADR-046) ══════════ -->
+
+<!-- ★ 이 목록은 문서에서 옮겨 적은 것이 아니라 2026-09-05 폰이 시킨 것이다.
+     (2026-09-03에 `agy inspect`를 문서에서 옮겨 적었다가 존재하지 않는 명령이었다.)
+
+     ACCESS_WIFI_STATE       붙은 네트워크를 묻는 통로.
+     위치 권한(FINE/COARSE)  ★ 안드로이드는 SSID를 읽는 데도 위치 권한을 요구한다.
+                             좌표는 안 쓴다: 저장하는 것은 해시뿐이다(ADR-046 ①).
+     ACCESS_NETWORK_STATE    ConnectivityManager 경로가 이것 없이 SecurityException으로 죽었다.
+                             (읽히는 것은 레거시 WifiManager 경로이고, 콜백은 이쪽에 건다)
+     ACCESS_BACKGROUND_LOCATION
+                             앞에 있을 때는 읽혔는데 홈으로 내리자 redacted였다. 이것을 켜자
+                             배경에서도 읽혔다. ⚠️ **선언만으로는 안 켜진다** : Android 11+에서
+                             "항상 허용"은 팝업으로 못 받고 설정 화면으로 보내야 한다.
+                             ⚠️ 그래도 **강요하지 않는다**(ADR-046 ⑥). 없으면 앱을 열 때
+                             줍는 반쪽으로 돈다 : 귀가 시각은 놓치지만 0은 아니다.
+
+     ★ foregroundServiceType="location"은 필요 없었다 — GuardService는 SPECIAL_USE 그대로인데
+       배경 읽기가 통과했다. 그래서 이 티켓이 guard/를 한 줄도 안 건드린다. -->
+<uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+<uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+<uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+<uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+<uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
+
+
 <!-- ══════════ 9월 이후 — 오버레이 ══════════ -->
 <!-- 지금은 선언만. 권한 요청은 실제로 쓸 때 -->
 <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />

@@ -997,3 +997,48 @@ export const stInsertTimetableRule = (
     (id,subject,weekday,start_time,end_time,term_start,term_end,created_at)
     VALUES (?,?,?,?,?,?,?,?)`)
     .bind(id, subject, weekday, startTime, endTime, termStart, termEnd, now);
+
+// ── 장소 (0022 · ADR-046) ─────────────────────────────────────
+// **좌표도 SSID 원문도 여기 없다.** 사는 것은 사용자가 붙인 이름과 네트워크 해시뿐이고,
+// *"지금 어디인가"* 는 저장하지 않는다 — 마지막 전이를 물으면 나온다(원칙 1).
+export interface PlaceRow {
+  id: string; name: string; net_id: string; created_at: string;
+}
+export interface PlaceVisitRow {
+  id: number; place_id: string; at: string; date: string; created_at: string;
+}
+
+// 방문 수·마지막 시각은 **조인으로 센다.** places에 컬럼으로 두면 파생을 물화하는 것이다.
+export const places = (env: Env) => q(env, `
+  SELECT p.*, COUNT(v.id) AS visits, MAX(v.at) AS last_at
+  FROM places p LEFT JOIN place_visits v ON v.place_id = p.id
+  GROUP BY p.id ORDER BY p.created_at`)
+  .all<PlaceRow & { visits: number; last_at: string | null }>();
+
+export const placeByNet = (env: Env, netId: string) =>
+  q(env, "SELECT * FROM places WHERE net_id = ?").bind(netId).first<PlaceRow>();
+
+export const placeById = (env: Env, id: string) =>
+  q(env, "SELECT * FROM places WHERE id = ?").bind(id).first<PlaceRow>();
+
+export const stInsertPlace = (env: Env, id: string, name: string, netId: string, now: string) =>
+  q(env, "INSERT INTO places (id,name,net_id,created_at) VALUES (?,?,?,?)")
+    .bind(id, name, netId, now);
+
+// 방문은 FK의 ON DELETE CASCADE가 함께 간다 — 이름이 사라진 전이는 읽을 수 없는 기록이다.
+export const stDeletePlace = (env: Env, id: string) =>
+  q(env, "DELETE FROM places WHERE id = ?").bind(id);
+
+/** 마지막 전이 하나. **전이 판정이 이것을 읽는다** — 같은 곳이면 새 행을 안 만든다. */
+export const lastVisit = (env: Env) => q(env, `
+  SELECT v.*, p.name FROM place_visits v JOIN places p ON p.id = v.place_id
+  ORDER BY v.at DESC, v.id DESC LIMIT 1`).first<PlaceVisitRow & { name: string }>();
+
+export const visitsSince = (env: Env, fromDate: string, limit: number) => q(env, `
+  SELECT v.*, p.name FROM place_visits v JOIN places p ON p.id = v.place_id
+  WHERE v.date >= ? ORDER BY v.at DESC, v.id DESC LIMIT ?`)
+  .bind(fromDate, limit).all<PlaceVisitRow & { name: string }>();
+
+export const stInsertVisit = (env: Env, placeId: string, at: string, date: string, now: string) =>
+  q(env, "INSERT INTO place_visits (place_id,at,date,created_at) VALUES (?,?,?,?)")
+    .bind(placeId, at, date, now);
