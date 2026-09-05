@@ -292,6 +292,10 @@ class GuardPlugin : Plugin() {
         // 전엔 이것만 코드 상수여서 조정할 때마다 APK가 들었다.
         call.getInt("refireMinutes")?.let { s.watchRefireMinutes = it }
         call.getInt("maxPerNight")?.let { s.watchMaxPerNight = it }
+        // 아침 재료의 두 임계 (ADR-047 · T-60). **여기서 받는 이유는 T-51과 같다** —
+        // 실사용에서 조정할 값을 코드 상수로 두면 조정할 때마다 APK가 든다.
+        call.getInt("wakeAheadHours")?.let { s.wakeLookaheadHours = it }
+        call.getInt("wakeStaleHours")?.let { s.wakeStaleHours = it }
         watchStatus(call)
     }
 

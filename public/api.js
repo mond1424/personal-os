@@ -143,6 +143,9 @@ const Api = {
   // outcome은 Guard가 판단하지 않는다 — 사용자가 사후 확정한다 (설계 §6.5)
   guardPending: () => _req("GET", "/guard/pending-outcome"),
   guardOutcome: (id, outcome) => _req("POST", `/guard/events/${id}/outcome`, { outcome }),
+  // 밤 개입이 연속으로 지나갔나 (T-60 · ADR-047 ③) — **세는 것이지 컬럼이 아니다**
+  guardL2Nag: () => _req("GET", "/guard/l2-nag"),
+  guardL2NagAck: () => _req("POST", "/guard/l2-nag/ack"),
   // 수집한 학사 일정 — 제안까지가 상한이다. 자동으로 events에 넣지 않는다 (T-42 · ADR-030)
   collectedPending: () => _req("GET", "/collected/pending"),
   collectedAccept: (id) => _req("POST", `/collected/${id}/accept`),

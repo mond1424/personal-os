@@ -837,6 +837,26 @@ export const guardDayTally = (env: Env, onDate: string) =>
             FROM guard_events WHERE on_date = ?`)
     .bind(onDate).first<{ fired: number; last_at: string | null; ignored: number | null }>();
 
+/**
+ * 감지 경로 Level 2의 최근 반응 — **연속 무시를 세는 재료** (T-60 · ADR-047 ③).
+ *
+ * ⚠️ **횟수를 저장하지 않는다**(원칙 1 · `later_fires`와 같은 모양). 컬럼을 만들면
+ *    그 순간 append-only 트리거와 닫힌 `CHECK`를 상대해야 하는데 얻는 것이 없다 —
+ *    `guard_events`를 최근 순으로 훑으면 언제든 나온다.
+ *
+ * ★ **`cause LIKE 'watch:%'`로 좁힌다.** 예약 경로(`protect`)의 Level 2는 데드라인 역산이
+ *   근거라 *"항상 뜬다"* 가 아니고, 그것까지 세면 **끄기 제안이 남의 무시로 뜬다.**
+ *   ADR-047이 다루는 것은 감지 경로 하나다.
+ *
+ * **끊는 판단은 여기서 하지 않는다** — *"NULL을 어떻게 볼 것인가"* 는 도메인이라 `services/`다.
+ * 여기서는 최근 순서 그대로 준다.
+ */
+export const guardWatchL2Recent = (env: Env, limit = 40) =>
+  q(env, `SELECT id, fired_at, reaction FROM guard_events
+          WHERE level = 2 AND cause LIKE 'watch:%'
+          ORDER BY fired_at DESC LIMIT ?`)
+    .bind(limit).all<{ id: string; fired_at: string; reaction: string | null }>();
+
 /** ADR-024 지출 통제 ③ — model_high 일일 상한 판정용. */
 export const guardAiCallsOn = (env: Env, onDate: string) =>
   q(env, "SELECT COUNT(*) AS n FROM guard_events WHERE on_date = ? AND ai_used = 1")

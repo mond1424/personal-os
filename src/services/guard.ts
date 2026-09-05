@@ -12,6 +12,8 @@ import { buildCoreContext } from "../lib/context";
 import { nextId } from "../lib/id";
 import { addDays, attributionOfIso, isoNow, normalizeIso } from "../lib/time";
 import { ApiError, type Env, type TimeCtx } from "../types";
+// 시간표는 규칙이라 조회 시 전개된다(T-58). Guard는 **읽기만** 한다 — 전개도 저장도 저쪽 몫이다.
+import { classesIn } from "./timetable";
 
 /** 설정 기본값 — event별 값이 없을 때. 초기값의 정확도보다 조정 가능한 구조가 중요하다. */
 const DEFAULT_SLEEP_MIN = 360;   // 6시간
@@ -227,6 +229,55 @@ function protectAxis(e: db.EventRow, offsetMin: number) {
   return { start, deadline, from, sleep, prep };
 }
 
+/**
+ * ★ **아침에 무엇이 기다리는가** — Level 2가 밤마다 다른 말을 할 재료 (ADR-047 · T-60).
+ *
+ * L2의 조건은 *"화면이 N분 이상 켜져 있다"* 하나뿐이었고 **그 시각에 그것은 거의 언제나
+ * 참이라, 여섯 밤(8/26~8/31)이 100% 무시됐다.** 항상 참인 신호는 아무것도 말하지 않는다.
+ * 이 목록이 *"오늘 밤이 다른 밤과 어떻게 다른가"* 를 준다 — **T-58 전까지는 원천에 없던 값이다.**
+ *
+ * ★ **하루에 하나, 그 날 가장 이른 약속만 싣는다.** 기기가 알아야 하는 것은
+ *   *"자고 일어나서 곧 해야 할 것이 있나"* 이고, 그 뒤의 일정은 그 판단을 안 바꾼다.
+ *
+ * ⚠️ **시각이 없는 종일 일정은 세지 않는다.** 공휴일·기념일이 `09:00`으로 읽히면
+ *    (`protectAxis`는 그렇게 읽는다 — 저쪽은 *보호할 시험*이라 맞다) **추석 전날 밤에 L2가
+ *    뜬다.** 그건 이 티켓이 없애려는 바로 그 소음이다. 종일로 적힌 시험은 `protect_from`이
+ *    붙어 **예약 경로(`fires[]`)가 이미 지키므로**, 여기서 빠져도 안전 쪽이 안 뚫린다.
+ *
+ * ⚠️ **지난 것은 안 싣는다**(`fires[]`와 같은 규칙). 기기는 여기서 *"now 이후 첫 항목"* 을
+ *    고르는데, 이미 지난 항목이 섞여 있으면 그 고르기가 재료 순서에 의존하게 된다.
+ */
+const WAKE_WINDOW_DAYS = 30;
+
+async function wakePoints(env: Env, t: TimeCtx, days: number) {
+  // ⚠️ **`days`를 그대로 쓰지 않는다.** `classesIn`은 창이 너무 넓으면 **던지고**(400),
+  //    그러면 넓은 `?days=`가 기기의 예약 pull을 **통째로** 깨뜨린다 — 지금까지 무해하던
+  //    질의 인자가 아침 재료를 붙인 순간 다른 것까지 끊는 손잡이가 된다.
+  //    기기에 필요한 것은 *"동기화가 며칠 실패해도 버틸 만큼"* 이고 그 이상은 쓰이지 않는다.
+  const end = addDays(t.d, Math.max(1, Math.min(days, WAKE_WINDOW_DAYS)));
+  const nowMs = Date.parse(t.now);
+  const [classes, evs] = await Promise.all([
+    classesIn(env, t.d, end),                  // 규칙에서 전개한 파생 — 저장 없음 (T-58)
+    db.eventsRange(env, t.d, end),
+  ]);
+
+  const best = new Map<string, { at: string; title: string; source: "class" | "event" }>();
+  const put = (date: string, time: string, title: string, source: "class" | "event") => {
+    const at = new Date(`${date}T${time}:00${offsetSuffix(t.offsetMin)}`);
+    const ms = at.getTime();
+    if (!Number.isFinite(ms) || ms <= nowMs) return;
+    const cur = best.get(date);
+    if (cur && Date.parse(cur.at) <= ms) return;
+    best.set(date, { at: at.toISOString(), title, source });
+  };
+  for (const c of classes) put(c.date, c.start_time, c.subject, "class");
+  for (const e of evs.results) if (e.time) put(e.date, e.time, e.title, "event");
+
+  return [...best.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([date, v]) => ({ date, ...v }));
+}
+
 export async function schedule(env: Env, t: TimeCtx, days = 30) {
   const rows = (await db.protectedEvents(env, t.d, days)).results;
   const mode = await db.guardActiveMode(env);
@@ -274,7 +325,71 @@ export async function schedule(env: Env, t: TimeCtx, days = 30) {
     mode: mode?.key ?? null,
     friction_mult: mode?.friction_mult ?? 1,
     events: plans,
+    // ★ **재료이지 판정이 아니다** (ADR-047 · T-60). *"띄울까 말까"* 는 기기가 발동 시점에
+    //   정한다 — 그 판단에 `now`가 들어가고, 발동 경로엔 네트워크가 없기 때문이다(ADR-021).
+    //   서버는 *"무엇이 언제 있다"* 까지만 말한다.
+    wake: await wakePoints(env, t, days),
   };
+}
+
+// ── Level 2 무시 누적 (ADR-047 ③ · T-60) ─────────────────────
+
+/**
+ * ⚠️ **기본값은 여기 하나뿐이고, `settings`가 덮는다.** 하루 경계와 같은 모양이다 —
+ * 문서·티켓에 숫자를 적지 않는 이유도 같다(적으면 두 벌이 되고 그 순간 한쪽이 낡는다).
+ */
+const L2_NAG_KEY = "guard_l2_ignore_threshold";
+const L2_NAG_ACK_KEY = "guard_l2_ignore_ack";
+const DEFAULT_L2_NAG = 3;
+
+const l2NagInt = (v: string | undefined, fallback: number) => {
+  const n = Number(v);
+  return Number.isInteger(n) && n >= 0 ? n : fallback;
+};
+
+/**
+ * 연속 무시가 임계를 넘으면 **끄는 선택지를 준다** — 더 세게 하지 않는다 (ADR-047 ③).
+ *
+ * ★ **무시로 개입을 늘리지 않는 것이 이 조항의 핵심이다.** 자동 강화는 ②와 정면 충돌한다:
+ *   공강 전날의 무시가 쌓여 **시험 전날 과잉 개입**이 된다. 끌 수 없는 알림은 사용자가
+ *   OS에서 무음 처리하고, 그러면 개입도 **관측도** 함께 잃는다(ADR-026의 이탈 경로).
+ *
+ * ⚠️ **`reaction IS NULL`은 세지도, 끊지도 않는다.** `finalizeIgnored`의 유예가 36시간이라
+ *    (기기가 오프라인이면 발동과 반응을 함께 늦게 올린다 — ADR-023) 어젯밤 발동은 오늘
+ *    구조적으로 NULL이다. NULL이 끊으면 이 값은 **영원히 0에 가깝고 카드가 한 번도 안 뜬다** —
+ *    `daily.ts`가 `ignored`를 문장으로 말하지 않기로 한 것과 같은 자리다.
+ */
+export async function l2Nag(env: Env) {
+  const [rows, settings] = await Promise.all([
+    db.guardWatchL2Recent(env),
+    db.settingsAll(env),
+  ]);
+  const s = Object.fromEntries(settings.results.map((r) => [r.key, r.value]));
+
+  let streak = 0;
+  for (const r of rows.results) {
+    if (r.reaction === null) continue;          // 아직 확정 전 — 모른다는 뜻이다
+    if (r.reaction !== "ignored") break;        // 한 번이라도 응답했으면 연속이 끊긴다
+    streak++;
+  }
+
+  const threshold = l2NagInt(s[L2_NAG_KEY], DEFAULT_L2_NAG);
+  const ack = l2NagInt(s[L2_NAG_ACK_KEY], 0);
+  return {
+    streak,
+    threshold,
+    ack,
+    // ★ `streak > ack`가 짝이다 — 없으면 *"그대로"* 를 고른 사용자에게 **같은 카드가
+    //   매번 다시 뜬다.** 그건 이 카드가 없애려는 잔소리와 같은 모양이다.
+    over: streak >= threshold && streak > ack,
+  };
+}
+
+/** *"봤다"* 를 적는다 — 끄든 그대로 두든, 이 숫자까지는 다시 묻지 않는다. */
+export async function ackL2Nag(env: Env) {
+  const cur = await l2Nag(env);
+  await db.stSettingPut(env, L2_NAG_ACK_KEY, String(cur.streak)).run();
+  return { ...cur, ack: cur.streak, over: false };
 }
 
 // ── 기록 ──────────────────────────────────────────────────────

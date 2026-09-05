@@ -56,6 +56,16 @@
       <button class="go" id="td-cal-act"></button>
     </span>
   </div>
+  <!-- 밤 개입이 연속으로 그냥 지나갔다 (T-60 · ADR-047 ③) — **더 세게 하지 않고 끄는 길을 준다.**
+       무시 횟수로 자동 강화하면 공강 전날의 무시가 쌓여 시험 전날 과잉 개입이 된다.
+       ⚠️ 끌 수 없는 알림은 사용자가 OS에서 무음 처리하고, 그러면 개입도 **관측도** 잃는다. -->
+  <div class="guardbar" id="td-nag" style="display:none">
+    <span id="td-nag-text"></span>
+    <span style="margin-left:auto;display:flex;gap:10px;flex:none">
+      <button class="go" id="td-nag-off">끄기</button>
+      <button class="go" id="td-nag-keep" style="color:var(--sub)">그대로</button>
+    </span>
+  </div>
   <!-- 수업 — 시간표 규칙에서 전개한 파생. 일정(#td-events)과 **다른 칸이다** (T-58) -->
   <div class="sec" id="td-classes" style="display:none"></div>
   <div class="sec" id="td-events" style="display:none"></div>

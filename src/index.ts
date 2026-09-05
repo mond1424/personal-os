@@ -285,6 +285,15 @@ app.post("/api/guard/events/:id/outcome", async (c) => {
 });
 app.get("/api/guard/pending-outcome", async (c) => c.json(await guard.pendingOutcome(c.env)));
 
+/**
+ * 감지 Level 2가 연속으로 몇 번 그냥 지나갔나 (ADR-047 ③ · T-60).
+ * **세는 것이지 컬럼이 아니다** — `guard_events`를 훑으면 나온다(원칙 1).
+ */
+app.get("/api/guard/l2-nag", async (c) => c.json(await guard.l2Nag(c.env)));
+
+/** *"끄기"* 든 *"그대로"* 든 여기를 지난다 — 같은 숫자로 다시 묻지 않기 위해서다. */
+app.post("/api/guard/l2-nag/ack", async (c) => c.json(await guard.ackL2Nag(c.env)));
+
 // 수집한 학사 일정을 제안으로 꺼낸다 (T-42 · ADR-030 본체).
 // **자동으로 events에 넣지 않는다** — 오수집이 캘린더를 오염시킨다. 제안까지가 상한이다.
 app.get("/api/collected/pending", async (c) => c.json(await collected.pending(c.env, c.get("t"))));

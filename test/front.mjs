@@ -3261,6 +3261,105 @@ ok("★ 오늘이 어떤 요일이든 Today 에 수업이 뜬다 (T-52~55가 못
   t58Td.disp !== "none" && t58Td.글.includes("매일수업") && t58Td.글.includes("09:00"),
   `disp=${t58Td.disp} 글=${t58Td.글.slice(0, 60)}`);
 
+// ── T-60 · 무시가 쌓이면 끄는 길을 준다 (ADR-047 ③) ───────────
+//
+// ★ **더 세게 하는 것이 아니다.** 무시 횟수로 자동 강화하면 공강 전날의 무시가 쌓여
+//   시험 전날 과잉 개입이 된다(②와 정면 충돌). 그리고 끌 수 없는 알림은 사용자가 OS에서
+//   무음 처리하고, 그러면 개입뿐 아니라 **관측도 함께 잃는다.**
+// ⚠️ 신호에 토스트도 `until`도 안 쓴다(함정 14) — `onclick()`이 `run(...)`의 프라미스를 준다.
+console.log("\n[T-60 · 밤 개입이 그냥 지나갔다]");
+
+const t60Bar = $("#td-nag");
+await ev(`(async()=>{
+  window.__t60 = { nag: null, acks: 0, off: 0,
+    old: [Api.guardL2Nag, Api.guardL2NagAck, globalThis.Capacitor] };
+  Api.guardL2Nag = async () => {
+    if (window.__t60.nag === "boom") throw new Error("t60 boom");
+    return window.__t60.nag;
+  };
+  Api.guardL2NagAck = async () => { window.__t60.acks++; return { over: false }; };
+})()`);
+const t60Load = (nag) => ev(`(async()=>{
+  window.__t60.nag = ${JSON.stringify(nag)};
+  await loadGuardNag();
+})()`);
+const t60Snap = () => ({ state: t60Bar.dataset.state, display: t60Bar.style.display });
+/* ⚠️ **핸들러가 없으면 그 검사만 빨간불이 되게 한다.** 카드를 안 띄우는 변이에서
+ *   `onclick()`을 바로 부르면 `null is not a function`으로 **러너가 죽고 요약을 통째로 잃는다** —
+ *   배터리가 그것을 *"아무도 안 죽었다"* 로 읽는 것이 T-55·T-56·T-58에서 물린 그 칸이다. */
+const t60Click = async (sel) => {
+  const h = $(sel).onclick;
+  if (typeof h !== "function") return "핸들러없음";
+  await h();
+  return "눌림";
+};
+
+// 5 — 임계를 넘었다. **횟수가 문구에 들어야 한다**: "몇 번"이 빠지면 이 카드도 매일 같은 말이 된다.
+await t60Load({ streak: 6, threshold: 3, ack: 0, over: true });
+const t60Over = t60Snap();
+ok("5 연속 무시가 임계를 넘으면 끄기 카드가 뜬다 — 횟수가 문구에 든다",
+  t60Over.state === "ask" && t60Over.display === "flex" && txt("#td-nag-text").includes("6"),
+  `${JSON.stringify(t60Over)} / ${txt("#td-nag-text")}`);
+
+/* 6 ★ **5의 짝** — 임계 아래면 안 뜬다. 이것이 없으면 *"항상 띄우는 구현"*이 5만으로 통과하고,
+ *   그러면 이 카드가 고치려던 잔소리를 **카드가 다시 만든다.** */
+await t60Load({ streak: 1, threshold: 3, ack: 0, over: false });
+const t60Under = t60Snap();
+ok("6 ★ 임계 아래면 안 뜬다 (5의 짝 — 카드가 새 잔소리가 되지 않는다)",
+  t60Under.state === "none" && t60Under.display === "none", JSON.stringify(t60Under));
+
+/* ★ **none과 error는 화면에서 같고 기록에서만 다르다**(T-33이 세운 자리).
+ *   "안 뜬다"만 세면 조회가 **항상** 실패해도 초록이다 — 그 실패는 아무 소리도 안 낸다. */
+await t60Load("boom");
+const t60Err = t60Snap();
+/* ⚠️ **`t60Under.display`와 비교하지 않는다.** 그러면 *"항상 띄우는 변이"* 가 6과 여기를
+ *   **함께** 죽여, 이 검사가 자기 몫(실패가 이름을 갖는가)을 못 센다 — T-58에서 검사끼리
+ *   몫을 먹던 자리 셋을 좁힌 것과 같은 이유다. 여기가 지는 것은 **계약값** 하나다. */
+ok("★ 조회가 실패해도 화면을 막지 않는다 · 안 뜨는 것은 같고 기록에서만 갈린다",
+  t60Err.state === "error" && t60Err.display === "none" && t60Err.state !== t60Under.state,
+  `${JSON.stringify(t60Err)} vs ${JSON.stringify(t60Under)}`);
+
+/* ★ *"그대로"* 도 기록을 지난다. 안 지나면 같은 숫자로 매번 다시 물어
+ *   **거절이 아무 뜻도 갖지 못한다** — 그 자체가 이 카드가 없애려는 모양이다. */
+await t60Load({ streak: 6, threshold: 3, ack: 0, over: true });
+const t60AckBefore = ev(`window.__t60.acks`);
+const t60KeepHit = await t60Click("#td-nag-keep");
+ok("★ '그대로'도 기록을 지난다 — 같은 숫자로 다시 묻지 않기 위해서다",
+  t60KeepHit === "눌림" && ev(`window.__t60.acks`) === t60AckBefore + 1
+  && t60Snap().state === "none",
+  `${t60KeepHit} ack ${t60AckBefore}→${ev(`window.__t60.acks`)} / ${t60Snap().state}`);
+
+/* ★ **스위치는 기기 prefs에 있다. 웹에는 끌 것이 없다** — 여기서 조용히 성공한 척하면
+ *   사용자는 껐다고 믿는데 그 밤에 또 뜬다. T-54가 없앤 `sent 0`과 같은 모양이다.
+ *   ⚠️ 카드가 **안 닫히는 것**까지 센다: 닫히면 그것이 성공 신호로 읽힌다(T-53 B-2). */
+await t60Load({ streak: 6, threshold: 3, ack: 0, over: true });
+const t60NoNative = ev(`window.__t60.acks`);
+const t60OffHit1 = await t60Click("#td-nag-off");
+ok("★ 네이티브가 없으면 껐다고 말하지 않는다 — 카드도 안 닫힌다",
+  t60OffHit1 === "눌림" && ev(`window.__t60.acks`) === t60NoNative
+  && t60Snap().state === "ask" && txt("#toast").includes("폰 앱"),
+  `${t60OffHit1} ack=${ev(`window.__t60.acks`)} 상태=${t60Snap().state} 토스트=${txt("#toast")}`);
+
+// ★ 짝 — 네이티브가 있으면 **실제로 끄고** 그 뒤에 기록한다. 순서가 뒤집히면 끄기가 실패해도 ack가 남는다.
+await ev(`(async()=>{
+  globalThis.Capacitor = { Plugins: { Guard: {
+    setWatch: async (o) => { window.__t60.off++; window.__t60.lastSet = o; return {}; },
+  } } };
+})()`);
+await t60Load({ streak: 6, threshold: 3, ack: 0, over: true });
+const t60OffHit2 = await t60Click("#td-nag-off");
+ok("★ 네이티브가 있으면 실제로 끄고(enabled=false) 그 뒤에 기록한다",
+  t60OffHit2 === "눌림" && ev(`window.__t60.off`) === 1
+  && ev(`window.__t60.lastSet.enabled`) === false
+  && ev(`window.__t60.acks`) === t60NoNative + 1 && t60Snap().state === "none",
+  `${t60OffHit2} off=${ev(`window.__t60.off`)} 값=${ev(`JSON.stringify(window.__t60.lastSet ?? null)`)}`
+  + ` ack=${ev(`window.__t60.acks`)} 상태=${t60Snap().state}`);
+
+await ev(`(async()=>{
+  Api.guardL2Nag = window.__t60.old[0]; Api.guardL2NagAck = window.__t60.old[1];
+  globalThis.Capacitor = window.__t60.old[2];
+})()`);
+
 console.log("\n[부팅 · 연결 실패 복구]");
 ok("로드 후 부팅 오버레이 닫힘", !$("#boot").classList.contains("on"));
 

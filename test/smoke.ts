@@ -2325,6 +2325,203 @@ ok("8 ★ 학기 범위가 입력에서 온다 — 거절하고, 코드에 날�
   ttNoTerm.status === 400 && !ttDateLiteral,
   `범위없음=${ttNoTerm.status} 날짜리터럴=${ttDateLiteral}`);
 
+// ── Level 2가 밤마다 다른 말을 한다 (T-60 · ADR-047) ─────────
+//
+// L2의 조건은 *"화면이 N분 이상 켜져 있다"* 하나뿐이었고 **그 시각에 그것은 거의 언제나
+// 참이라 여섯 밤(8/26~8/31)이 100% 무시됐다.** 위 §T-58이 저장해 둔 시간표가 여기서
+// *"오늘 밤이 다른 밤과 어떻게 다른가"* 를 준다 — **그 전에는 원천에 없던 값이다.**
+console.log("\n[T-60] Level 2가 밤마다 다른 말을 한다 — 아침 재료");
+
+/** 로컬 'HH:MM'을 절대 시각으로. **서버와 같은 시계(`t0.offsetMin`)를 쓰되 식은 여기 것이다.** */
+const wakeMs = (date: string, hm: string) => Date.parse(`${date}T${hm}:00Z`) - t0.offsetMin * 60_000;
+
+const t60Sched = (await api("GET", "/api/guard/schedule")).json;
+const t60Wake: any[] = t60Sched.wake ?? [];
+
+/* 1 **재료가 시각과 제목을 싣는다.** 기대값은 구현에서 베끼지 않고 **다른 엔드포인트**
+ *   (`/api/calendar`)가 준 그 창의 수업·일정에서 만든다 — 두 경로가 같은 말을 해야 한다.
+ *   ⚠️ 창을 D+8~D+14로 잡는 이유: 오늘·내일은 실제 시계에 따라 이미 지난 칸이 섞이는데,
+ *      `wake`는 **지난 것을 안 싣는다**(그것이 규칙이다). 창이 앞이면 검사가 시각에 의존한다. */
+const t60From = addDays(D, 8), t60To = addDays(D, 14);
+const t60Cal = (await api("GET", `/api/calendar?start=${t60From}&end=${t60To}`)).json;
+const t60Want = new Map<string, { hm: string; title: string }>();
+const t60Bid = (date: string, hm: string, title: string) => {
+  const cur = t60Want.get(date);
+  if (!cur || hm < cur.hm) t60Want.set(date, { hm, title });
+};
+for (const c of t60Cal.classes ?? []) t60Bid(c.date, c.start_time, c.subject);
+for (const e of t60Cal.events ?? []) if (e.time) t60Bid(e.date, e.time, e.title);
+const t60Got = new Map<string, any>(
+  t60Wake.filter((w) => w.date >= t60From && w.date <= t60To).map((w) => [w.date, w]));
+const t60Match = [...t60Want].every(([date, v]) => {
+  const g = t60Got.get(date);
+  return !!g && Date.parse(g.at) === wakeMs(date, v.hm) && g.title === v.title;
+});
+ok("1 아침 재료가 그 날 첫 약속의 시각과 제목을 싣는다 (캘린더와 같은 말을 한다)",
+  t60Want.size > 0 && t60Match && t60Got.size === t60Want.size,
+  `기대=${t60Want.size} 받음=${t60Got.size} 일치=${t60Match}`);
+
+/* 2 ★ **1의 짝** — 수업도 일정도 없는 날은 재료에 없다. 화요일이 공강이고, 그 밤에 뜨는
+ *   L2가 정확히 여섯 밤을 무시하게 만든 소음이다. **없는 것을 세지 않으면 "항상 뜬다"가
+ *   그대로 통과한다.** */
+const t60Empty = [...Array(7)].map((_, i) => addDays(t60From, i)).filter((d) => !t60Want.has(d));
+ok("2 ★ 수업도 일정도 없는 날은 재료에 없다 (1의 짝 — 공강 밤은 말할 것이 없다)",
+  t60Empty.length > 0 && t60Empty.every((d) => !t60Got.has(d)),
+  `빈날=${t60Empty.length} 그중재료있음=${t60Empty.filter((d) => t60Got.has(d)).length}`);
+
+/* 3 ★ **시각 없는 종일 일정은 아침이 아니다.** `protectAxis`는 종일을 `09:00`으로 읽는데
+ *   (저쪽은 *보호할 시험*이라 그게 맞다) 같은 규칙을 여기 쓰면 **추석 전날 밤에 L2가 뜬다.**
+ *   폰 캘린더가 실어 오는 것의 절반이 공휴일이라(9/4 실측: 8건 중 4건) 이 한 줄이 갈린다. */
+const t60AllDay = addDays(D, 10);
+await api("POST", "/api/events", { title: "종일-공휴일", date: t60AllDay });
+const t60AfterAllDay = ((await api("GET", "/api/guard/schedule")).json.wake as any[])
+  .find((w) => w.date === t60AllDay);
+ok("3 ★ 시각 없는 종일 일정은 아침 재료가 아니다 (공휴일 밤에 안 뜬다)",
+  t60Want.has(t60AllDay)
+    ? !!t60AfterAllDay && t60AfterAllDay.title !== "종일-공휴일"
+    : t60AfterAllDay === undefined,
+  `그날기대=${JSON.stringify(t60Want.get(t60AllDay) ?? null)} 받음=${JSON.stringify(t60AfterAllDay ?? null)}`);
+
+/* 4 ★ **없는 것을 세는 검사 · 3의 짝** — 아침 재료에 없는 일정이 예약 경로에는 그대로 선다.
+ *   종일 시험은 위 3에서 `wake`에 안 실렸는데, **`fires`에는 Level 3이 있어야 한다.**
+ *   L2를 고치다 L3까지 조건을 태우면 **시험 전날 밤에 Guard가 통째로 조용해진다** —
+ *   그리고 그 밤이 하필 이 도구가 가장 필요한 밤이다.
+ *   행동(그 일정의 `fires`)과 원문(알람 코드에 `wake`가 없다)을 **함께** 센다:
+ *   앞만 보면 기기 쪽에서 조건을 태운 구현이 서버 검사를 그대로 통과한다. */
+const ktWatch = ktCode("../android/app/src/main/java/dev/mond1424/personalos/guard/GuardWatch.kt");
+const ktSyncT60 = ktCode("../android/app/src/main/java/dev/mond1424/personalos/guard/GuardSync.kt");
+const ktAlarms = ktCode("../android/app/src/main/java/dev/mond1424/personalos/guard/GuardAlarms.kt");
+const ktRecv = ktCode("../android/app/src/main/java/dev/mond1424/personalos/guard/AlarmReceiver.kt");
+const t60ProtId = (await api("POST", "/api/events",
+  { title: "T-60 종일 시험", date: t60AllDay })).json.id;
+await api("PUT", `/api/events/${t60ProtId}/protect`, { protect_from: "-1d 00:00", protect_level: 4 });
+const t60Sched2 = (await api("GET", "/api/guard/schedule")).json;
+const t60Plan = (t60Sched2.events as any[]).find((e) => e.event_id === t60ProtId);
+const t60WakeHas = (t60Sched2.wake as any[]).some((w) => w.title === "T-60 종일 시험");
+/* ⚠️ **`/wake/i`로 세지 않는다** — `RTC_WAKEUP`·`setAlarmClock`의 낱말이 걸려 이 검사가
+ *   *구현과 무관하게* 늘 빨간불이었다. 겨누는 것은 **아침 재료를 보는 이름 셋**이다. */
+const T60_MORNING = /nextWake|WakeState|wakeLookahead/;
+const t60AlarmClean = !T60_MORNING.test(ktAlarms) && !T60_MORNING.test(ktRecv);
+ok("4 ★ 아침 재료에 없는 종일 시험도 예약 경로에는 선다 (3의 짝 · 알람 코드에 wake 없음)",
+  !!t60Plan && (t60Plan.fires ?? []).some((f: any) => f.level >= 3)
+  && !t60WakeHas && t60AlarmClean,
+  `L3이상=${(t60Plan?.fires ?? []).filter((f: any) => f.level >= 3).length}`
+  + ` wake에있음=${t60WakeHas} 알람깨끗=${t60AlarmClean}`);
+
+/* 5 ★ **아침을 보는 것은 Level 2 하나다.** 4의 짝 — 저쪽이 *"알람 경로에 없다"* 를 보고
+ *   이쪽이 *"감지 경로 안에서도 L2 가지에만 있다"* 를 본다. 게이트가 `level` 분기 밖으로
+ *   나오면 감지 L3까지 함께 조용해진다. */
+const t60GateInL2 = /if\s*\(level\s*==\s*2\)[\s\S]{0,400}?GuardSync\.nextWake/.test(ktWatch);
+ok("5 ★ 아침을 보는 것은 Level 2 가지 하나다 (4의 짝 · 스캐너)",
+  t60GateInL2, `L2가지안=${t60GateInL2}`);
+
+/* 6 ★ **일정이 없는 밤만 침묵한다** (티켓 ②). 재료를 *"못 읽었다"* 와 *"낡았다"* 는 **띄운다** —
+ *   막으면 시간표가 깨진 밤이 공강 밤과 같은 모양이 되고, 그건 이 리포가 T-54·T-55·T-57에서
+ *   세 번 물린 그 자리다. **결함일 때 개입을 없애면 결함이 조용해진다.** */
+const t60States = ["OK", "NONE", "NO_DATA", "STALE"]
+  .every((s) => new RegExp(`WakeState\\.${s}\\b`).test(ktSyncT60));
+const t60OnlyNoneBlocks = /val fire = w\.state != GuardSync\.WakeState\.NONE/.test(ktWatch);
+ok("6 ★ 말할 것이 없는 밤만 침묵한다 — 못 읽었거나 낡았으면 띄운다 (이유가 넷으로 갈린다)",
+  t60States && t60OnlyNoneBlocks,
+  `상태넷=${t60States} NONE만막음=${t60OnlyNoneBlocks}`);
+
+/* 7 ★ **모든 출구가 기록을 지난다** (티켓 ③ · T-54의 `noteTry`와 같은 모양). 6의 짝이다:
+ *   저쪽이 *"무엇이 막는가"* 를 보고 이쪽이 *"막은 사실이 남는가"* 를 본다.
+ *   ⚠️ **T-53이 물린 자리다** — `no_target`은 *"실패가 아니라서"* 아무 자국도 안 남겼고,
+ *      몇 번을 돌아도 화면도 로그도 그 사실을 못 읽었다. 안 뜬 이유가 안 남으면
+ *      **다음에 시간표가 깨져도 그냥 조용한 밤으로 보인다.** */
+const t60NoteBeforeReturn = /noteL2Gate\(ctx, w, now, fire\)\s*\n\s*if \(!fire\) return false/.test(ktWatch);
+ok("7 ★ 띄운 밤도 안 띄운 밤도 기록을 지난다 (6의 짝 — 조용한 밤과 깨진 밤이 갈린다)",
+  t60NoteBeforeReturn, `기록이먼저=${t60NoteBeforeReturn}`);
+
+/* 8 남은 시간은 **발동 시점에** 계산된다 — 서버가 미리 접어 보내면 새벽 3시의 문구가
+ *   저녁 6시 기준으로 굳는다. 기기가 `at - now`를 그 자리에서 잰다. */
+const t60Span = /w\.at - nowMs/.test(ktWatch) && /지금 자면/.test(ktWatch);
+ok("8 남은 시간을 발동 시점에 잰다 (문구에 시각과 남은 시간이 함께 들어간다)",
+  t60Span, `발동시점계산=${t60Span}`);
+
+// ── ④ 무시가 쌓이면 끄는 선택지를 준다 (ADR-047 ③) ──────────
+//
+// ⚠️ **기존 발동 뒤에 세운다.** 최근 순으로 세는 값이라 앞에 끼면 남의 밤이 섞인다 —
+//    날짜는 **DB가 가진 마지막 발동에서 상대로** 잡는다(고정 날짜 금지 · 함정 12).
+const t60Last = (raw.prepare("SELECT MAX(fired_at) AS m FROM guard_events").get() as any).m as string;
+const t60Night = addDays(t60Last.slice(0, 10), 2);
+const t60Nag = async () => (await api("GET", "/api/guard/l2-nag")).json;
+const t60Fire = async (hm: string, cid: string, reaction: string | null) =>
+  api("POST", "/api/guard/events", {
+    cause: "watch:bedtime", level: 2, client_id: cid,
+    fired_at: `${t60Night}T${hm}:00+09:00`,
+    ...(reaction ? { reaction, reacted_at: `${t60Night}T${hm}:30+09:00` } : {}),
+  });
+
+const t60Before = await t60Nag();
+await t60Fire("22:00", "t60-i1", "ignored");
+await t60Fire("22:10", "t60-i2", "ignored");
+await t60Fire("22:20", "t60-i3", "ignored");
+const t60Three = await t60Nag();
+/* ⚠️ **`reaction IS NULL`은 세지도 끊지도 않는다.** `finalizeIgnored`의 유예가 36시간이라
+ *   어젯밤 발동은 오늘 구조적으로 NULL이다 — NULL이 끊으면 이 값은 **영원히 0에 가깝고
+ *   카드가 한 번도 안 뜬다.** 아직 안 올라온 반응을 '무시'로도 '응답'으로도 읽지 않는다. */
+await t60Fire("22:30", "t60-null", null);
+const t60WithNull = await t60Nag();
+ok("9 연속 무시를 센다 — 아직 반응이 안 온 발동은 세지도 끊지도 않는다",
+  t60Three.streak === t60Before.streak + 3 && t60WithNull.streak === t60Three.streak,
+  `${t60Before.streak} → ${t60Three.streak} → NULL뒤 ${t60WithNull.streak}`);
+
+// 임계는 **설정값이다** — 코드에 박지 않는다. 여기서는 지금 값 기준으로 양쪽을 다 만든다.
+const t60SetThreshold = (n: number) => raw.prepare(
+  "INSERT INTO settings (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+).run("guard_l2_ignore_threshold", String(n));
+
+t60SetThreshold(t60WithNull.streak);
+const t60Over = await t60Nag();
+t60SetThreshold(t60WithNull.streak + 1);
+const t60Under = await t60Nag();
+ok("10 ★ 임계를 넘으면 물어보고, 아래면 안 묻는다 (같은 연속에서 임계만 움직였다)",
+  t60Over.over === true && t60Under.over === false,
+  `넘음=${t60Over.over}(임계 ${t60Over.threshold}) 아래=${t60Under.over}(임계 ${t60Under.threshold})`);
+
+/* 10 ★ *"그대로"* 도 기록을 지난다 — 안 지나면 **같은 숫자로 매번 다시 묻고**, 그 카드가
+ *    없애려던 잔소리와 같은 모양이 된다. ack 뒤에는 연속이 더 쌓여야 다시 묻는다. */
+t60SetThreshold(t60WithNull.streak);
+await api("POST", "/api/guard/l2-nag/ack");
+const t60Acked = await t60Nag();
+await t60Fire("22:40", "t60-i4", "ignored");
+const t60Again = await t60Nag();
+ok("11 ★ 한 번 답하면 같은 숫자로 다시 묻지 않는다 — 더 쌓이면 다시 묻는다",
+  t60Acked.over === false && t60Again.over === true,
+  `ack직후=${t60Acked.over}(연속 ${t60Acked.streak}/ack ${t60Acked.ack}) 한번더=${t60Again.over}`);
+
+/* 12 ★ **한 번이라도 응답하면 연속이 끊긴다** (9의 짝). 이것이 없으면 *"무시를 안 세고
+ *    발동 수만 세는 구현"*이 통과하고, 그러면 **매일 응답하는 사람에게도 끄기 카드가 뜬다.** */
+await t60Fire("22:50", "t60-acc", "accepted");
+const t60Reset = await t60Nag();
+ok("12 ★ 한 번이라도 응답하면 연속이 0이 된다 (9의 짝)",
+  t60Reset.streak === 0 && t60Reset.over === false,
+  `연속=${t60Reset.streak} 물음=${t60Reset.over}`);
+
+/* 13 ★ **무시 횟수는 파생이다 — 세는 것이지 저장하는 것이 아니다**(원칙 1 · `later_fires`와
+ *    같은 모양). 저장하면 그 순간 append-only 트리거와 닫힌 `CHECK`를 상대해야 하는데
+ *    얻는 것이 없다.
+ *    ⚠️ **컬럼만 세지 않는다.** 이 리포에서 파생을 물화하는 더 싼 유혹은 컬럼이 아니라
+ *       `settings`에 접어 두는 것이다 — 스캐너만 두면 그 구현이 그대로 통과한다.
+ *       그래서 **조회가 아무것도 안 쓴다는 것**을 함께 센다(ack는 사용자의 결정이라 별개다). */
+const t60Cols = (raw.prepare("SELECT * FROM pragma_table_info('guard_events')").all() as any[])
+  .map((c) => String(c.name));
+const t60NoCol = !t60Cols.some((c) => /ignore|streak|nag/i.test(c));
+/* ⚠️ **값이 바뀌는 순간에 재야 한다.** 그냥 두 번 불러 비교하면 물화한 구현도 두 번째에
+ *    같은 값을 쓰므로 **차이가 안 난다** — 실제로 그렇게 짰다가 이 변이를 놓쳤다.
+ *    그래서 **연속을 한 칸 올려 놓고** 그 다음 조회가 무엇을 쓰는지 본다. */
+const t60Dump = () => JSON.stringify(raw.prepare("SELECT key, value FROM settings ORDER BY key").all());
+await t60Fire("23:00", "t60-pure", "ignored");   // 연속 0 → 1. 저장하는 구현이면 여기서 갈린다
+const t60SetBefore = t60Dump();
+const t60PureRead = await t60Nag();
+const t60Pure = t60SetBefore === t60Dump();
+ok("13 ★ 세기만 하고 저장하지 않는다 — 컬럼도 없고 조회가 아무것도 안 쓴다 (원칙 1)",
+  t60NoCol && t60Pure && t60PureRead.streak === 1,
+  `컬럼=${t60Cols.filter((c) => /ignore|streak|nag/i.test(c))} 조회순수=${t60Pure}`
+  + ` 연속=${t60PureRead.streak}`);
+
 // ── 결과 ─────────────────────────────────────────────────────
 console.log(`\n${"=".repeat(46)}\n통과 ${passN} · 실패 ${fails.length}`);
 if (fails.length) { console.log("실패:\n  - " + fails.join("\n  - ")); process.exit(1); }

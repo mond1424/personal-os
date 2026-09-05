@@ -72,12 +72,14 @@
 | POST `/api/lm/:section` | `{title, body?, data?}` | `{id, section, title, schema_version}` (201) · **data는 스키마 검증 통과분만** | `lifemodel.create` |
 | PUT `/api/events/:id/protect` | `{protect_from?, protect_level?, protect_sleep_min?, protect_prep_min?}` 또는 `{protect:false}` | `{id, protected, ...}` · **본문 수정과 분리**(마감된 날에도 부착 가능) | `events.setProtect` |
 | GET `/api/guard/events?limit` | — | 발동 이력 rows | `guard.events` |
-| GET `/api/guard/schedule?days` | — | `{d, mode, friction_mult, events:[{event_id, start, deadline, fires[]}]}` · **기기가 하루 1회 pull** | `guard.schedule` |
+| GET `/api/guard/schedule?days` | — | `{d, mode, friction_mult, events:[{event_id, start, deadline, fires[]}], wake:[{date, at, title, source}]}` · **기기가 하루 1회 pull**. `wake` = 하루에 하나, 그 날 **가장 이른 약속**(수업 ∪ 시각 있는 일정 · 지난 것·종일은 제외) — Level 2가 밤마다 다른 말을 할 재료(T-60 · ADR-047). **재료이지 판정이 아니다** | `guard.schedule` |
 | POST `/api/guard/events` | `{cause, level, client_id?, fired_at?, event_id?, risk_score?, risk_snapshot?, foreground_app?, source?, reaction?, reason?, ai_used?, ai_verdict?, ai_unavailable_reason?, ai_reason?}` | `{id, on_date, level, mode, duplicate?}` (201) · **upsert** — `client_id`로 재전송 멱등, 반응 후행 채움. `ai_unavailable_reason`(0016)은 `ai_verdict='unavailable'`일 때만 남고 **닫힌 목록 밖이면 조용히 비운다** — 400을 던지면 기기 `flush()`가 발동 행을 버린다. `ai_reason`(0017)은 그 **반대편**이다 — `approve`·`deny`일 때만 남는 자유 문자열(모델이 쓴 문장)이고, 500자를 넘으면 **거부가 아니라 자른다**(같은 이유). **판정만 담아 뒤늦게 보내도 된다**(T-39): `client_id`만으로 기존 행의 `ai_used`·`ai_verdict`·`ai_unavailable_reason`·`ai_reason`을 **`NULL → 값`으로만** 채운다(`ai_used`는 `0 → 1`만). `cause`·`level`이 없어도 400이 아니고, **`level`은 못 바꾼다**(불변성 트리거). **저장되는 `risk_snapshot`은 보낸 것과 다르다**(T-32): 서버가 §6.6 항을 `server` 키 아래 얹고 `risk_score`를 낸다 — 전부 **`fired_at` 기준**이라 오프라인 큐가 늦게 올라와도 그 밤의 값이다. 기기 항은 이름·값 그대로. `risk_snapshot`을 안 보내면 **얹지 않는다**(둘 다 NULL) | `guard.record` |
 | POST `/api/guard/verify` | `{client_id, cause, level_candidate:4, event_id?, risk_snapshot?, foreground_app?}` | `{level:3\|4, approved, reason, ai_used, cached, source}` · **어떤 경우에도 200** — 판정 불가는 `level:3`. `source` = `ai\|cache\|cap\|timeout\|error\|off`. `level_candidate≠4`는 400(격상 전용) | `guard.verifyLevel4` |
 | POST `/api/guard/events/:id/react` | `{reaction, reason?, reacted_at?}` | `{id, reaction, reacted_at}` · 두 번째는 409 | `guard.react` |
 | POST `/api/guard/events/:id/outcome` | `{outcome}` | `{id, outcome, outcome_at}` · 재확정 409 | `guard.setOutcome` |
 | GET `/api/guard/pending-outcome` | — | outcome 미확정 rows(+`event_title`) · **`later_fires`**(같은 `on_date`의 더 뒤 발동 수 · 사실) · **`outcome_inferred`**(`"failure"\|null` · 뜻). ⚠️ **`outcome`은 안 건드린다** — 추론은 저장하지 않고 조회할 때 계산한다(ADR-044 · 원칙 1). 레벨로 안 거른다 | `guard.pendingOutcome` |
+| GET `/api/guard/l2-nag` | — | `{streak, threshold, ack, over}` — 감지 경로 Level 2(`cause LIKE 'watch:%'`)가 **연속으로 몇 번 무시됐나**. `reaction IS NULL`은 세지도 끊지도 않는다(유예 36h). **컬럼이 아니라 조회다**(원칙 1 · T-60) | `guard.l2Nag` |
+| POST `/api/guard/l2-nag/ack` | — | `{...l2Nag, ack: streak, over: false}` — *"끄기"*·*"그대로"* 둘 다 지난다. 같은 숫자로 다시 묻지 않기 위해서다 | `guard.ackL2Nag` |
 | GET `/api/collected/pending` | — | `[{id, source, summary, starts_at}]` · **`state='new'`이고 `starts_at`이 `[t.now, +7일]`인 것만**(T-42 결정 ①). 창 밖·과거·`dismissed`·`starts_at IS NULL`은 안 준다. **`description`은 안 싣는다** — 카드가 원문 한 줄만 쓴다 | `collected.pending` |
 | POST `/api/collected/:id/accept` | — | `{id, event_id, state:'accepted', duplicate}` · `events` 행 하나를 만든다(`title` = `summary` **원문 그대로** · `date`·`time` = `starts_at`). **보호 규칙은 안 붙인다**. ⚠️ **멱등** — 이미 `accepted`면 `events`를 또 만들지 않고 `duplicate:true`로 있던 id를 준다(순차 한정) | `collected.accept` |
 | POST `/api/collected/:id/dismiss` | — | `{id, state:'dismissed'}` · **다시 묻지 않는다** — `last_modified`가 바뀌어도 그대로다(T-41의 touch가 `state`를 안 건드린다) | `collected.dismiss` |
@@ -209,6 +211,8 @@
   **길이 하한(20자)은 S3.2에서 폐기했다**(마찰이 아니라 강제로 읽혔다. §6.3은 "비용을 치르게 한다"이지 "분량을 채우게 한다"가 아니다)
 - `setOutcome(env, t, id, outcome)` → 사후 확정 한 번만(409). **Guard가 판단하지 않는다**(§6.5)
 - `pendingOutcome(env)` → outcome 미확정 목록(Today 확정 카드용)
+- `l2Nag(env)` → `{streak, threshold, ack, over}` — 감지 L2 연속 무시. **세는 것이지 저장하지 않는다**(T-60)
+- `ackL2Nag(env)` → 지금 연속을 `settings`에 적어 같은 숫자로 다시 묻지 않게 한다(사용자의 결정이라 파생이 아니다)
 - `finalizeIgnored(env, t)` → `{ignored, cutoff}` · **루프의 닫는 쪽**(ADR-025). 반응 없이 `GRACE_H`(36시간)를
   넘긴 발동을 `ignored`로 확정한다. 유예가 긴 이유는 오프라인 큐다 — 기기가 발동과 반응을 **함께** 나중에
   올리므로(ADR-023) 서버가 먼저 박으면 트리거가 진짜 반응을 막고 소급 복구가 안 된다.
@@ -275,7 +279,7 @@
 **Life Model(0012)** — `lmItems(env, section)` · `lmItemGet` · `lmSections`(섹션별 개수) · `stInsertLmItem` · `stUpdateLmItem`(version은 트리거) · `stDeleteLmItem` · `lmSchemaActive(env, section)` · `lmSchemasAll`
 **analysis 앵커(0012)** — `stInsertAnalysis(..., anchorType, anchorId, modelTier, sourceVersions)` · `analysesByAnchor(env, type, id)`
 **보호 규칙(0010)** — `stSetProtect(env, id, from, level, sleepMin, prepMin)`(본문 수정과 분리) · `protectedEvents(env, fromDate, days)`(앞으로의 보호 일정 — 예약 재료)
-**guard(0010)** — `guardEventsList(env, limit)` · `guardEventGet(env, id)` · `stInsertGuardEvent(env, e)` · `stReactGuardEvent(env, id, reaction, reason, at)`(`AND reaction IS NULL`) · `stClassifyOverride` · `stSetGuardOutcome`(`AND outcome IS NULL`) · `guardEventsUnreacted(env, before)` · `guardEventsPendingOutcome(env)` · `guardAiCallsOn(env, onDate)`(ADR-024 일일 상한) · `guardAiVerdictFor(env, onDate, eventId)`(ADR-024 캐시 — `'unavailable'`은 제외, `fired_at DESC, id DESC`)
+**guard(0010)** — `guardEventsList(env, limit)` · `guardEventGet(env, id)` · `stInsertGuardEvent(env, e)` · `stReactGuardEvent(env, id, reaction, reason, at)`(`AND reaction IS NULL`) · `stClassifyOverride` · `stSetGuardOutcome`(`AND outcome IS NULL`) · `guardEventsUnreacted(env, before)` · `guardEventsPendingOutcome(env)` · `guardWatchL2Recent(env, limit)`(감지 L2의 최근 반응 — 연속 무시 재료 · T-60) · `guardAiCallsOn(env, onDate)`(ADR-024 일일 상한) · `guardAiVerdictFor(env, onDate, eventId)`(ADR-024 캐시 — `'unavailable'`은 제외, `fired_at DESC, id DESC`)
 **guard_modes** — `guardModes(env)` · `guardActiveMode(env)` · `stClearActiveMode` · `stSetActiveMode` (부분 유니크 인덱스 때문에 **해제 → 설정** 순서)
 **watch_apps** — `watchApps(env, source?)` · `stAddWatchApp` · `stRemoveWatchApp`
 **시간표 (0021)** — `timetableRules(env)` → `TimetableRule[]` · `stClearTimetable(env)` · `stInsertTimetableRule(env, id, subject, weekday, start, end, termStart, termEnd, now)`

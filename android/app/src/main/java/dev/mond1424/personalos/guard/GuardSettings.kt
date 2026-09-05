@@ -75,6 +75,29 @@ class GuardSettings(ctx: Context) {
      * ⚠️ **올리는 쪽도 그냥 안전하지 않다**(§6.3 — 실패는 잔소리로 도구를 떠나는 것이다).
      *    되돌릴 신호는 Override·무시 비율이고, 그때는 시간당 상한(구조 변경)이 다음 후보다.
      */
+    /**
+     * *"자고 일어나서 곧 해야 할 것"* 으로 볼 앞 구간(시간) — ADR-047 ② (T-60).
+     *
+     * ★ **날짜로 *"내일"* 을 계산하지 않는다.** 취침 창은 `00:30~06:00`이라 발동 시각이
+     *   이미 그 아침의 달력 날짜다 — *"내일"* 로 잡으면 하루 건너뛴 날을 본다.
+     *   그래서 **`now` 이후 첫 약속까지의 거리**로 가른다: 그 아침의 수업은 몇 시간 뒤,
+     *   그 다음 날은 하루 더 뒤라 어떤 상수를 골라도 둘 사이가 넓게 벌어진다.
+     */
+    var wakeLookaheadHours: Int
+        get() = p.getInt(K_WAKE_AHEAD, 18)
+        set(v) = p.edit().putInt(K_WAKE_AHEAD, v.coerceIn(1, 72)).apply()
+
+    /**
+     * 받아 둔 아침 재료를 언제까지 믿을 것인가(시간).
+     *
+     * ⚠️ **넘으면 *"없다"* 가 아니라 *"모른다"* 다.** 동기화가 며칠 실패하면 목록의 항목이
+     *    전부 과거가 되는데, 그걸 *"일정이 없는 밤"* 으로 읽으면 **동기화 고장이 조용한 밤이
+     *    된다.** 그 구별이 [GuardWatch]의 `no_wake`와 `stale`이다.
+     */
+    var wakeStaleHours: Int
+        get() = p.getInt(K_WAKE_STALE, 48)
+        set(v) = p.edit().putInt(K_WAKE_STALE, v.coerceIn(1, 240)).apply()
+
     var watchMaxPerNight: Int
         get() = p.getInt(K_WATCH_MAX, 9)
         set(v) = p.edit().putInt(K_WATCH_MAX, v.coerceIn(1, 20)).apply()
@@ -88,6 +111,8 @@ class GuardSettings(ctx: Context) {
         private const val K_WATCH_MIN = "watch_minutes"
         private const val K_WATCH_REFIRE = "watch_refire_minutes"
         private const val K_WATCH_MAX = "watch_max_per_night"
+        private const val K_WAKE_AHEAD = "wake_lookahead_hours"
+        private const val K_WAKE_STALE = "wake_stale_hours"
     }
 }
 

@@ -444,6 +444,7 @@ async function refreshToday() {
   renderToday();
   loadNotice();
   loadGuardOutcome();
+  loadGuardNag();    // 밤 개입이 연속으로 그냥 지나갔는가 (T-60 ③)
   loadCollected();
   loadCalStatus();   // 폰 캘린더가 조용히 죽어 있지 않은가 (T-53 ②)
   if (!S.staleShown && S.today.overdue.length) { S.staleShown = true; showStale(S.today.overdue[0]); }
@@ -663,6 +664,52 @@ async function loadGuardOutcome() {
   } catch {
     // 화면은 막지 않는다 — Guard가 아직 없는 기기에서도 Today는 떠야 한다.
     // 그 판단은 옳았고, 바뀐 것은 **이 실패가 이제 이름을 갖는다**는 것뿐이다.
+    set("error");
+  }
+}
+
+/* 밤 개입이 연속으로 그냥 지나갔다 (T-60 · ADR-047 ③) ────────
+ *
+ * **T-33의 outcome 카드와 같은 모양이다** — 한 줄 · `data-state` 셋 · `catch`가 화면을 안 막는다.
+ * 새 패턴을 만들지 않는다.
+ *
+ * ★ **여기서 하는 것은 끄는 길을 주는 것이지 더 세게 하는 것이 아니다**(ADR-047 ③).
+ *   무시 횟수로 자동 강화하면 **공강 전날의 무시가 쌓여 시험 전날 과잉 개입**이 된다 — ②와
+ *   정면 충돌이다. 그리고 끌 수 없는 알림은 사용자가 OS에서 무음 처리하고, 그러면
+ *   개입뿐 아니라 **관측도 함께 잃는다**(ADR-026의 이탈 경로에는 대가가 있지만 막지는 않는다).
+ */
+async function loadGuardNag() {
+  const bar = $("#td-nag");
+  // 상태는 **DOM에만** 둔다(T-33) — 두 곳에 두면 갈라지고, `none`과 `error`가 화면에서
+  // 똑같이 안 보이므로 그 둘을 가르는 것이 여기서도 짝이다.
+  const set = (state) => {
+    bar.dataset.state = state;
+    bar.style.display = state === "ask" ? "flex" : "none";
+  };
+  try {
+    const r = await Api.guardL2Nag();
+    if (!r || !r.over) return void set("none");
+    $("#td-nag-text").textContent = `이 알림이 ${r.streak}번 그냥 지나갔어요 — 꺼 둘까요?`;
+
+    // *"그대로"* 도 ack를 지난다 — 안 지나면 같은 숫자로 매번 다시 물어 그 자체가 잔소리가 된다.
+    const ack = () => run(async () => {
+      await Api.guardL2NagAck();
+      set("none");
+    });
+    $("#td-nag-off").onclick = () => run(async () => {
+      const G = globalThis.Capacitor?.Plugins?.Guard;
+      // ⚠️ **스위치는 기기 prefs에 있다. 웹에는 끌 것이 없다.** 여기서 조용히 성공한 척하면
+      //    사용자는 껐다고 믿는데 그 밤에 또 뜬다 — T-54가 없앤 그 실패와 같은 모양이다.
+      if (!G || !G.setWatch) return void toast("폰 앱에서만 끌 수 있어요", "err");
+      await G.setWatch({ enabled: false });
+      await Api.guardL2NagAck();
+      set("none");
+      toast("밤 알림을 껐어요 — 설정에서 다시 켤 수 있어요");
+    });
+    $("#td-nag-keep").onclick = ack;
+    set("ask");
+  } catch {
+    // 화면은 막지 않는다. 바뀐 것은 **이 실패가 이름을 갖는다**는 것뿐이다(T-33).
     set("error");
   }
 }

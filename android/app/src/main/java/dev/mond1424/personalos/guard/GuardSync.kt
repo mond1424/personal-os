@@ -1,6 +1,7 @@
 package dev.mond1424.personalos.guard
 
 import android.content.Context
+import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
@@ -28,6 +29,8 @@ object GuardSync {
     private const val K_BOUNDARY = "sync_boundary"     // 'HH:MM' — 서버가 준 하루 경계
     private const val K_FRICTION = "sync_friction"     // Override 대기 배수 (ADR-019 모드)
     private const val K_MODE = "sync_mode"
+    private const val K_WAKE = "sync_wake"             // 아침 재료 (JSON 배열 · ADR-047)
+    private const val K_WAKE_AT = "sync_wake_at"       // ★ 그것을 **받은** 시각 — 낡음 판정의 근거
 
     /**
      * Override 대기 시간 배수. 활성 모드가 정한다(coach 1.0 · secretary 0).
@@ -38,6 +41,46 @@ object GuardSync {
         prefs(ctx).getFloat(K_FRICTION, 1.0f)
 
     fun mode(ctx: Context): String? = prefs(ctx).getString(K_MODE, null)
+
+    // ── 아침 재료 (ADR-047 · T-60) ────────────────────────────
+    //
+    // Level 2가 *"오늘 밤이 다른 밤과 어떻게 다른가"* 를 말하려면 아침에 무엇이 기다리는지
+    // 알아야 하고, **발동 경로엔 네트워크가 없다**(ADR-021). 그래서 낮에 받아 여기 둔다.
+
+    /**
+     * ★ **넷을 가르는 것이 이 타입의 존재 이유다.** 셋은 다 *"시각을 못 붙인다"* 지만
+     *   [NONE]만 *"말할 것이 없다"* 이고 나머지 둘은 **결함**이다 — 같은 이름으로 묶으면
+     *   시간표가 깨진 밤이 조용한 밤과 구별되지 않는다(티켓 ③).
+     */
+    enum class WakeState { OK, NONE, NO_DATA, STALE }
+
+    data class Wake(val state: WakeState, val at: Long = 0L, val title: String? = null)
+
+    /**
+     * `now` 이후 [lookaheadH]시간 안의 **첫 약속**. 없으면 상태로 왜 없는지 말한다.
+     *
+     * ⚠️ **한 번도 못 받았을 때와 받았는데 비었을 때가 다른 값이다.** 전자는 옛 배포거나
+     *    동기화가 한 번도 성공하지 못한 것이고, 후자는 *"방학·공강이라 정말 없다"* 이다.
+     */
+    fun nextWake(ctx: Context, nowMs: Long, lookaheadH: Int, staleH: Int): Wake {
+        val pr = prefs(ctx)
+        val raw = pr.getString(K_WAKE, null) ?: return Wake(WakeState.NO_DATA)
+        val gotAt = parseIso(pr.getString(K_WAKE_AT, null)) ?: return Wake(WakeState.NO_DATA)
+        if (nowMs - gotAt > staleH * 3_600_000L) return Wake(WakeState.STALE)
+        val arr = runCatching { JSONArray(raw) }.getOrNull() ?: return Wake(WakeState.NO_DATA)
+
+        val limit = nowMs + lookaheadH * 3_600_000L
+        var bestAt = Long.MAX_VALUE
+        var bestTitle: String? = null
+        for (i in 0 until arr.length()) {
+            val o = arr.optJSONObject(i) ?: continue
+            val at = parseIso(o.optString("at")) ?: continue
+            if (at <= nowMs || at > limit || at >= bestAt) continue
+            bestAt = at
+            bestTitle = o.optString("title", "")
+        }
+        return if (bestTitle == null) Wake(WakeState.NONE) else Wake(WakeState.OK, bestAt, bestTitle)
+    }
     private const val K_LAST_FIRE = "last_fire"        // 마지막 발동 흔적 (무인 테스트의 증거)
 
     /**
@@ -95,6 +138,10 @@ object GuardSync {
         .put("lastError", prefs(ctx).getString(K_LAST_ERR, null))
         .put("lastCount", prefs(ctx).getInt(K_LAST_N, -1))
         .put("boundary", prefs(ctx).getString(K_BOUNDARY, null))
+        // 아침 재료가 **언제 온 것이고 몇 개인가** — 없는 것과 낡은 것을 화면에서 가른다.
+        .put("wakeAt", prefs(ctx).getString(K_WAKE_AT, null) ?: JSONObject.NULL)
+        .put("wakeN", prefs(ctx).getString(K_WAKE, null)
+            ?.let { runCatching { JSONArray(it).length() }.getOrNull() } ?: -1)
         .put("lastFire", prefs(ctx).getString(K_LAST_FIRE, null)
             ?.let { runCatching { JSONObject(it) }.getOrNull() } ?: JSONObject.NULL)
         .put("nextSyncAt", boundaryHm(ctx).let { (h, m) ->
@@ -158,6 +205,13 @@ object GuardSync {
             root.optString("boundary", "").takeIf { it.isNotBlank() }?.let { putString(K_BOUNDARY, it) }
             root.optString("mode", "").takeIf { it.isNotBlank() }?.let { putString(K_MODE, it) }
             if (root.has("friction_mult")) putFloat(K_FRICTION, root.optDouble("friction_mult", 1.0).toFloat())
+            // ★ **필드가 있을 때만 손댄다.** 없으면 지우지도 않는다 — 옛 배포에 한 번 붙었다고
+            //   어젯밤 재료를 지우면 그 밤이 통째로 '모른다'가 되고, 그건 사실이 아니다.
+            //   대신 받은 시각이 안 갱신되므로 `wakeStaleHours`가 지나면 스스로 '낡음'이 된다.
+            if (root.has("wake")) {
+                putString(K_WAKE, root.optJSONArray("wake")?.toString() ?: "[]")
+                putString(K_WAKE_AT, nowIso())
+            }
         }.apply()
 
         // 서버발 예약만 갈아엎는다 — 테스트 알람(TEST_ID_BASE 구간)은 건드리지 않는다.
