@@ -36,6 +36,46 @@ const nonNegInt = (v: string | undefined, fallback: number) => {
   return Number.isInteger(n) && n >= 0 ? n : fallback;
 };
 
+/**
+ * ★ **기상 역산의 재료** (ADR-047 ① 정정 · T-61). 약속 시각에서 이만큼을 빼면 기상 시각이다.
+ *
+ * ⚠️ **둘로 나눈 이유** — 하나로 합치면 화면이 단순하지만 *"오늘은 학교에서 자고 간다"* 처럼
+ *    **이동만 0인 날**을 표현할 수 없다. 둘은 바뀌는 이유도 다르다(이사 ↔ 아침 루틴).
+ */
+const LEAD_COMMUTE_KEY = "wake_commute_min";
+const LEAD_PREP_KEY = "wake_prep_min";
+
+/**
+ * ★ **기상 시각을 정하는 순서 — 이 함수가 그 순서의 유일한 자리다** (ADR-047 ① · T-62).
+ *
+ * ```
+ * ①  그 일정의 protect_prep_min   가장 구체적이다 — 이긴다
+ * ②  설정 (이동 + 준비)           사용자가 아는 값
+ * ③  상수                        아무것도 모를 때만
+ * ```
+ *
+ * **T-61은 ①과 ③만 이었다.** 그래서 *"이동 1시간"* 이라 적어 둔 사용자의 보호 일정 알람이
+ * **그 값을 무시한 채** 옛 상수로 울렸다 — 같은 날 알람은 07:30 기상을 전제하는데 문구는
+ * *"8시 기상"* 이라 쓰는 밤이 되고, **그 밤은 아무 검사도 안 잡았다.**
+ * ⚠️ 그때 안 갈라진 것은 **우연이다** — 기본값의 합이 상수와 같게 맞춰져 있었을 뿐이다.
+ *
+ * ⚠️ **①의 자리를 바꾸지 않는다.** 일정마다 다른 값을 붙일 수 있는 것이 그 컬럼의 뜻이고,
+ *    ②가 ①을 덮으면 그 컬럼이 죽는다. **구체적인 것이 이긴다.**
+ *
+ * ★ **②와 ③은 항끼리 붙어 있다** — 한쪽만 넣어도 나머지는 자기 상수로 채우고, 둘 다 없으면
+ *   합이 `DEFAULT_PREP_MIN`이 된다. **그것이 T-61이 기본값을 그렇게 맞춰 둔 이유다** —
+ *   설정을 안 쓰는 사람에게는 아무것도 안 움직인다.
+ */
+function wakeLeadMin(prepMin: number | null | undefined, s: Record<string, string>): number {
+  if (prepMin != null) return prepMin;                                   // ①
+  return nonNegInt(s[LEAD_COMMUTE_KEY], DEFAULT_COMMUTE_MIN)             // ② → ③
+    + nonNegInt(s[LEAD_PREP_KEY], DEFAULT_PREP_MIN);
+}
+
+/** `settings` 표를 이 파일이 읽는 모양 — 키·값 맵. */
+const settingsMap = async (env: Env): Promise<Record<string, string>> =>
+  Object.fromEntries((await db.settingsAll(env)).results.map((r) => [r.key, r.value]));
+
 const LEVELS = [1, 2, 3, 4];
 const REACTIONS = ["accepted", "override", "ignored"];
 
@@ -232,10 +272,15 @@ export async function setMode(env: Env, t: TimeCtx, key: string, reason?: unknow
  * **역산은 이 함수 하나뿐이다.** 두 벌 두면 반드시 갈라지고, 갈라지면 UI는 "01:30"이라 쓰고
  * 알람은 다른 시각에 울린다 — 새벽 실패다(`protectingNow`의 주석과 같은 이유).
  * T-32가 `record()`에서도 데드라인이 필요해지자 `schedule()` 안에 있던 것을 여기로 꺼냈다.
+ *
+ * ★ **설정을 받는다** (T-62). 안 받던 시절엔 `protect_prep_min`이 안 붙은 보호 일정만
+ *   옛 상수로 굳어, 사용자가 적어 둔 이동 시간을 **알람만 무시했다.**
+ *   ⚠️ **이 함수가 내는 시각은 밤에 실제로 울리는 것이다** — 설정이 들어오면 **움직이는 것이
+ *   맞다**(안 움직이면 그 설정은 문구에만 사는 장식이다). 순서는 `wakeLeadMin` 하나가 정한다.
  */
-function protectAxis(e: db.EventRow, offsetMin: number) {
+function protectAxis(e: db.EventRow, offsetMin: number, s: Record<string, string>) {
   const sleep = e.protect_sleep_min ?? DEFAULT_SLEEP_MIN;
-  const prep = e.protect_prep_min ?? DEFAULT_PREP_MIN;
+  const prep = wakeLeadMin(e.protect_prep_min, s);
   // 시각이 없는 종일 일정은 09:00으로 본다 — 시험·약속의 통상 시작
   const hhmm = e.time ?? "09:00";
   const start = new Date(`${e.date}T${hhmm}:00${offsetSuffix(offsetMin)}`);
@@ -272,16 +317,6 @@ function protectAxis(e: db.EventRow, offsetMin: number) {
  */
 const WAKE_WINDOW_DAYS = 30;
 
-/**
- * ★ **기상 역산의 재료** (ADR-047 ① 정정 · T-61). 약속 시각에서 이만큼을 빼면 기상 시각이다.
- *
- * ⚠️ **둘로 나눈 이유** — 하나로 합치면 화면이 단순하지만 *"오늘은 학교에서 자고 간다"* 처럼
- *    **이동만 0인 날**을 표현할 수 없다. 둘은 바뀌는 이유도 다르다(이사 ↔ 아침 루틴).
- *    합이 필요한 곳은 여기 한 줄뿐이라 나누는 값이 서버 산술을 복잡하게 만들지도 않는다.
- */
-const LEAD_COMMUTE_KEY = "wake_commute_min";
-const LEAD_PREP_KEY = "wake_prep_min";
-
 async function wakePoints(env: Env, t: TimeCtx, days: number) {
   // ⚠️ **`days`를 그대로 쓰지 않는다.** `classesIn`은 창이 너무 넓으면 **던지고**(400),
   //    그러면 넓은 `?days=`가 기기의 예약 pull을 **통째로** 깨뜨린다 — 지금까지 무해하던
@@ -295,8 +330,8 @@ async function wakePoints(env: Env, t: TimeCtx, days: number) {
     db.settingsAll(env),
   ]);
   const s = Object.fromEntries(settings.results.map((r) => [r.key, r.value]));
-  const lead = nonNegInt(s[LEAD_COMMUTE_KEY], DEFAULT_COMMUTE_MIN)
-    + nonNegInt(s[LEAD_PREP_KEY], DEFAULT_PREP_MIN);
+  // ★ **순서를 여기서 다시 적지 않는다** (T-62). 수업엔 붙는 값이 없으니 ①은 늘 비고 ②→③만 남는다.
+  const lead = wakeLeadMin(null, s);
 
   const best = new Map<string, { at: string; leaveBy: string; title: string; source: "class" | "event" }>();
   const put = (date: string, time: string, title: string, source: "class" | "event", leadMin: number) => {
@@ -315,10 +350,10 @@ async function wakePoints(env: Env, t: TimeCtx, days: number) {
     });
   };
   for (const c of classes) put(c.date, c.start_time, c.subject, "class", lead);
-  // ★ **보호 일정은 자기 값을 쓴다** (T-61 ③). `protect_prep_min`이 재는 것과 여기가 재는 것이
-  //   **같은 간격**이라, 설정으로 덮으면 같은 날의 취침 데드라인과 기상 시각이 서로 다른
-  //   기상을 가리킨다 — 알람은 07:30 기상을 전제로 울리는데 문구는 "8시 기상"이라 쓰는 밤이 된다.
-  for (const e of evs.results) if (e.time) put(e.date, e.time, e.title, "event", e.protect_prep_min ?? lead);
+  // ★ **보호 일정은 자기 값을 쓴다** (T-61 ③ · `wakeLeadMin`의 ①). `protect_prep_min`이 재는 것과
+  //   여기가 재는 것이 **같은 간격**이라, 설정으로 덮으면 같은 날의 취침 데드라인과 기상 시각이
+  //   서로 다른 기상을 가리킨다 — 알람은 07:30을 전제하는데 문구는 "8시 기상"이라 쓰는 밤이 된다.
+  for (const e of evs.results) if (e.time) put(e.date, e.time, e.title, "event", wakeLeadMin(e.protect_prep_min, s));
 
   return [...best.entries()]
     .sort((a, b) => a[0].localeCompare(b[0]))
@@ -330,9 +365,12 @@ export async function schedule(env: Env, t: TimeCtx, days = 30) {
   const mode = await db.guardActiveMode(env);
   const maxLevel = mode?.max_level ?? 4;
   const nowMs = Date.parse(t.now);   // 요청당 한 번 읽은 시계를 그대로 쓴다 (T-23 · T-26)
+  // 예약이 볼 설정 (T-62). `wakePoints`는 자기 것을 따로 읽는다 — **한 요청 안이라 값은 같고**,
+  // 거기에 인자를 하나 더 다는 것은 이 티켓의 범위 밖이다(티켓 §금지).
+  const s = await settingsMap(env);
 
   const plans = rows.map((e) => {
-    const { start, deadline, from, sleep, prep } = protectAxis(e, t.offsetMin);
+    const { start, deadline, from, sleep, prep } = protectAxis(e, t.offsetMin, s);
     const cap = Math.min(e.protect_level ?? 4, maxLevel);
 
     // 전부 시각으로 예측 가능하므로 기기가 한꺼번에 예약한다.
@@ -498,7 +536,9 @@ async function riskServerTerms(
   if (eventId) {
     const ev = await db.eventGet(env, eventId);
     if (ev?.protect_from != null) {
-      const ax = protectAxis(ev, t.offsetMin);
+      // ⚠️ **여기서도 같은 순서를 지나야 한다** (T-62) — 스냅샷의 `deadline_min`은 12월에
+      //    *"데드라인 얼마 전에 발동했나"* 를 세는 재료다. 예약과 다른 시각에서 재면 그 수가 거짓이 된다.
+      const ax = protectAxis(ev, t.offsetMin, await settingsMap(env));
       deadlineMin = Math.round((ax.deadline.getTime() - firedMs) / 60_000);  // 음수 = 지났다
       protecting = ax.from.getTime() <= firedMs && firedMs <= ax.start.getTime();
     }

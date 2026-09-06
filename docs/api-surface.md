@@ -221,9 +221,14 @@
 ### guard.ts — Guard v1 (8월). **기록과 조회만 한다 — 발동은 기기가**(ADR-021)
 - `events(env, limit)` → 발동 이력
 - `schedule(env, t, days)` → 기기가 알람을 예약할 재료. **데드라인을 여기서 역산**한다(저장 X, 원칙 4):
-  `deadline = 일정시각 − protect_prep_min − protect_sleep_min` (기본 90·360 → 09:00 시험이면 01:30, 설계 §6.1 예시)
+  `deadline = 일정시각 − 기상리드 − protect_sleep_min` (설정이 없으면 90·360 → 09:00 시험이면 01:30, 설계 §6.1 예시)
+  - **기상리드를 정하는 순서는 `wakeLeadMin` 하나가 갖는다**(T-62): ① 그 일정의 `protect_prep_min` ·
+    ② 설정(`wake_commute_min`+`wake_prep_min`) · ③ 상수. **`protectAxis`와 `wakePoints`가 같은 함수를 쓴다** —
+    T-61은 ①③만이라 *"이동 1시간"* 을 적어 둔 사용자의 **알람만** 그 값을 무시했다
+    (같은 날 알람은 07:30을 전제하는데 문구는 "8시 기상"이라 쓰는 밤 · 아무 검사도 안 잡았다)
+  - ⚠️ **설정을 넣으면 취침 알람이 실제로 움직인다 — 그것이 뜻이다.** 안 움직이면 그 설정은 문구에만 사는 장식이다
   Level 1(진입)·2(−2h·−1h)·3(데드라인)·4(+30m부터 30분 간격 6회)를 전부 시각으로 펼쳐 준다. 활성 모드의 `max_level`로 상한
-  - `wake[]`의 `leaveBy = at − (wake_commute_min + wake_prep_min)` (T-61). ★ **`protect_prep_min`과 같은 간격이다** —
+  - `wake[]`의 `leaveBy = at − wakeLeadMin(...)` (T-61 · T-62). ★ **`protect_prep_min`과 같은 간격이다** —
     `protectAxis`가 `start − (prep+sleep)`을 취침 데드라인으로 삼으므로 `start − prep`이 곧 기상 시각이다.
     그래서 보호 일정이 걸린 날은 **그 event의 값을 읽는다**(설정으로 덮으면 같은 날의 알람과 문구가 서로 다른 기상을 가리킨다)
   ⚠️ **남은 시간은 접지 않는다** — 접으면 새벽 3시의 문구가 저녁 6시 기준으로 굳는다(T-60 ①). 기기가 `leaveBy − now`를 잰다

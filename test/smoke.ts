@@ -2624,6 +2624,113 @@ ok("7 ★ 게이트 조건은 T-60 그대로다 — 판정에 leaveBy가 없다 
   t61GateSame && t61Region.length > 0 && !/leaveBy/.test(t61Region) && t61PickByAt,
   `NONE만막음=${t61GateSame} 게이트안leaveBy=${/leaveBy/.test(t61Region)} at로고름=${t61PickByAt}`);
 
+// ── 기상 시각을 정하는 곳은 하나다 (T-62 · ADR-047 ①) ───────
+//
+// T-61은 ①(일정의 값)과 ③(상수)만 이었다. 그래서 *"이동 1시간"* 이라 적어 둔 사용자의
+// **보호 일정 알람이 그 값을 무시한 채** 옛 상수로 울렸다 — 같은 날 알람은 07:30을 전제하는데
+// 문구는 *"8시 기상"* 이라 쓰는 밤이 되고, **그 밤은 아무 검사도 안 잡았다.**
+// ⚠️ 그때 안 갈라진 것은 **우연이다** — 기본값의 합이 상수와 같게 맞춰져 있었을 뿐이다.
+console.log("\n[T-62] 기상 시각을 정하는 곳은 하나다 — 순서가 셋이다");
+
+// 표에 DELETE API가 없다. *"설정이 없을 때"* 가 이 티켓의 회귀 축이라 직접 지운다.
+const t62Clear = () => raw.prepare(
+  "DELETE FROM settings WHERE key IN ('wake_commute_min','wake_prep_min')").run();
+const t62Put = (k: string, v: string) => api("PUT", `/api/settings/${k}`, { value: v });
+
+/* ⚠️ **상수를 원문에서 읽는다.** 검사에 분(分)을 박으면 *"설정값은 코드의 상수 하나에만 둔다"* 와
+ *   정면으로 어긋나고, 상수가 바뀌면 이 검사만 조용히 틀린다.
+ *   ★ **함정 15(구현에서 베끼기)와 다른 자리다** — 저기서 문제였던 것은 검사가 *임의의* 선택자를
+ *   구현에서 복사해 와 양쪽이 함께 틀린 것이다. 여기서 세는 **명제 자체가**
+ *   *"설정이 없으면 **그 상수**를 쓴다"* 라서 상수가 명제의 일부다. 값이 바뀌면 **함께 바뀌는 것이 맞다.** */
+const t62Src = readFileSync(join(here, "../src/services/guard.ts"), "utf8");
+const t62Num = (name: string) => Number(new RegExp(`const ${name} = (\\d+)`).exec(t62Src)?.[1] ?? NaN);
+const T62_PREP = t62Num("DEFAULT_PREP_MIN"), T62_COMMUTE = t62Num("DEFAULT_COMMUTE_MIN");
+const T62_CONST = T62_COMMUTE + T62_PREP;
+
+/* 보호 일정을 하나 세운다. **그 날 첫 약속이어야** 아침 재료에 실려 4가 성립한다 —
+ * 시각은 그 날 실제 수업에서 **상대로** 잡는다(고정 시각 금지 · 함정 12). */
+const t62Day = addDays(D, 16);
+const t62Cal = (await api("GET", `/api/calendar?start=${t62Day}&end=${t62Day}`)).json;
+const t62MinOf = (hm: string) => Number(hm.slice(0, 2)) * 60 + Number(hm.slice(3, 5));
+const t62First = Math.min(12 * 60,
+  ...(t62Cal.classes ?? []).map((c: any) => t62MinOf(c.start_time)),
+  ...(t62Cal.events ?? []).filter((e: any) => e.time).map((e: any) => t62MinOf(e.time)));
+const t62At = Math.max(60, t62First - 60);
+const t62Time = `${String(Math.floor(t62At / 60)).padStart(2, "0")}:${String(t62At % 60).padStart(2, "0")}`;
+const t62Id = (await api("POST", "/api/events",
+  { title: "T-62 보호 일정", date: t62Day, time: t62Time })).json.id;
+const t62Protect = (extra: object = {}) =>
+  api("PUT", `/api/events/${t62Id}/protect`, { protect_from: "-1d 00:00", protect_level: 4, ...extra });
+await t62Protect();
+
+/** ★ **두 함수를 각각 부른 결과를 나란히 준다.** `plan`은 `protectAxis`, `wake`는 `wakePoints`가 만든다. */
+const t62Read = async () => {
+  const j = (await api("GET", "/api/guard/schedule")).json;
+  return {
+    plan: (j.events as any[]).find((e) => e.event_id === t62Id),
+    wake: (j.wake as any[]).find((w) => w.date === t62Day),
+  };
+};
+
+/* 2 ★ **1의 짝이자 회귀 축이다.** 설정을 안 쓰는 사람의 알람은 **안 움직여야** 한다 —
+ *   움직이면 이 티켓이 밤에 울리는 시각을 아무 근거 없이 옮긴 것이 된다. */
+t62Clear();
+const t62None = await t62Read();
+ok("2 ★ 설정이 없으면 옛 상수 그대로다 — 지금 쓰는 사람의 알람은 안 움직인다 (1의 짝)",
+  Number.isFinite(T62_CONST) && t62None.plan?.prep_min === T62_CONST,
+  `상수=${T62_COMMUTE}+${T62_PREP} 받음=${t62None.plan?.prep_min}`);
+
+/* 1 ★ **알람이 움직이는 것이 이 티켓의 뜻이다.** 사용자가 이동 시간을 적었으면 보호 일정도
+ *   그만큼 일찍 자야 한다 — 안 움직이면 그 설정은 **문구에만 사는 장식**이다.
+ *   ⚠️ **두 벌의 설정으로 두 번 잰다.** 상수 기준선과 견주면 이 검사가 ③까지 붙들게 되고,
+ *      그러면 폴백만 바꾼 변이가 2와 함께 여기까지 죽인다 — **2가 세는 것을 1이 또 세면
+ *      둘이 서로 다른 것을 센다는 증거가 사라진다.** */
+const T62_C1 = 45, T62_P1 = 75, T62_C2 = 10, T62_P2 = 20;
+await t62Put("wake_commute_min", String(T62_C1));
+await t62Put("wake_prep_min", String(T62_P1));
+const t62Set = await t62Read();
+await t62Put("wake_commute_min", String(T62_C2));
+await t62Put("wake_prep_min", String(T62_P2));
+const t62Set2 = await t62Read();
+const t62Moved = Date.parse(t62Set2.plan?.deadline) - Date.parse(t62Set.plan?.deadline);
+ok("1 ★ 설정이 있으면 취침 데드라인이 그만큼 앞당겨진다 (알람이 움직이는 것이 뜻이다)",
+  T62_C1 + T62_P1 !== T62_C2 + T62_P2
+  && t62Set.plan?.prep_min === T62_C1 + T62_P1 && t62Set2.plan?.prep_min === T62_C2 + T62_P2
+  && t62Moved === (T62_C1 + T62_P1 - (T62_C2 + T62_P2)) * 60_000,
+  `prep ${t62Set.plan?.prep_min} → ${t62Set2.plan?.prep_min} · 데드라인 ${t62Moved / 60_000}분 뒤로`
+  + ` (기대 ${T62_C1 + T62_P1 - (T62_C2 + T62_P2)})`);
+
+/* 3 ★ **구체적인 것이 이긴다.** ②가 ①을 덮으면 `protect_prep_min` 컬럼이 죽는다 —
+ *   *"이 시험은 시험장이 멀다"* 를 적을 자리가 사라진다. */
+const T62_OWN = 55;
+await t62Protect({ protect_prep_min: T62_OWN });
+const t62Own = await t62Read();
+ok("3 ★ 일정에 붙은 값이 설정을 이긴다 (②가 ①을 덮으면 그 컬럼이 죽는다)",
+  T62_OWN !== T62_C2 + T62_P2 && T62_OWN !== T62_CONST && t62Own.plan?.prep_min === T62_OWN,
+  `일정값=${T62_OWN} 설정합=${T62_C2 + T62_P2} 받음=${t62Own.plan?.prep_min}`);
+
+/* 4 ★ **이 티켓의 본체.** 지금까지는 *"각자 맞다"* 만 셌고 **둘이 같다는 것은 아무도 안 셌다.**
+ *   ⚠️ **기대값을 `wake` 쪽에서 만들지 않는다** — 그러면 `protectAxis`를 안 보고 자기 자신과
+ *      비교하게 된다. `plan.start`와 `plan.prep_min`은 **`protectAxis`가 낸 값**이고,
+ *      `wake.leaveBy`는 **`wakePoints`가 낸 값**이다. 세 자리(①·②·③)에서 모두 잰다. */
+const t62Agree = (r: { plan: any; wake: any }) =>
+  !!r.plan && !!r.wake
+  && Date.parse(r.wake.leaveBy) === Date.parse(r.plan.start) - r.plan.prep_min * 60_000;
+ok("4 ★ 예약이 전제하는 기상과 문구가 말할 기상이 같다 — 셋 다 (두 함수를 각각 불렀다)",
+  t62Agree(t62None) && t62Agree(t62Set) && t62Agree(t62Set2) && t62Agree(t62Own),
+  `상수=${t62Agree(t62None)} 설정=${t62Agree(t62Set)}·${t62Agree(t62Set2)} 일정값=${t62Agree(t62Own)}`
+  + ` · leaveBy=${t62Own.wake?.leaveBy} start=${t62Own.plan?.start} prep=${t62Own.plan?.prep_min}`);
+
+/* 5 **상수를 지우지 않았는가** (스캐너). ③은 설정이 없을 때의 답이고, 지우면 그 경우가 미정이 된다.
+ *   ⚠️ **값을 인라인으로 박은 구현이 여기서 죽는다** — 그건 동작이 같아 1~4가 전부 초록이다. */
+const t62Lead = /function wakeLeadMin\([\s\S]*?\n\}/.exec(t62Src)?.[0] ?? "";
+const t62LeadCode = t62Lead.replace(/\/\/.*$/gm, "");
+const t62UsesConst = /DEFAULT_PREP_MIN/.test(t62LeadCode) && /DEFAULT_COMMUTE_MIN/.test(t62LeadCode);
+const t62NoLiteral = !/\b\d{2,}\b/.test(t62LeadCode);
+ok("5 상수가 아직 있고 순서 함수가 그것을 쓴다 — 분을 박지 않았다 (스캐너)",
+  t62Lead.length > 0 && t62UsesConst && t62NoLiteral && Number.isFinite(T62_CONST),
+  `함수=${t62Lead.length}자 상수사용=${t62UsesConst} 리터럴없음=${t62NoLiteral}`);
+
 // ── 장소 (T-59 · ADR-046) — 어디 있었는지는 WiFi가 말한다 ────
 //
 // 귀가·등교는 사용자가 손으로 적을 리가 없어 지금 아무 데도 안 남는다. 기기가 붙은 네트워크를
