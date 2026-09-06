@@ -54,7 +54,17 @@ object GuardSync {
      */
     enum class WakeState { OK, NONE, NO_DATA, STALE }
 
-    data class Wake(val state: WakeState, val at: Long = 0L, val title: String? = null)
+    /**
+     * ★ [leaveBy]는 **서버가 접어 준 기상 시각**이다 (ADR-047 ① 정정 · T-61).
+     *   이동·준비를 여기서 빼지 않는 이유는 T-60이 옳게 걱정한 그것이다 — 빼려면 그 값을
+     *   기기에도 둬야 하고 **그러면 역산이 두 벌이 된다**. 기기가 재는 것은 `leaveBy − now`뿐이다.
+     *
+     * ⚠️ **`0L`은 "서버가 안 보냈다"이지 "지났다"가 아니다.** 옛 서버 + 새 APK가 그 자리다 —
+     *    둘을 같은 값으로 읽으면 **정상 동작이 *"기상이 지났다"* 로 표시된다.**
+     */
+    data class Wake(
+        val state: WakeState, val at: Long = 0L, val title: String? = null, val leaveBy: Long = 0L,
+    )
 
     /**
      * `now` 이후 [lookaheadH]시간 안의 **첫 약속**. 없으면 상태로 왜 없는지 말한다.
@@ -72,14 +82,19 @@ object GuardSync {
         val limit = nowMs + lookaheadH * 3_600_000L
         var bestAt = Long.MAX_VALUE
         var bestTitle: String? = null
+        var bestLeaveBy = 0L
         for (i in 0 until arr.length()) {
             val o = arr.optJSONObject(i) ?: continue
             val at = parseIso(o.optString("at")) ?: continue
+            // ⚠️ **고르는 기준은 여전히 `at` 하나다.** `leaveBy`로 고르면 T-60이 정한 게이트가
+            //    바뀐다 — 이 티켓은 문구만 바꾼다.
             if (at <= nowMs || at > limit || at >= bestAt) continue
             bestAt = at
             bestTitle = o.optString("title", "")
+            bestLeaveBy = parseIso(o.optString("leaveBy")) ?: 0L
         }
-        return if (bestTitle == null) Wake(WakeState.NONE) else Wake(WakeState.OK, bestAt, bestTitle)
+        return if (bestTitle == null) Wake(WakeState.NONE)
+        else Wake(WakeState.OK, bestAt, bestTitle, bestLeaveBy)
     }
     private const val K_LAST_FIRE = "last_fire"        // 마지막 발동 흔적 (무인 테스트의 증거)
 

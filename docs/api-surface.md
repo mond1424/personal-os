@@ -58,7 +58,7 @@
 | PUT `/api/me/:field` | `{value}` | `{field}` | `me.putMeField` |
 | GET `/api/me/history?limit` | — | 이력 rows | `me.meHistory` |
 | GET `/api/settings` | — | settings rows(개인 키 마스킹) | `me.getSettings` |
-| PUT `/api/settings/:key` | `{value}` | `{key, value}` | `me.putSetting` |
+| PUT `/api/settings/:key` | `{value}` | `{key, value}` | `me.putSetting` · 키는 `RULES` 화이트리스트(밖은 **404**). `wake_commute_min`·`wake_prep_min`은 기상 역산(T-61) |
 | GET `/api/ai/providers` | — | `PROVIDERS` | `lib/ai.PROVIDERS` |
 | GET `/api/ai/connections` | — | `{connections, low, high, fallback}` | `lib/ai.aiConfig` |
 | POST `/api/ai/test` | `{which?: low\|high}` | `{ok, provider, model, ms, ...}` | `lib/ai.testConnection` |
@@ -76,7 +76,7 @@
 | POST `/api/lm/:section` | `{title, body?, data?}` | `{id, section, title, schema_version}` (201) · **data는 스키마 검증 통과분만** | `lifemodel.create` |
 | PUT `/api/events/:id/protect` | `{protect_from?, protect_level?, protect_sleep_min?, protect_prep_min?}` 또는 `{protect:false}` | `{id, protected, ...}` · **본문 수정과 분리**(마감된 날에도 부착 가능) | `events.setProtect` |
 | GET `/api/guard/events?limit` | — | 발동 이력 rows | `guard.events` |
-| GET `/api/guard/schedule?days` | — | `{d, mode, friction_mult, events:[{event_id, start, deadline, fires[]}], wake:[{date, at, title, source}]}` · **기기가 하루 1회 pull**. `wake` = 하루에 하나, 그 날 **가장 이른 약속**(수업 ∪ 시각 있는 일정 · 지난 것·종일은 제외) — Level 2가 밤마다 다른 말을 할 재료(T-60 · ADR-047). **재료이지 판정이 아니다** | `guard.schedule` |
+| GET `/api/guard/schedule?days` | — | `{d, mode, friction_mult, events:[{event_id, start, deadline, fires[]}], wake:[{date, at, leaveBy, title, source}]}` · **기기가 하루 1회 pull**. `wake` = 하루에 하나, 그 날 **가장 이른 약속**(수업 ∪ 시각 있는 일정 · 지난 것·종일은 제외) — Level 2가 밤마다 다른 말을 할 재료(T-60 · ADR-047). **재료이지 판정이 아니다**. `leaveBy` = `at − (이동+준비)` 기상 시각(T-61) — **접는 것은 시각까지고 "몇 시간"은 기기가 그 자리에서 잰다** | `guard.schedule` |
 | POST `/api/guard/events` | `{cause, level, client_id?, fired_at?, event_id?, risk_score?, risk_snapshot?, foreground_app?, source?, reaction?, reason?, ai_used?, ai_verdict?, ai_unavailable_reason?, ai_reason?}` | `{id, on_date, level, mode, duplicate?}` (201) · **upsert** — `client_id`로 재전송 멱등, 반응 후행 채움. `ai_unavailable_reason`(0016)은 `ai_verdict='unavailable'`일 때만 남고 **닫힌 목록 밖이면 조용히 비운다** — 400을 던지면 기기 `flush()`가 발동 행을 버린다. `ai_reason`(0017)은 그 **반대편**이다 — `approve`·`deny`일 때만 남는 자유 문자열(모델이 쓴 문장)이고, 500자를 넘으면 **거부가 아니라 자른다**(같은 이유). **판정만 담아 뒤늦게 보내도 된다**(T-39): `client_id`만으로 기존 행의 `ai_used`·`ai_verdict`·`ai_unavailable_reason`·`ai_reason`을 **`NULL → 값`으로만** 채운다(`ai_used`는 `0 → 1`만). `cause`·`level`이 없어도 400이 아니고, **`level`은 못 바꾼다**(불변성 트리거). **저장되는 `risk_snapshot`은 보낸 것과 다르다**(T-32): 서버가 §6.6 항을 `server` 키 아래 얹고 `risk_score`를 낸다 — 전부 **`fired_at` 기준**이라 오프라인 큐가 늦게 올라와도 그 밤의 값이다. 기기 항은 이름·값 그대로. `risk_snapshot`을 안 보내면 **얹지 않는다**(둘 다 NULL) | `guard.record` |
 | POST `/api/guard/verify` | `{client_id, cause, level_candidate:4, event_id?, risk_snapshot?, foreground_app?}` | `{level:3\|4, approved, reason, ai_used, cached, source}` · **어떤 경우에도 200** — 판정 불가는 `level:3`. `source` = `ai\|cache\|cap\|timeout\|error\|off`. `level_candidate≠4`는 400(격상 전용) | `guard.verifyLevel4` |
 | POST `/api/guard/events/:id/react` | `{reaction, reason?, reacted_at?}` | `{id, reaction, reacted_at}` · 두 번째는 409 | `guard.react` |
@@ -223,6 +223,10 @@
 - `schedule(env, t, days)` → 기기가 알람을 예약할 재료. **데드라인을 여기서 역산**한다(저장 X, 원칙 4):
   `deadline = 일정시각 − protect_prep_min − protect_sleep_min` (기본 90·360 → 09:00 시험이면 01:30, 설계 §6.1 예시)
   Level 1(진입)·2(−2h·−1h)·3(데드라인)·4(+30m부터 30분 간격 6회)를 전부 시각으로 펼쳐 준다. 활성 모드의 `max_level`로 상한
+  - `wake[]`의 `leaveBy = at − (wake_commute_min + wake_prep_min)` (T-61). ★ **`protect_prep_min`과 같은 간격이다** —
+    `protectAxis`가 `start − (prep+sleep)`을 취침 데드라인으로 삼으므로 `start − prep`이 곧 기상 시각이다.
+    그래서 보호 일정이 걸린 날은 **그 event의 값을 읽는다**(설정으로 덮으면 같은 날의 알람과 문구가 서로 다른 기상을 가리킨다)
+  ⚠️ **남은 시간은 접지 않는다** — 접으면 새벽 3시의 문구가 저녁 6시 기준으로 굳는다(T-60 ①). 기기가 `leaveBy − now`를 잰다
 - `record(env, t, input)` → `{id, on_date, level, mode, duplicate?}` · **`fired_at`은 기기 시각**이고 귀속일도 그걸로 계산(오프라인 큐가 나중에 올라오므로)
   - **upsert(0011)**: `client_id`가 이미 있으면 그 행을 돌려주고, 반응만 왔으면 그것만 채운다. 셋을 한 엔드포인트로 받는다 — 발동만 / 발동+반응 동시(오프라인) / 반응 후행
   - `applyReaction`을 `react()`와 공유 — Override 사유 검증이 한 곳에만 있다

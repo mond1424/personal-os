@@ -2522,6 +2522,108 @@ ok("13 ★ 세기만 하고 저장하지 않는다 — 컬럼도 없고 조회�
   `컬럼=${t60Cols.filter((c) => /ignore|streak|nag/i.test(c))} 조회순수=${t60Pure}`
   + ` 연속=${t60PureRead.streak}`);
 
+// ── 재는 것은 수업까지가 아니라 기상까지다 (T-61 · ADR-047 ① 정정) ──
+//
+// T-60이 잰 것은 *약속까지* 남은 시간이었다. 10시 수업까지 5시간 30분이 남아도 8시엔
+// 일어나야 하면 실제로 잘 수 있는 것은 3시간 30분이다. **1~2시간을 부풀려 말하는 문구는
+// 사실이 아니라 위안이고, 틀린 사실은 명령보다 빨리 신뢰를 깎는다.**
+console.log("\n[T-61] 재는 것은 기상까지다 — 서버가 시각까지만 접는다");
+
+const t61Wake = async (): Promise<any[]> =>
+  ((await api("GET", "/api/guard/schedule")).json.wake as any[]) ?? [];
+const t61Set = (k: string, v: string) => api("PUT", `/api/settings/${k}`, { value: v });
+/** 약속과 기상 사이(분). **`leaveBy`에서 되짚는다** — 서버가 접어 보낸 '분'을 읽는 게 아니다. */
+const t61Gap = (w: any) => Math.round((Date.parse(w.at) - Date.parse(w.leaveBy)) / 60_000);
+/* ⚠️ **수업 칸만 본다.** 보호 일정은 `protect_prep_min`이라는 **자기 값**을 쓰므로(티켓 ③)
+ *   설정과 다른 것이 정상이다 — 섞어 세면 그 정상이 이 검사의 빨간불이 된다. */
+const t61Classes = (ws: any[]) => ws.filter((w) => w.source === "class");
+
+// 1 — 기대값은 **검사가 넣은 값**에서 만든다. 구현에서 베끼면 둘이 함께 틀린다(함정 15).
+const T61_C1 = 45, T61_P1 = 30;
+await t61Set("wake_commute_min", String(T61_C1));
+await t61Set("wake_prep_min", String(T61_P1));
+const t61A = t61Classes(await t61Wake());
+const t61HasAll = t61A.every((w) => typeof w.leaveBy === "string" && Date.parse(w.leaveBy) < Date.parse(w.at));
+const t61GapA = t61A.every((w) => t61Gap(w) === T61_C1 + T61_P1);
+ok("1 아침 재료가 기상 시각(leaveBy)을 함께 싣는다 — 약속보다 이동+준비만큼 이르다",
+  t61A.length > 0 && t61HasAll && t61GapA,
+  `수업칸=${t61A.length} 전부이름=${t61HasAll} 간격=${[...new Set(t61A.map(t61Gap))]}(기대 ${T61_C1 + T61_P1})`);
+
+/* 2 ★ **값은 설정이다** (티켓 ②). 사람마다·학기마다 다르므로 코드에 박으면 다음 학기에
+ *   조용히 틀린 시각으로 재운다. **두 벌의 값으로 두 번 잰다** — 한 번만 재면 그 값을
+ *   박아 둔 구현이 그대로 통과한다. 형식이 아닌 값은 문 앞에서 막는 것까지 함께 센다. */
+const T61_C2 = 10, T61_P2 = 20;
+await t61Set("wake_commute_min", String(T61_C2));
+await t61Set("wake_prep_min", String(T61_P2));
+const t61B = t61Classes(await t61Wake());
+const t61GapB = t61B.every((w) => t61Gap(w) === T61_C2 + T61_P2);
+const t61Bad = [
+  (await t61Set("wake_prep_min", "-5")).status,
+  (await t61Set("wake_commute_min", "9999")).status,   // 하루를 넘는 이동은 값이 아니라 오타다
+].every((s) => s === 400);
+ok("2 ★ 설정을 바꾸면 기상 시각이 따라 바뀐다 (값이 코드에 안 박혔다 · 형식 밖은 400)",
+  t61B.length > 0 && t61GapB && t61Bad && T61_C1 + T61_P1 !== T61_C2 + T61_P2,
+  `${T61_C1 + T61_P1}분 → ${T61_C2 + T61_P2}분 일치=${t61GapB} 거절=${t61Bad}`);
+
+/* 3 ★ **문구가 기상 시각과 약속을 둘 다 말한다** (티켓 ④). *"3시간 30분"* 만 말하면
+ *   **왜 그 숫자인지** 모르고, 틀렸다고 느낄 때 고칠 자리를 못 찾는다. 약속을 빼면
+ *   *"무엇을 지키려고"* 가 사라진다 — `at`을 `leaveBy`로 대체하지 않는 이유다. */
+const t61Body = /private fun wakeSentence\([\s\S]*?\n    \}/.exec(ktWatch)?.[0] ?? "";
+const t61Sentences = t61Body.match(/"[^"]*"/g) ?? [];
+const t61Main = t61Sentences.find((s) => s.includes("지금 자면") && s.includes("기상")) ?? "";
+const t61Ok3 = /w\.leaveBy - nowMs/.test(t61Body) && /clock\(w\.at\)/.test(t61Body)
+  && t61Main.includes("${w.title}");
+ok("3 ★ 문구에 기상 시각과 약속이 둘 다 들어간다 (스캐너)",
+  t61Ok3, `본문=${t61Body.length}자 문장=${t61Main || "없음"}`);
+
+/* 4 ★ **음수를 0으로 뭉개지 않는다.** 새벽 4시에 자려는데 기상이 3시였다면 *"지금 자면
+ *   0시간"* 은 거짓이다 — *"이미 지났다"* 와 *"딱 맞다"* 는 다른 사실이고, 관측을 결론으로
+ *   바꿔 말하는 것이 T-54가 없앤 그 부류다. **다른 문장이 나와야** 지난 것을 말한 것이다. */
+const t61Past = t61Sentences.find((s) => s.includes("지났")) ?? "";
+const t61Ok4 = /if \(w\.leaveBy <= nowMs\)/.test(t61Body)
+  && t61Past.length > 0 && !t61Past.includes("지금 자면")
+  && !/coerceAtLeast\(0\)/.test(ktWatch);
+ok("4 ★ 기상 시각이 이미 지났으면 그 사실을 말한다 (0으로 안 뭉갠다)",
+  t61Ok4, `지난가지=${/if \(w\.leaveBy <= nowMs\)/.test(t61Body)} 문장=${t61Past || "없음"}`
+  + ` 뭉갬=${/coerceAtLeast\(0\)/.test(ktWatch)}`);
+
+/* 5 ★ **T-60 ①의 회귀.** 서버는 **시각까지만** 접는다 — *"몇 시간"* 까지 접어 보내면
+ *   그 숫자가 **받은 순간에 굳고**, 새벽 3시의 문구가 저녁 6시 기준으로 말하게 된다.
+ *   밤새 안 바뀌는 숫자는 이 ADR이 없애려던 바로 그 모양이다.
+ *   ⚠️ **접힌 기간은 수(數)로 온다** — 시각은 전부 ISO 문자열이다. 그 차이가 이 스캐너의 날이다. */
+const T61_WAKE_KEYS = ["date", "at", "leaveBy", "title", "source"];
+const foldedSpan = (w: any): string | null => {
+  for (const [k, v] of Object.entries(w)) {
+    if (!T61_WAKE_KEYS.includes(k)) return `모르는 칸 ${k}`;
+    if (typeof v === "number") return `수 ${k}=${v}`;
+  }
+  return null;
+};
+const t61Folded = (await t61Wake()).map(foldedSpan).filter(Boolean);
+ok("5 ★ 서버 응답에 '몇 시간'이 없다 — 접는 것은 시각까지다 (스캐너)",
+  t61Folded.length === 0, `접힌칸=${t61Folded.join(" · ") || "없음"}`);
+
+/* 6 ★ **5의 스캐너가 살아 있는가.** 눈먼 스캐너는 *"아무것도 못 찾았다"* 와 구별되지 않고,
+ *   그 둘이 같은 초록이면 5는 아무것도 지키지 않는다. **양쪽으로** 먹여 본다. */
+const t61Clean = { date: "d", at: "a", leaveBy: "l", title: "t", source: "class" };
+const t61ScannerBites = [
+  foldedSpan({ ...t61Clean, hoursLeft: 5.5 }),        // 새 칸으로 접어 보내는 구현
+  foldedSpan({ ...t61Clean, leaveBy: 330 }),          // 같은 칸에 분을 담는 구현
+].every((r) => r !== null);
+ok("6 ★ 5의 스캐너가 살아 있다 (접힌 것을 먹이면 문다 · 깨끗한 것은 안 문다)",
+  t61ScannerBites && foldedSpan(t61Clean) === null,
+  `뭄=${t61ScannerBites} 깨끗한것=${foldedSpan(t61Clean) ?? "통과"}`);
+
+/* 7 ★ **게이트는 T-60 그대로다** (없는 것을 세는 검사). 이 티켓은 **문구만** 바꾼다 —
+ *   *"띄울까 말까"* 에 `leaveBy` 조건이 붙으면 **T-60이 산 침묵이 사라지거나**, 더 나쁘게는
+ *   기상이 지난 밤에 Guard가 통째로 조용해진다. 고르는 기준(`at`)도 그대로여야 한다. */
+const t61GateSame = /val fire = w\.state != GuardSync\.WakeState\.NONE/.test(ktWatch);
+const t61Region = /if \(level == 2\) \{([\s\S]*?)if \(!fire\) return false/.exec(ktWatch)?.[1] ?? "";
+const t61PickByAt = /if \(at <= nowMs \|\| at > limit \|\| at >= bestAt\) continue/.test(ktSyncT60);
+ok("7 ★ 게이트 조건은 T-60 그대로다 — 판정에 leaveBy가 없다 (없는 것을 세는 검사)",
+  t61GateSame && t61Region.length > 0 && !/leaveBy/.test(t61Region) && t61PickByAt,
+  `NONE만막음=${t61GateSame} 게이트안leaveBy=${/leaveBy/.test(t61Region)} at로고름=${t61PickByAt}`);
+
 // ── 장소 (T-59 · ADR-046) — 어디 있었는지는 WiFi가 말한다 ────
 //
 // 귀가·등교는 사용자가 손으로 적을 리가 없어 지금 아무 데도 안 남는다. 기기가 붙은 네트워크를

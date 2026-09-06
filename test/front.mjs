@@ -590,7 +590,8 @@ const rows = [...$("#set-list").querySelectorAll(".srow")].map((r) => r.textCont
 // ⚠️ **또 고쳤다** — T-58이 시간표 줄을 하나 더한다(13 → 14). 세는 것은 여전히
 //    *"행이 조용히 늘거나 줄지 않는다"*이므로, 늘린 티켓이 숫자를 옮기는 것이 이 검사의 규칙이다.
 // ⚠️ **또 고쳤다** — T-59가 장소 줄을 하나 더한다(14 → 15). 같은 규칙이다.
-ok("설정 15행 (AI 연결 통합 + 시간표 + 상태 세 줄)", rows.length === 15, String(rows.length));
+// ⚠️ **또 고쳤다** — T-61이 아침(이동·준비) 두 줄을 더한다(15 → 17). 같은 규칙이다.
+ok("설정 17행 (AI 연결 통합 + 시간표 + 아침 두 줄 + 상태 세 줄)", rows.length === 17, String(rows.length));
 // ⚠️ **"맨 아래가 수집 상태"에서 옮겼다.** 이 검사가 지키던 것은 *"그 줄이 사라지지 않는다"*이고,
 //    이제 같은 자리에 줄이 둘이라 **둘 다** 봐야 그 뜻이 남는다. 순서까지 고정하는 이유는
 //    **둘이 서로 다른 것**이기 때문이다: 학사 캘린더는 서버가 iCal을 긁는 것(T-41)이고,
@@ -607,6 +608,58 @@ ok("High 모델 표시", rows.some((r) => r.includes("High") && r.includes("clau
 ok("AI 연결 행 · 토큰 위", rows.findIndex((r) => r.includes("AI 연결")) < rows.findIndex((r) => r.includes("앱 접근 토큰")), rows.join(" | "));
 ok("모델 행이 토큰 아래", rows.findIndex((r) => r.includes("앱 접근 토큰")) < rows.findIndex((r) => r.includes("모델 — Low")));
 ok("표준시 오프셋이 내보내기 위", rows.findIndex((r) => r.includes("표준시")) < rows.findIndex((r) => r.includes("내보내기")));
+
+/* ── 아침 — 이동·준비 (T-61 · ADR-047 ① 정정) ────────────────
+ *
+ * 밤 문구가 *"지금 자면 N시간"* 을 **기상까지**로 말하려면 빼는 값이 있어야 하고,
+ * ★ **그 값을 고칠 자리가 화면에 있어야 한다** — 없으면 사용자가 숫자가 틀렸다고 느낄 때
+ * 할 수 있는 것이 없고, 그러면 틀린 사실이 그대로 남는다(티켓 ④). */
+const setRow = (label) => [...$("#set-list").querySelectorAll(".srow")]
+  .map((r) => r.textContent).find((t) => t.startsWith(label)) ?? "";
+const t61Commute = "아침 — 이동 시간", t61Prep = "아침 — 준비 시간";
+/* ⚠️ **기본값을 화면에 적지 않는다.** 적으면 서버 상수와 두 벌이 되고, 그 순간 화면이
+ *   거짓말을 시작한다(기준선·하루 경계에서 이 리포가 물린 그 모양). 안 적힌 값은
+ *   *"미설정"* 이라고 말한다 — 모르는 것을 아는 척하지 않는 쪽이다. */
+ok("아침 두 칸이 하루 경계 아래에 있다 — 안 넣었으면 '미설정' (기본값을 화면에 안 적는다)",
+  setRow(t61Commute).includes("미설정") && setRow(t61Prep).includes("미설정")
+  && rows.findIndex((r) => r.startsWith("하루 경계")) < rows.findIndex((r) => r.startsWith(t61Commute)),
+  `${setRow(t61Commute)} | ${setRow(t61Prep)}`);
+
+w.openSetting("wake_commute_min"); await sleep(150);
+ok("이동 시간 설명이 기상 시각을 말한다 — 왜 그 숫자인지 여기서 읽힌다",
+  txt("#st-head") === t61Commute && txt("#st-desc").includes("기상 시각"),
+  `${txt("#st-head")} / ${txt("#st-desc").slice(0, 40)}`);
+
+/* ★ **핸들러가 프라미스를 주면 `await`한다**(함정 14). 토스트나 `until`로 *"끝났다"* 를
+ *   관측하면 저장 왕복이 다음 검사의 스파이에 섞인다 — T-42·T-53·T-54가 그 자리다.
+ * ⚠️ **저장 핸들러는 `renderMe()`를 `await`하지 않는다** — 그래서 여기서 다시 부른다.
+ *    `sleep`으로 기다리면 그건 계약이 아니라 추측이고, 느린 실행에서 조용히 어긋난다. */
+const t61Save = async (key, value) => {
+  w.openSetting(key); await sleep(150);
+  $("#st-value").value = value;
+  await $("#st-save").onclick();
+  await ev("renderMe()");
+  w.toggleSet(true);
+};
+await t61Save("wake_commute_min", "45");
+await t61Save("wake_prep_min", "30");
+const t61Saved = (await ev("Api.settings()")).filter((r) => r.key.startsWith("wake_"));
+/* ★ **화면과 서버를 함께 센다.** 화면만 보면 저장 없이 입력값을 그대로 그리는 구현이
+ *   통과하고, 서버만 보면 저장은 됐는데 **고친 값이 화면에 안 돌아오는** 구현이 통과한다. */
+ok("★ 넣은 값이 서버에 남고 화면이 그 값을 되돌려 준다 (값이 코드에 안 박혔다)",
+  t61Saved.length === 2
+  && t61Saved.find((r) => r.key === "wake_commute_min")?.value === "45"
+  && t61Saved.find((r) => r.key === "wake_prep_min")?.value === "30"
+  && setRow(t61Commute).includes("45분") && setRow(t61Prep).includes("30분"),
+  `${JSON.stringify(t61Saved)} | ${setRow(t61Commute)} | ${setRow(t61Prep)}`);
+
+/* ★ **짝 — 형식 밖은 화면에도 안 남는다.** 하루를 넘는 이동은 값이 아니라 오타이고,
+ *   서버가 400으로 막는데 화면이 낙관적으로 그려 버리면 **사용자는 저장됐다고 믿는다.** */
+await t61Save("wake_commute_min", "9999");
+const t61After = (await ev("Api.settings()")).find((r) => r.key === "wake_commute_min")?.value;
+ok("★ 하루를 넘는 값은 서버가 막고 화면도 옛 값 그대로다 (거절이 저장으로 안 보인다)",
+  t61After === "45" && setRow(t61Commute).includes("45분"),
+  `서버=${t61After} 화면=${setRow(t61Commute)}`);
 
 console.log("\n[Goals — 스키마 폼 · 귀속일 디데이]");
 const goalKeys = () => [...$("#lm-goals-fields").querySelectorAll("[data-lm-goals-key]")].map((el) => el.dataset.lmGoalsKey);

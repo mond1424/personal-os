@@ -148,29 +148,55 @@ object GuardWatch {
     // ── Level 2의 아침 판정 (ADR-047 · T-60) ─────────────────
 
     /**
-     * *"지금 자면 5시간 30분 — 10시 전자기및연습1"*.
+     * *"지금 자면 3시간 30분 — 8시 기상 · 10시 전자기및연습1"*.
      *
      * ⚠️ **명령이 아니라 사실이다.** 설계 §6.2가 개입의 정당성을 사전 서약에 두는데,
      *    매일 같은 명령은 서약을 소모하고 사실은 그렇지 않다.
      *
-     * ⚠️ **준비 시간을 빼지 않는다** — 재는 것은 *약속까지 남은 시간*이지 수면 예상치가
-     *    아니다. 빼려면 `prep`을 기기에도 둬야 하고, 그러면 역산이 두 벌이 된다
-     *    (`protectAxis`가 유일한 자리인 이유와 같다).
+     * ★ **재는 것은 약속까지가 아니라 기상까지다** (ADR-047 ① 정정 · T-61).
+     *   T-60은 `at − now`를 쟀는데 10시 수업까지 5시간 30분이 남아도 8시엔 일어나야 하면
+     *   실제로 잘 수 있는 것은 3시간 30분이다. **부풀린 문구는 사실이 아니라 위안이고,
+     *   틀린 사실은 명령보다 빨리 신뢰를 깎는다.**
+     *
+     * ⚠️ **이동·준비는 여전히 여기 없다** — 서버가 `leaveBy`로 접어서 준다. T-60이
+     *    *"빼려면 `prep`을 기기에도 둬야 하고 그러면 역산이 두 벌이 된다"* 고 한 걱정은
+     *    **기기가 계산할 때의 이야기**였고, 서버가 빼서 보내면 역산은 여전히 한 곳이다.
+     *
+     * ★ **기상 시각을 문구에 보인다.** *"3시간 30분"* 만 말하면 **왜 그 숫자인지** 모르고,
+     *   틀렸다고 느낄 때 **고칠 자리(설정)를 못 찾는다.** 약속(`at`)도 함께 말한다 —
+     *   그것이 지키기로 한 것 자체이고, 기상 시각은 거기서 나온 파생일 뿐이다.
      */
     private fun wakeSentence(nowMs: Long, w: GuardSync.Wake): String {
-        val min = ((w.at - nowMs) / 60_000L).coerceAtLeast(0)
+        val at = clock(w.at)
+        // ⚠️ **옛 서버는 `leaveBy`를 안 보낸다.** 없는 기상 시각을 지어내지 않고,
+        //    그때는 T-60이 재던 것(약속까지)을 그대로 말한다 — 조용히 틀리지 않는다.
+        if (w.leaveBy <= 0L) return "지금 자면 ${span(w.at - nowMs)} — $at ${w.title}"
+        val wake = clock(w.leaveBy)
+        /* ★ **음수를 0으로 뭉개지 않는다.** *"이미 지났다"* 와 *"딱 맞다"* 는 다른 사실이고,
+         *   0으로 뭉개면 새벽 4시에 자려는 사람이 *"지금 자면 0시간"* 을 읽는다 —
+         *   그건 T-54가 없앤, 관측을 결론으로 바꿔 말하는 그 부류다. */
+        if (w.leaveBy <= nowMs) return "$wake 기상이 이미 지났어요 — $at ${w.title}"
+        return "지금 자면 ${span(w.leaveBy - nowMs)} — $wake 기상 · $at ${w.title}"
+    }
+
+    /** 밀리초 간격을 사람 말로. **여기 들어오는 값은 이미 양수다** — 뭉개기는 부르는 쪽의 몫이다. */
+    private fun span(ms: Long): String {
+        val min = ms / 60_000L
         val h = min / 60
         val m = min % 60
-        val span = when {
+        return when {
             h > 0 && m > 0 -> "${h}시간 ${m}분"
             h > 0 -> "${h}시간"
             else -> "${m}분"
         }
-        val c = Calendar.getInstance().apply { timeInMillis = w.at }
+    }
+
+    /** 절대 시각을 벽시계로 — '8시' · '8시 30분'. */
+    private fun clock(ms: Long): String {
+        val c = Calendar.getInstance().apply { timeInMillis = ms }
         val hh = c.get(Calendar.HOUR_OF_DAY)
         val mm = c.get(Calendar.MINUTE)
-        val at = if (mm == 0) "${hh}시" else String.format(java.util.Locale.US, "%d시 %02d분", hh, mm)
-        return "지금 자면 $span — $at ${w.title}"
+        return if (mm == 0) "${hh}시" else String.format(java.util.Locale.US, "%d시 %02d분", hh, mm)
     }
 
     /** 판정의 흔적. **띄운 쪽도 지난다** — 안 띄운 것만 남기면 '왜 떴나'를 못 읽는다. */
@@ -180,6 +206,9 @@ object GuardWatch {
             .put("state", w.state.name.lowercase())
             .put("fired", fired)
             .put("wakeAt", if (w.state == GuardSync.WakeState.OK) w.at else JSONObject.NULL)
+            // ★ *"N이 왜 그 숫자인가"* 를 밤 실측이 여기서 읽는다. 0이면 **옛 서버**다 —
+            //   문구가 약속까지로 되돌아간 밤과 설정이 0인 밤을 이 칸이 가른다.
+            .put("leaveBy", if (w.leaveBy > 0L) w.leaveBy else JSONObject.NULL)
             .put("title", w.title ?: JSONObject.NULL)
         prefs(ctx).edit().putString(K_L2_GATE, o.toString()).apply()
     }

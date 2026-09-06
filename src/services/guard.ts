@@ -17,7 +17,24 @@ import { classesIn } from "./timetable";
 
 /** 설정 기본값 — event별 값이 없을 때. 초기값의 정확도보다 조정 가능한 구조가 중요하다. */
 const DEFAULT_SLEEP_MIN = 360;   // 6시간
-const DEFAULT_PREP_MIN = 90;     // 기상~출발
+/**
+ * **기상에서 약속 시작까지의 간격.** 이름은 '준비'지만 산술이 말하는 것은 그 전부다 —
+ * `protectAxis`가 `start − (prep + sleep)`을 취침 데드라인으로 삼으므로 `start − prep`이
+ * 곧 기상 시각이고, 거기엔 이동도 들어 있다(아래 `wakePoints`가 같은 값을 잰다 · T-61 ③).
+ */
+const DEFAULT_PREP_MIN = 90;     // 기상~약속 시작
+/** 그 간격을 둘로 나눈 쪽의 기본값. **둘의 합이 위와 같아야 두 경로가 갈라지지 않는다.** */
+const DEFAULT_COMMUTE_MIN = 0;
+
+/**
+ * `settings`의 값은 문자열이라 **읽는 쪽마다 다시 검증해야 한다.** 형식이 아니면 기본값 —
+ * 여기서 던지면 설정 한 칸이 오타 났을 때 예약 재료가 통째로 안 내려간다.
+ * (T-60의 L2 임계와 T-61의 이동·준비가 같은 함수를 쓴다. 두 벌 두면 한쪽만 느슨해진다.)
+ */
+const nonNegInt = (v: string | undefined, fallback: number) => {
+  const n = Number(v);
+  return Number.isInteger(n) && n >= 0 ? n : fallback;
+};
 
 const LEVELS = [1, 2, 3, 4];
 const REACTIONS = ["accepted", "override", "ignored"];
@@ -246,8 +263,24 @@ function protectAxis(e: db.EventRow, offsetMin: number) {
  *
  * ⚠️ **지난 것은 안 싣는다**(`fires[]`와 같은 규칙). 기기는 여기서 *"now 이후 첫 항목"* 을
  *    고르는데, 이미 지난 항목이 섞여 있으면 그 고르기가 재료 순서에 의존하게 된다.
+ *
+ * ★ **`at`과 함께 `leaveBy`(기상 시각)를 싣는다** (ADR-047 ① 정정 · T-61).
+ *   T-60은 *약속까지* 남은 시간을 쟀는데 그건 **틀린 사실**이다 — 10시 수업까지 5시간 30분이
+ *   남아도 8시엔 일어나야 하면 실제로 잘 수 있는 것은 3시간 30분이다.
+ *   **1~2시간을 부풀려 말하는 문구는 사실이 아니라 위안이고, 틀린 사실은 명령보다 빨리
+ *   신뢰를 깎는다.** ⚠️ 역산은 **여기 한 곳**이다 — 기기에 이동·준비를 두면 두 벌이 된다.
  */
 const WAKE_WINDOW_DAYS = 30;
+
+/**
+ * ★ **기상 역산의 재료** (ADR-047 ① 정정 · T-61). 약속 시각에서 이만큼을 빼면 기상 시각이다.
+ *
+ * ⚠️ **둘로 나눈 이유** — 하나로 합치면 화면이 단순하지만 *"오늘은 학교에서 자고 간다"* 처럼
+ *    **이동만 0인 날**을 표현할 수 없다. 둘은 바뀌는 이유도 다르다(이사 ↔ 아침 루틴).
+ *    합이 필요한 곳은 여기 한 줄뿐이라 나누는 값이 서버 산술을 복잡하게 만들지도 않는다.
+ */
+const LEAD_COMMUTE_KEY = "wake_commute_min";
+const LEAD_PREP_KEY = "wake_prep_min";
 
 async function wakePoints(env: Env, t: TimeCtx, days: number) {
   // ⚠️ **`days`를 그대로 쓰지 않는다.** `classesIn`은 창이 너무 넓으면 **던지고**(400),
@@ -256,22 +289,36 @@ async function wakePoints(env: Env, t: TimeCtx, days: number) {
   //    기기에 필요한 것은 *"동기화가 며칠 실패해도 버틸 만큼"* 이고 그 이상은 쓰이지 않는다.
   const end = addDays(t.d, Math.max(1, Math.min(days, WAKE_WINDOW_DAYS)));
   const nowMs = Date.parse(t.now);
-  const [classes, evs] = await Promise.all([
+  const [classes, evs, settings] = await Promise.all([
     classesIn(env, t.d, end),                  // 규칙에서 전개한 파생 — 저장 없음 (T-58)
     db.eventsRange(env, t.d, end),
+    db.settingsAll(env),
   ]);
+  const s = Object.fromEntries(settings.results.map((r) => [r.key, r.value]));
+  const lead = nonNegInt(s[LEAD_COMMUTE_KEY], DEFAULT_COMMUTE_MIN)
+    + nonNegInt(s[LEAD_PREP_KEY], DEFAULT_PREP_MIN);
 
-  const best = new Map<string, { at: string; title: string; source: "class" | "event" }>();
-  const put = (date: string, time: string, title: string, source: "class" | "event") => {
+  const best = new Map<string, { at: string; leaveBy: string; title: string; source: "class" | "event" }>();
+  const put = (date: string, time: string, title: string, source: "class" | "event", leadMin: number) => {
     const at = new Date(`${date}T${time}:00${offsetSuffix(t.offsetMin)}`);
     const ms = at.getTime();
     if (!Number.isFinite(ms) || ms <= nowMs) return;
     const cur = best.get(date);
     if (cur && Date.parse(cur.at) <= ms) return;
-    best.set(date, { at: at.toISOString(), title, source });
+    // ★ **접는 것은 시각까지다.** *"몇 시간 남았는가"* 는 여기서 만들지 않는다 — 만들면
+    //   그 숫자가 **받은 순간에 굳고**, 새벽 3시의 문구가 저녁 6시 기준으로 말하게 된다(T-60 ①).
+    //   기기는 `leaveBy − now`만 잰다. ⚠️ `at`은 그대로 둔다 — 문구가 약속 자체도 말해야 한다.
+    best.set(date, {
+      at: at.toISOString(),
+      leaveBy: new Date(ms - leadMin * 60_000).toISOString(),
+      title, source,
+    });
   };
-  for (const c of classes) put(c.date, c.start_time, c.subject, "class");
-  for (const e of evs.results) if (e.time) put(e.date, e.time, e.title, "event");
+  for (const c of classes) put(c.date, c.start_time, c.subject, "class", lead);
+  // ★ **보호 일정은 자기 값을 쓴다** (T-61 ③). `protect_prep_min`이 재는 것과 여기가 재는 것이
+  //   **같은 간격**이라, 설정으로 덮으면 같은 날의 취침 데드라인과 기상 시각이 서로 다른
+  //   기상을 가리킨다 — 알람은 07:30 기상을 전제로 울리는데 문구는 "8시 기상"이라 쓰는 밤이 된다.
+  for (const e of evs.results) if (e.time) put(e.date, e.time, e.title, "event", e.protect_prep_min ?? lead);
 
   return [...best.entries()]
     .sort((a, b) => a[0].localeCompare(b[0]))
@@ -342,11 +389,6 @@ const L2_NAG_KEY = "guard_l2_ignore_threshold";
 const L2_NAG_ACK_KEY = "guard_l2_ignore_ack";
 const DEFAULT_L2_NAG = 3;
 
-const l2NagInt = (v: string | undefined, fallback: number) => {
-  const n = Number(v);
-  return Number.isInteger(n) && n >= 0 ? n : fallback;
-};
-
 /**
  * 연속 무시가 임계를 넘으면 **끄는 선택지를 준다** — 더 세게 하지 않는다 (ADR-047 ③).
  *
@@ -373,8 +415,8 @@ export async function l2Nag(env: Env) {
     streak++;
   }
 
-  const threshold = l2NagInt(s[L2_NAG_KEY], DEFAULT_L2_NAG);
-  const ack = l2NagInt(s[L2_NAG_ACK_KEY], 0);
+  const threshold = nonNegInt(s[L2_NAG_KEY], DEFAULT_L2_NAG);
+  const ack = nonNegInt(s[L2_NAG_ACK_KEY], 0);
   return {
     streak,
     threshold,

@@ -3003,6 +3003,10 @@ async function renderMe() {
   // 자주 만지는 것 위 / 한 번 정하고 마는 것 아래
   const rows = [
     ["하루 경계 시각", `${S.settings.day_boundary || "05:00"} ›`, "day_boundary"],
+    // ★ 밤 문구가 "왜 그 숫자인가"를 고칠 자리 (T-61 ④). 기본값을 여기 적지 않는다 —
+    //   숫자의 자리는 서버 상수 하나뿐이고, 안 적힌 값은 "미설정"으로 말한다.
+    ["아침 — 이동 시간", `${S.settings.wake_commute_min ? S.settings.wake_commute_min + "분" : "미설정"} ›`, "wake_commute_min"],
+    ["아침 — 준비 시간", `${S.settings.wake_prep_min ? S.settings.wake_prep_min + "분" : "미설정"} ›`, "wake_prep_min"],
     ["Feelings 필드 구성", `${ff} ›`, "feelings_fields"],
     ["테마", `${theme} ›`, "theme"],
     ["시간표 — 붙여넣기", `${S.tt && S.tt.rules.length ? S.tt.rules.length + "칸" : "없음"} ›`, "timetable"],
@@ -3604,6 +3608,8 @@ const SET_DESC = {
   model_high: "추론 작업 — 분석 2-pass, 이후 Guard 판단. 요청할 때만 호출돼요.",
   api_token: "이 앱(서버)에 접속하기 위한 토큰이에요. AI 키와는 다른 것이고, 이 기기에만 저장돼요.",
   ai_provider: "어느 회사의 모델을 쓸지 골라요. 바꾸면 모델 후보도 그 회사 것으로 바뀌어요.",
+  wake_commute_min: "집에서 첫 약속 장소까지 걸리는 시간(분)이에요. 준비 시간과 함께 약속 시각에서 빼서 기상 시각을 잡고, 밤에 Guard가 '지금 자면 몇 시간'을 그 기상 시각까지로 말해요. 학교에서 자고 가는 날처럼 이동이 없으면 0.",
+  wake_prep_min: "일어나서 나가기까지 걸리는 시간(분)이에요. 이동 시간과 함께 기상 시각을 정해요. 비워 두면 서버 기본값을 써요.",
   ai_api_key: "본인 계정의 AI 키를 넣으면 이 앱이 그 키로 모델을 불러요. 서버에 저장되고, 화면에는 다시 보이지 않아요(설정 여부만 표시). 비워 두면 서버에 등록된 키를 써요.",
 };
 let stCtx = null;
@@ -3612,7 +3618,8 @@ function openSetting(key) {
   $("#st-head").textContent =
     { day_boundary: "하루 경계 시각", utc_offset: "표준시 오프셋", feelings_fields: "Feelings 필드",
       model_low: "모델 — Low", model_high: "모델 — High", api_token: "앱 접근 토큰",
-      ai_provider: "AI 제공자", ai_api_key: "AI 키", theme: "테마" }[key] || key;
+      ai_provider: "AI 제공자", ai_api_key: "AI 키", theme: "테마",
+      wake_commute_min: "아침 — 이동 시간", wake_prep_min: "아침 — 준비 시간" }[key] || key;
   $("#st-desc").textContent = SET_DESC[key] || "";
   const opts = key === "theme" ? ["auto", "light", "dark"]
     : key === "ai_provider" ? Object.keys(S.providers || {})
