@@ -705,7 +705,10 @@ async function loadGuardNag() {
       await G.setWatch({ enabled: false });
       await Api.guardL2NagAck();
       set("none");
-      toast("밤 알림을 껐어요 — 설정에서 다시 켤 수 있어요");
+      // ★ **이 문구가 가리키는 자리가 생겼다** (T-63). 그전엔 없는 곳을 가리켰다 —
+      //   약속을 지우는 대신 자리를 만들었으므로 **어디인지까지 말한다.**
+      S.watchStatus = await watchNativeStatus();
+      toast("밤 알림을 껐어요 — 설정 › 밤 알림에서 다시 켤 수 있어요");
     });
     $("#td-nag-keep").onclick = ack;
     set("ask");
@@ -2963,6 +2966,8 @@ async function renderMe() {
   // 폰 캘린더는 **서버가 아니라 기기가** 안다 — `Promise.all`에 못 얹는다(응답이 아니라 다리다).
   // 네이티브가 없으면 null이고, 그 자체가 화면에서 '앱에서만 돼요'로 읽힌다.
   S.calStatus = await calNativeStatus();
+  // 밤 알림 스위치도 기기가 안다 (T-63). 위와 같은 이유로 `Promise.all` 밖이다.
+  S.watchStatus = await watchNativeStatus();
   S.me = me;
   S.guardModes = guardModes;
   S.goalsSchema = goalsSchema;
@@ -3027,7 +3032,10 @@ async function renderMe() {
     `<button class="srow" ${act(key)}>${k}<em>${esc(v)}</em></button>`).join("")
     + collectStatusRow(S.collectStatus)
     + calStatusRow(S.calStatus)
-    + placeStatusRow(S.placeStatus);
+    + placeStatusRow(S.placeStatus)
+    // ★ 넷째 — **꺼진 것을 읽을 수 있는 유일한 자리다**(T-63). 앞 셋과 합치지 않는다:
+    //   저 셋은 *"무엇이 죽었나"* 이고 이것은 *"내가 무엇을 골랐나"* 다.
+    + watchStatusRow(S.watchStatus);
 }
 
 /* 학사 캘린더 수집 상태 — 설정 안 한 줄 (T-43) ────────────────
@@ -3115,6 +3123,76 @@ function placeStatusRow(st) {
   const bad = v.state !== "ok" && v.state !== "off";
   return `<button class="srow${bad ? " srow-alert" : ""}" id="set-place" data-state="${v.state}"`
     + ` onclick="openPlaceSheet()">장소<em>${esc(label)}</em></button>`;
+}
+
+/* ── 밤 알림 스위치 (T-63 · ADR-047 ③) ────────────────────────
+ *
+ * ★ **끈 것을 켤 수 있어야 한다.** 끄는 길은 나그 카드에 있었는데 **켜는 길이 아무 데도
+ * 없었고, 꺼진 것이 화면 어디에도 안 적혔다.** 한 방향만 있는 문은 이탈 경로가 아니라
+ * 낭떠러지다 — ADR-026의 *"대가가 있지만 막지는 않는다"* 는 **돌아올 수 있을 때** 성립한다.
+ *
+ * ⚠️ **그 뒤의 침묵은 공강 밤의 침묵과 화면에서 구별되지 않는다**(ADR-047 ②가 만든 정당한
+ *    침묵). T-60 ③이 *"결함이 조용해진다"* 를 막으려고 갈랐던 그 모양인데,
+ *    이번엔 결함이 아니라 **사용자 자신의 선택이 조용해졌다.**
+ *
+ * ⚠️ **스위치는 기기 prefs(`watch_enabled`) 하나다.** 서버 `settings`에 키를 만들면 두 벌이
+ *    되고, 발동 경로엔 네트워크가 없어서(ADR-021) 그 두 벌 중 기기 것만 실제로 쓰인다. */
+async function watchNativeStatus() {
+  const G = globalThis.Capacitor?.Plugins?.Guard;
+  if (!G?.watchStatus) return null;                  // 브라우저·구버전 APK — 폴백
+  try { return await G.watchStatus(); } catch { return { unreadable: true }; }
+}
+
+/** 순수 함수 — 사실에서 상태를 정한다. **네이티브는 이름을 정하지 않는다**(자매 둘과 같은 규칙).
+ *
+ * ⚠️ **여기의 `off`는 `calStatusLine`의 `off`와 다른 것이다.** 저쪽 `off`는 *"앱이 아니라 웹"*
+ *    이고 여기 `off`는 **사용자가 끈 것**이다 — 그래서 웹은 `noapp`이라는 다른 이름을 갖는다.
+ *    같은 낱말에 두 뜻을 담으면 다음 사람이 둘을 한 분기로 합친다. */
+function watchStatusLine(st) {
+  if (!st) return { state: "noapp" };
+  if (st.unreadable) return { state: "unreadable" };
+  return { state: st.enabled ? "on" : "off" };
+}
+
+/** 상태 줄 넷째 — `collectStatusRow`·`calStatusRow`·`placeStatusRow`와 같은 모양이다. */
+function watchStatusRow(st) {
+  const v = watchStatusLine(st);
+  const label = {
+    noapp: "앱에서만 돼요",
+    unreadable: "상태를 못 읽었어요 ›",
+    on: "켜짐 ›",
+    off: "꺼짐 ›",
+  }[v.state] || "";
+  // ⚠️ **꺼짐에 경고색을 안 쓴다** — 실패가 아니라 **선택**이다. 색을 쓰면 다음에
+  //    `srow-alert`이 *"고쳐야 할 것"* 을 뜻한다는 규칙이 흐려진다(`calStatusRow`가 그 뜻이다).
+  //    못 읽은 것은 다르다 — 그건 진짜 결함이라 자매들과 같은 색을 쓴다.
+  const bad = v.state === "unreadable";
+  /* ⚠️ **`return`이 있어야 한다.** 인라인 핸들러의 본문은 그대로 함수 몸이 되는데,
+   *   `toggleWatch()`만 적으면 **프라미스를 안 돌려주고** 부르는 쪽이 기다릴 것을 못 얻는다.
+   *   그러면 *"끝났다"* 를 관측으로 알 수밖에 없고, 그것이 함정 14가 세 번 문 자리다
+   *   (검사가 실제로 여기서 죽었다 — `setWatch`는 불렸는데 줄이 아직 옛 값이었다). */
+  return `<button class="srow${bad ? " srow-alert" : ""}" id="set-watch" data-state="${v.state}"`
+    + ` onclick="return toggleWatch()">밤 알림<em>${esc(label)}</em></button>`;
+}
+
+/** ★ **켜고 끄는 것이 같은 줄에서 된다** — 지금 어느 쪽인지 읽는 곳과 바꾸는 곳이 같아야 한다. */
+function toggleWatch() {
+  return run(async () => {
+    const G = globalThis.Capacitor?.Plugins?.Guard;
+    // ⚠️ **조용히 성공한 척하지 않는다.** 나그 카드가 이미 옳게 지키는 자리이고(§끄기),
+    //    여기서 뒤집으면 사용자는 켰다고 믿는데 그 밤에 안 뜬다 — T-54가 없앤 그 실패다.
+    if (!G || !G.setWatch || !G.watchStatus) return void toast("폰 앱에서만 바꿀 수 있어요", "err");
+    const cur = watchStatusLine(S.watchStatus);
+    // 지금 값을 모르면 **뒤집을 대상이 없다.** 추측해서 뒤집으면 그 밤이 어느 쪽인지 아무도 모른다.
+    if (cur.state !== "on" && cur.state !== "off") {
+      return void toast("지금 상태를 못 읽었어요 — 잠시 뒤 다시 해 주세요", "err");
+    }
+    const next = cur.state === "off";
+    await G.setWatch({ enabled: next });
+    S.watchStatus = await watchNativeStatus();
+    await renderMe();
+    toast(next ? "밤 알림을 켰어요" : "밤 알림을 껐어요 — 설정 › 밤 알림에서 다시 켤 수 있어요");
+  });
 }
 
 function toggleSet(on) { $("#me-main").style.display = on ? "none" : ""; $("#me-set").style.display = on ? "" : "none"; }

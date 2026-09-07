@@ -591,7 +591,8 @@ const rows = [...$("#set-list").querySelectorAll(".srow")].map((r) => r.textCont
 //    *"행이 조용히 늘거나 줄지 않는다"*이므로, 늘린 티켓이 숫자를 옮기는 것이 이 검사의 규칙이다.
 // ⚠️ **또 고쳤다** — T-59가 장소 줄을 하나 더한다(14 → 15). 같은 규칙이다.
 // ⚠️ **또 고쳤다** — T-61이 아침(이동·준비) 두 줄을 더한다(15 → 17). 같은 규칙이다.
-ok("설정 17행 (AI 연결 통합 + 시간표 + 아침 두 줄 + 상태 세 줄)", rows.length === 17, String(rows.length));
+// ⚠️ **또 고쳤다** — T-63이 밤 알림 줄을 하나 더한다(17 → 18). 같은 규칙이다.
+ok("설정 18행 (AI 연결 통합 + 시간표 + 아침 두 줄 + 상태 네 줄)", rows.length === 18, String(rows.length));
 // ⚠️ **"맨 아래가 수집 상태"에서 옮겼다.** 이 검사가 지키던 것은 *"그 줄이 사라지지 않는다"*이고,
 //    이제 같은 자리에 줄이 둘이라 **둘 다** 봐야 그 뜻이 남는다. 순서까지 고정하는 이유는
 //    **둘이 서로 다른 것**이기 때문이다: 학사 캘린더는 서버가 iCal을 긁는 것(T-41)이고,
@@ -599,10 +600,13 @@ ok("설정 17행 (AI 연결 통합 + 시간표 + 아침 두 줄 + 상태 세 줄
 //    죽었는지 못 읽는다 — 이 티켓이 실패 문구를 셋으로 가른 것과 같은 규칙이다.
 // ⚠️ **셋으로 늘렸다** — T-59의 장소 줄이 같은 자리에 선다. 이것도 서로 다른 것이다:
 //    기기가 붙은 네트워크를 읽는 것(T-59)이라 앞 둘 중 어느 쪽이 죽어도 이것은 살아 있다.
-ok("맨 아래 세 줄이 상태 줄이다 — 학사 캘린더 · 폰 캘린더 · 장소 순서 (셋 다 안 사라진다)",
-  rows[rows.length - 3]?.includes("학사 캘린더") && rows[rows.length - 2]?.includes("폰 캘린더")
-  && rows[rows.length - 1]?.includes("장소"),
-  rows.slice(-3).join(" | "));
+// ⚠️ **넷으로 늘렸다** — T-63의 밤 알림 줄이 같은 자리에 선다. ★ **이것은 앞 셋과 종류가 다르다**:
+//    앞 셋은 *"무엇이 죽었나"* 이고 이것은 *"내가 무엇을 골랐나"* 다. 그래도 같은 자리에 두는
+//    이유는 **지금 어느 쪽인지 읽는 곳과 바꾸는 곳이 같아야 하기 때문**이다(ADR-047 ③).
+ok("맨 아래 네 줄이 상태 줄이다 — 학사 캘린더 · 폰 캘린더 · 장소 · 밤 알림 (넷 다 안 사라진다)",
+  rows[rows.length - 4]?.includes("학사 캘린더") && rows[rows.length - 3]?.includes("폰 캘린더")
+  && rows[rows.length - 2]?.includes("장소") && rows[rows.length - 1]?.includes("밤 알림"),
+  rows.slice(-4).join(" | "));
 ok("Low 모델 표시", rows.some((r) => r.includes("Low") && r.includes("haiku")), rows.join(" | "));
 ok("High 모델 표시", rows.some((r) => r.includes("High") && r.includes("claude")), rows.join(" | "));
 ok("AI 연결 행 · 토큰 위", rows.findIndex((r) => r.includes("AI 연결")) < rows.findIndex((r) => r.includes("앱 접근 토큰")), rows.join(" | "));
@@ -3592,6 +3596,111 @@ ok("★ 네이티브가 없으면 아무 말도 안 한다 — 화면은 조용�
   t59Bar.dataset.state === "off" && t59Bar.style.display === "none"
   && t59Bar.dataset.state !== "ok" && !ev(`PLACE_ACT.off`),
   `${t59Bar.dataset.state}/${t59Bar.style.display} · 행동=${ev(`PLACE_ACT.off ?? null`)}`);
+
+/* ── T-63 · 끈 것을 켤 수 있어야 한다 (ADR-047 ③) ─────────────────────────
+ *
+ * 사용자가 껐고 **돌아오는 길이 없었다.** 끄기 토스트는 *"설정에서 다시 켤 수 있어요"* 라고
+ * 말하는데 그 자리가 없었다 — **문구가 없는 곳을 가리켰다.**
+ * ⚠️ **한 방향만 있는 문은 이탈 경로가 아니라 낭떠러지다.** 그리고 그 뒤의 침묵은
+ *    공강 밤의 침묵과 화면에서 구별되지 않는다(ADR-047 ②가 만든 정당한 침묵). */
+console.log("\n[T-63] 밤 알림 — 끈 것을 켤 수 있어야 한다");
+
+/* ⚠️ **줄을 `id`로 찾지 않는다**(함정 15). `#set-watch`로 찾으면 **검사와 구현이 같은 이름을
+ *   공유해**, 그 이름이 틀렸을 때 양쪽이 함께 틀린다 — T-55에서 캘린더 12개가 숨은 칸에
+ *   쓰였는데 검사가 초록이던 것이 정확히 그 모양이다. **화면에 보이는 글자로 찾는다.** */
+const t63Row = () => [...$("#set-list").querySelectorAll(".srow")]
+  .find((r) => r.textContent.startsWith("밤 알림")) ?? null;
+
+const t63Calls = [];
+/** 스위치는 **기기 prefs 하나**다. 스텁도 그 계약대로 — 쓴 값이 다음 읽기에 보인다. */
+const t63Guard = (init) => {
+  let on = init;
+  return {
+    watchStatus: async () => ({ enabled: on }),
+    setWatch: async (o) => { t63Calls.push(o.enabled); on = o.enabled; return {}; },
+  };
+};
+/* ★ **`renderMe()`를 `await`한다**(함정 14) — 저장·재조립이 프라미스를 주므로 계약으로 기다린다.
+ *   `sleep`이나 토스트로 *"끝났다"* 를 관측하면 그 왕복이 다음 검사에 섞인다. */
+const t63Show = async (plugins) => {
+  if (plugins) w.Capacitor = { Plugins: { Guard: plugins } };
+  else delete w.Capacitor;
+  await ev("renderMe()");
+  w.toggleSet(true);
+  return t63Row();
+};
+/** 줄을 눌러 본다. **핸들러가 없으면 그 검사만 빨간불**이 되게 한다(T-60이 배운 자리 —
+ *  `onclick()`을 바로 부르면 러너가 죽고 요약을 통째로 잃는다). */
+const t63Tap = async () => {
+  const r = t63Row();
+  if (!r || typeof r.onclick !== "function") return "핸들러없음";
+  await r.onclick();
+  return "눌림";
+};
+
+// 1 — 꺼진 것이 **읽힌다.** 지금의 결함이 정확히 이것이다: 껐는데 화면 어디에도 안 적힌다.
+const t63Off = await t63Show(t63Guard(false));
+ok("1 ★ 꺼져 있으면 줄이 '꺼짐'이라고 말한다 (꺼진 것이 화면에서 읽힌다)",
+  !!t63Off && t63Off.textContent.includes("꺼짐") && t63Off.dataset.state === "off",
+  `${t63Off?.textContent ?? "줄없음"} / ${t63Off?.dataset.state}`);
+
+/* 6 ★ **꺼짐은 실패가 아니라 선택이다.** 경고색을 쓰면 다음에 `srow-alert`이
+ *   *"고쳐야 할 것"* 을 뜻한다는 규칙이 흐려지고, `calStatusRow`의 뜻이 함께 낡는다. */
+ok("6 ★ 꺼짐에 경고색이 안 붙는다 (실패가 아니라 선택이다)",
+  !!t63Off && !t63Off.classList.contains("srow-alert"),
+  `클래스=${t63Off?.className}`);
+
+/* 3 ★ **이 티켓의 본체 — 켜는 길이 생겼는가.** 끄는 길만 있던 것이 결함이었다. */
+const t63TapOn = await t63Tap();
+const t63AfterOn = t63Row();
+ok("3 ★ 꺼진 줄을 누르면 켜진다 — setWatch({enabled:true}) 가 불리고 줄이 따라 바뀐다",
+  t63TapOn === "눌림" && t63Calls.at(-1) === true
+  && !!t63AfterOn && t63AfterOn.textContent.includes("켜짐"),
+  `탭=${t63TapOn} 부른값=${JSON.stringify(t63Calls)} 줄=${t63AfterOn?.textContent}`);
+
+// 2 — 1의 짝. 없으면 *"항상 꺼짐이라 쓰는 구현"*이 1만으로 통과한다.
+const t63On = await t63Show(t63Guard(true));
+ok("2 ★ 켜져 있으면 '켜짐'이라고 말한다 (1의 짝)",
+  !!t63On && t63On.textContent.includes("켜짐") && t63On.dataset.state === "on",
+  `${t63On?.textContent ?? "줄없음"} / ${t63On?.dataset.state}`);
+
+/* 4 ★ **3의 짝 — 두 방향이다.** *"한 방향뿐"* 이 결함이었으므로 **두 방향이 다 세어져야**
+ *   고쳐진 것이다. 켜기만 되는 구현은 여기서 죽는다. */
+const t63Before4 = t63Calls.length;
+const t63TapOff = await t63Tap();
+const t63AfterOff = t63Row();
+ok("4 ★ 켜진 줄을 누르면 꺼진다 — 같은 줄이 두 방향으로 간다 (3의 짝)",
+  t63TapOff === "눌림" && t63Calls.length === t63Before4 + 1 && t63Calls.at(-1) === false
+  && !!t63AfterOff && t63AfterOff.textContent.includes("꺼짐"),
+  `탭=${t63TapOff} 부른값=${t63Calls.at(-1)} 줄=${t63AfterOff?.textContent}`);
+
+/* 5 ★ **조용히 성공한 척하지 않는다.** 나그 카드가 이미 옳게 지키는 자리이고, 여기서
+ *   뒤집으면 사용자는 켰다고 믿는데 **그 밤에 안 뜬다** — T-54가 없앤 그 실패 모양이다. */
+const t63NoPlug = await t63Show(null);
+const t63Before5 = t63Calls.length;
+const t63TapWeb = await t63Tap();
+ok("5 ★ 플러그인이 없으면 안 부르고 그렇게 말한다 (조용한 성공이 없다)",
+  !!t63NoPlug && t63NoPlug.textContent.includes("앱에서만")
+  && t63TapWeb === "눌림" && t63Calls.length === t63Before5
+  && txt("#toast").includes("앱에서만"),
+  `줄=${t63NoPlug?.textContent} 탭=${t63TapWeb} 부른수=${t63Calls.length - t63Before5}`
+  + ` 토스트="${txt("#toast")}"`);
+
+/* 7 **두 벌 방지** (스캐너). 스위치를 서버 `settings`에도 두면 **발동 경로엔 네트워크가
+ *   없어서**(ADR-021) 둘 중 기기 것만 실제로 쓰이고, 화면은 서버 것을 읽어 **끈 줄 알았는데
+ *   그 밤에 또 뜨는** 상태가 만들어진다. 서버의 화이트리스트와 화면의 저장 경로를 함께 센다. */
+const t63MeSrc = readFileSync(join(here, "../src/services/me.ts"), "utf8");
+const t63Rules = /const RULES[\s\S]*?\n\};/.exec(t63MeSrc)?.[0] ?? "";
+const t63ServerKey = /^\s*[a-z_]*(watch|night|bedtime)[a-z_]*\s*:/im.test(t63Rules);
+const t63WebSaves = /putSetting\(\s*["'][a-z_]*(watch|night|bedtime)/i.test(appJs);
+ok("7 서버 settings 에 스위치 키가 없다 — 화면도 거기로 저장하지 않는다 (스캐너 · 두 벌 방지)",
+  t63Rules.length > 0 && !t63ServerKey && !t63WebSaves,
+  `RULES=${t63Rules.length}자 서버키=${t63ServerKey} 웹저장=${t63WebSaves}`);
+
+// 다음 블록이 네이티브 없는 상태를 전제한다 — 심어 둔 것을 치운다.
+delete w.Capacitor;
+await ev("renderMe()");
+w.toggleSet(false);
 
 console.log("\n[부팅 · 연결 실패 복구]");
 ok("로드 후 부팅 오버레이 닫힘", !$("#boot").classList.contains("on"));
