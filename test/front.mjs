@@ -1745,11 +1745,15 @@ await t33Load(`
 const t33Err = { state: t33Bar.dataset.state, display: t33Bar.style.display };
 ok("④ 조회가 실패해도 화면을 막지 않는다 · 상태는 error",
   t33Err.state === "error" && t33Err.display === "none", JSON.stringify(t33Err));
-// ★ ③과 ④의 짝. 화면에서 같고 기록에서 다르다 — 그래서 검사가 가를 수 있다.
-//   "안 뜬다"만 검사하면 조회가 항상 실패해도 초록이다(AGENT-CHAIN §5).
-ok("★ none과 error는 화면에서 같고 기록에서만 다르다",
-  t33None.display === t33Err.display && t33None.state !== t33Err.state,
-  `${t33None.state}/${t33None.display} vs ${t33Err.state}/${t33Err.display}`);
+/* ★ ③과 ④의 짝 — **none과 error는 화면에서 같고 기록에서만 다르다.** 그것이 이 카드의 요점이다
+ *   ("안 뜬다"만 검사하면 조회가 항상 실패해도 초록이다 · AGENT-CHAIN §5).
+ *   ⚠️ **그런데 그 관계는 위 둘의 계약값에서 연역된다** — ③이 `none/none`을, ④가 `error/none`을
+ *   못 박으므로 display가 같고 state가 다른 것은 **반드시 참이다.** 거짓이 되려면 ③이나 ④가
+ *   먼저 거짓이어야 하고, 그러면 **이 검사는 혼자 죽을 수가 없다** — 초록불은 하나 켜는데
+ *   세는 것은 0이다(T-65 · AGENT-CHAIN §8). 그래서 `ok()`에서 뺐다.
+ *   변이로 확인했다: err를 flex로 만들면 ④와 **함께** 죽고, 관계만 깨는 변이는 **구성 불가능**하다.
+ *   ⚠️ **되살릴 조건** — ③ 또는 ④에서 `display` 단언이 빠지면 그 순간 이 관계를 **아무도 안 센다.**
+ *   그때는 여기를 `ok()`로 되돌린다. */
 await ev(`(async()=>{ Api.guardPending = window.__t33.old[0]; Api.guardOutcome = window.__t33.old[1]; })()`);
 
 // ── T-56 · 뒤에 또 깨어 있었으면 묻지 않아도 안다 (ADR-044) ──────────────────
@@ -1910,10 +1914,12 @@ await ev(`(async()=>{
 const t42Err = { state: t42Bar.dataset.state, display: t42Bar.style.display };
 ok("⑥ 조회가 실패해도 Today를 막지 않는다 · state='error'",
   t42Err.state === "error" && t42Err.display === "none", JSON.stringify(t42Err));
-// ★ ⑤와 ⑥의 짝. 화면에서 같고 기록에서 다르다 — 이게 없으면 조회가 항상 실패해도 초록이다.
-ok("★ none과 error는 화면에서 같고 기록에서만 다르다 (T-42)",
-  t42None.display === t42Err.display && t42None.state !== t42Err.state,
-  `${t42None.state}/${t42None.display} vs ${t42Err.state}/${t42Err.display}`);
+/* ★ ⑤와 ⑥의 짝 — **none과 error는 화면에서 같고 기록에서만 다르다.** 이게 없으면 조회가 항상
+ *   실패해도 초록이다. ⚠️ **그런데 그 관계는 ⑤의 `none/none`과 ⑥의 `error/none`에서 연역된다** —
+ *   둘이 참이면 반드시 참이고, 거짓이 되려면 둘 중 하나가 먼저 거짓이어야 한다.
+ *   **혼자 죽을 수 없는 검사는 아무것도 안 센다**(T-65 · AGENT-CHAIN §8). 그래서 `ok()`에서 뺐다.
+ *   위 T-33 자매와 **같은 모양·같은 판정**이다(변이도 같이 돌렸다: err를 flex로 → ⑥과 함께 죽는다).
+ *   ⚠️ **되살릴 조건** — ⑤ 또는 ⑥에서 `display` 단언이 빠지면 이 관계를 아무도 안 센다. 그때 되돌린다. */
 await ev(`(async()=>{
   Api.collectedPending = window.__t42.old[0];
   Api.collectedAccept = window.__t42.old[1];
@@ -3380,7 +3386,11 @@ await t60Load("boom");
 const t60Err = t60Snap();
 /* ⚠️ **`t60Under.display`와 비교하지 않는다.** 그러면 *"항상 띄우는 변이"* 가 6과 여기를
  *   **함께** 죽여, 이 검사가 자기 몫(실패가 이름을 갖는가)을 못 센다 — T-58에서 검사끼리
- *   몫을 먹던 자리 셋을 좁힌 것과 같은 이유다. 여기가 지는 것은 **계약값** 하나다. */
+ *   몫을 먹던 자리 셋을 좁힌 것과 같은 이유다. 여기가 지는 것은 **계약값** 하나다.
+ *   ★ **T-65가 세 자매에 같은 시험을 쳤고 이것만 남았다** — `t60Err`의 계약값을 **아무도 안 겹쳐
+ *   세므로 혼자 죽을 수 있다.** 증거: `loadGuardNag`의 `catch`가 `set("none")`을 하면
+ *   **이 검사만** 빨간불이 된다(6은 `t60Under`를 보므로 안 죽는다). 위 T-33·T-42 자매는
+ *   같은 이름인데 연역이라 `ok()`에서 빠졌다 — **같은 이름이 같은 물건을 뜻하지 않는다.** */
 ok("★ 조회가 실패해도 화면을 막지 않는다 · 안 뜨는 것은 같고 기록에서만 갈린다",
   t60Err.state === "error" && t60Err.display === "none" && t60Err.state !== t60Under.state,
   `${JSON.stringify(t60Err)} vs ${JSON.stringify(t60Under)}`);
