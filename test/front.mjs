@@ -2821,10 +2821,15 @@ ok("★ 셋이 서로 다른 상태·문구다 — 무엇을 고칠지가 화면
 // 브라우저(네이티브 없음)는 **실패가 아니다** — 없는 기능의 실패를 말하는 것은 잔소리다.
 delete w.Capacitor;
 await w.loadCalStatus();
-ok("★ 네이티브가 없으면 아무 말도 안 한다 — 'off'는 'ok'와 화면에서 같고 기록에서 다르다",
+/* ⚠️ **`t53Synced`와 비교하지 않는다**(AGENT-CHAIN §8 · T-64). 처음엔 `display === t53Synced.display`
+ *   로 적었는데, 그것은 **④가 그때 관측한 값**이라 *"정상에도 행동을 붙이는"* 변이가 그 값을
+ *   `flex`로 만들면 **④와 이 검사가 함께** 죽는다 — 이 검사는 자기 몫(네이티브 없음이 조용한가)을
+ *   한 번도 못 세게 된다. T-59가 자매에서 같은 것을 고쳤고 원본인 여기가 남아 있었다.
+ *   **관계는 두 검사가 한 끝씩 잡는다** — `ok`가 안 뜬다는 반대 끝은 위 ④가 계약값으로 센다. */
+ok("★ 네이티브가 없으면 아무 말도 안 한다 — 화면은 조용하고 기록에만 'off'로 남는다",
   t53Bar.dataset.state === "off" && t53Bar.style.display === "none"
-  && t53Bar.dataset.state !== t53Synced.state && t53Bar.style.display === t53Synced.display,
-  `${t53Bar.dataset.state}/${t53Bar.style.display} vs ${t53Synced.state}/${t53Synced.display}`);
+  && t53Bar.dataset.state !== "ok",
+  `${t53Bar.dataset.state}/${t53Bar.style.display}`);
 
 /* ⑤⑥ — devcal 일정은 읽기 전용, 앱 일정은 그대로.
  *
