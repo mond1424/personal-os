@@ -118,6 +118,13 @@ npm run deploy
 6. **마감된 날은 트리거가 동결** — logs·feelings·schedule_entries·daily 수정/삭제 불가. **추가까지 막힌다** — `logs`·`feelings`·`schedule_entries` 셋 다 `*_frozen_ins`가 있다. 마감된 날에도 **추가되는 것은 `events`(캘린더 일정)와 memo 둘뿐**이고, 그 둘엔 `_ins` 트리거가 아예 없다 — 여기 '일정'은 `events`이지 `schedule_entries`(task의 예정)가 아니다. **T-47이 이 한 글자에 물렸다**(검사 픽스처가 마감된 날에 예정을 넣으려다 죽었다). 프론트는 `day_status`로 판단, 추측하면 409.
 7. **`wait_extensions` FK + `0005`** — 삭제는 '마감 기록 있을 때만' 차단. task 삭제 순서 = 연장이력→항목→task.
 8. **`e2e.mjs`는 격리 임시 D1** — 실 `.wrangler/state` 불변. **`spawnSync ETIMEDOUT`이 뜨면 진짜 hang이다** — `front.mjs`가 성공 경로에서 종료하지 않아 안전망 SIGKILL이 유일한 종료 수단이던 결함을 T-06이 없앴다(그전엔 193건 전부 통과해도 `exit 1`이었다). 러너의 모든 대기에 상한이 있으므로 **실패는 어디서 막혔는지 이름을 말한다.**
+    ⚠️ **그 마지막 문장이 지금 두 곳에서 거짓이다 (2026-09-09 · T-66 변이 배터리가 드러냈다).**
+    ① **`front.mjs`는 `unhandledRejection`만 받는다.** T-57의 15초 상한이 걸리면 그 거절이
+    **jsdom 타이머 콜백**(`Window.js`)에서 `uncaughtException`으로 올라오는데 **아무도 안 받아
+    프로세스가 죽고 요약을 통째로 잃는다.** 배터리는 그것을 *"아무도 안 죽었다"* 로 읽는다.
+    ② **`front.mjs:2336`의 `await ev(Api.task(...))`엔 상한이 없다.** ①을 가드로 막으면
+    **죽음이 420초 hang으로 바뀌기만 한다** — 실제로 넣어 보고 되돌렸다.
+    **둘은 한 쌍이라 따로 고치면 증상만 옮긴다.**
 9. **압축 해제·작업은 `worker\` 바로 아래** — 한 겹 더 들어가면 `No migrations to apply`.
 10. **마이그레이션은 배포보다 먼저** (`--local`→`--remote`).
 11. **`weeksOf`는 항상 6주** — 캐러셀 높이 고정의 전제.
