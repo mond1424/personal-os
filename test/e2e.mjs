@@ -14,6 +14,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createServer } from "node:net";
 import { seedFixtures } from "./seed.mjs";
+import { EXIT_OK, EXIT_FAILED, EXIT_ABORTED } from "./runner-exit.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..");
@@ -94,6 +95,27 @@ const MIGRATE_TIMEOUT_MS = 120_000;
  * 실제 소요는 매 실행 찍는다 — 늘어나는 것이 보이게.
  */
 const FRONT_TIMEOUT_MS = 420_000;
+
+/**
+ * front.mjs 를 띄우고 **출력을 흘려보내면서 동시에 모은다**(tee).
+ *
+ * ★ **왜 `spawnSync`가 아닌가.** 자식의 stdout을 읽어야 *"요약 줄이 나왔는가"* 를 셀 수 있는데
+ * (T-67 · 그게 이 층이 T-66에서 잃은 것이다), `spawnSync`+pipe 는 **끝날 때까지 아무것도 안
+ * 보여 준다** — 200초 동안 화면이 침묵한다. `stdio:"inherit"` 는 반대로 **부모가 못 읽는다.**
+ * 둘 다 포기할 수 없어서 흘려보내면서 모은다.
+ *
+ * ⚠️ **종료 코드만으로는 부족하다.** 코드는 `emitSummary` 한 곳에서만 나오지만, *"코드는 내고
+ * 줄은 안 내는"* 구현을 코드만 보고는 못 가른다 — **줄을 직접 본다.**
+ */
+const runFront = (base) => new Promise((resolve) => {
+  const child = spawn(process.execPath, [join(here, "front.mjs"), base], { cwd: root });
+  let out = "", timedOut = false;
+  const timer = setTimeout(() => { timedOut = true; killTree(child.pid); }, FRONT_TIMEOUT_MS);
+  child.stdout.on("data", (d) => { out += d; process.stdout.write(d); });
+  child.stderr.on("data", (d) => { out += d; process.stderr.write(d); });
+  child.on("error", (e) => { clearTimeout(timer); resolve({ out, status: null, signal: null, timedOut, err: e }); });
+  child.on("close", (status, signal) => { clearTimeout(timer); resolve({ out, status, signal, timedOut }); });
+});
 
 /** 픽스처 시드 상한. 실측 ~2초 — 여기 걸리면 워커가 응답을 안 주는 것이다. */
 const SEED_TIMEOUT_MS = 60_000;
@@ -218,21 +240,43 @@ try {
   // 5) 프론트 검사 — front.mjs 를 별도 프로세스로, 이 워커에 붙여 실행
   //    (front.mjs 가 혹시 안 끝나도 teardown 이 막히지 않도록 타임아웃 안전망)
   const startedFront = Date.now();
-  const res = spawnSync(process.execPath, [join(here, "front.mjs"), base], {
-    cwd: root, stdio: "inherit", timeout: FRONT_TIMEOUT_MS, killSignal: "SIGKILL",
-  });
+  const res = await runFront(base);
   const frontMs = Date.now() - startedFront;
   console.log(`[e2e] front 검사 ${(frontMs / 1000).toFixed(1)}초 (안전망 ${FRONT_TIMEOUT_MS / 1000}초)`);
-  if (res.error) {
-    // **무해하지 않다.** 안전망이 걸리면 SIGKILL이므로 위에 찍힌 숫자가 전부인지 알 수 없다.
+
+  /* ★ **요약 줄이 나왔는가가 이 층의 첫 물음이다** (T-67).
+   * T-66에서 배터리가 거짓말을 한 자리가 여기다 — 요약이 없는 런과 실패 0인 런을 같은 칸에
+   * 넣으면 **변이표 전체가 근거를 잃는다**(AGENT-CHAIN §8).
+   * 줄과 코드를 **둘 다** 본다: 줄은 *"냈는가"*, 코드는 *"어떤 끝이었나"* 를 말한다. */
+  const summarized = /통과 \d+ · 실패 \d+/.test(res.out);
+  if (res.err) {
+    console.error(`[e2e] front 실행 오류: ${res.err.message}`);
+    code = 1;
+  } else if (res.timedOut) {
+    // **무해하지 않다.** 안전망은 SIGKILL이라 위에 찍힌 숫자가 전부인지 알 수 없다.
     console.error(
-      res.error.code === "ETIMEDOUT"
-        ? `[e2e] front가 안전망(${FRONT_TIMEOUT_MS / 1000}초)에 걸려 강제 종료됐다 — `
-          + "위 통과 수는 도중까지의 것일 수 있다. 검사가 늘어 시간이 는 것이면 안전망을 올린다."
-        : `[e2e] front 실행 오류: ${res.error.message}`,
+      `[e2e] front가 안전망(${FRONT_TIMEOUT_MS / 1000}초)에 걸려 강제 종료됐다 — `
+      + "위 통과 수는 도중까지의 것일 수 있다. 검사가 늘어 시간이 는 것이면 안전망을 올린다.",
     );
     code = 1;
-  } else code = res.status ?? 1;
+  } else if (!summarized) {
+    console.error(
+      `[e2e] ★ front가 요약을 못 내고 끝났다 (종료 코드 ${res.status} · 신호 ${res.signal ?? "없음"}) — `
+      + "**요약 없는 런을 '실패 0'으로 읽지 마라.**",
+    );
+    code = 1;
+  } else if (res.status === EXIT_OK || res.status === EXIT_FAILED || res.status === EXIT_ABORTED) {
+    // **요약이 나온 종료다.** 위에 찍힌 `통과 N · 실패 M`이 그 런의 답이다.
+    if (res.status === EXIT_ABORTED) {
+      console.error("[e2e] front가 중단됐다 — 요약은 냈지만 **도중까지**다. 위 '★ 중단' 줄이 사유다.");
+    }
+    code = res.status;
+  } else {
+    // 요약은 있는데 코드가 약속 밖이다 — **둘이 갈라진 것**이라 그대로 말한다.
+    console.error(`[e2e] ★ 요약은 나왔는데 종료 코드가 약속 밖이다 (${res.status} · 신호 ${res.signal ?? "없음"}) — `
+      + "runner-exit.mjs 의 약속과 front.mjs 의 종료가 갈라졌다.");
+    code = 1;
+  }
 } catch (e) {
   console.error("[e2e] 오류:", e?.stack || e);
   code = 1;

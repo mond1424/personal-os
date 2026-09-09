@@ -5,6 +5,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { JSDOM, VirtualConsole } from "jsdom";
+import { EXIT_OK, EXIT_FAILED, EXIT_ABORTED } from "./runner-exit.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const BASE = process.argv[2] ?? "http://localhost:8788";
@@ -81,9 +82,107 @@ const until = async (fn, ms = 3000, step = 25) => {
 };
 let passN = 0; const fails = [];
 const ok = (name, cond, detail = "") => {
+  runner.last = name;   // 중단하면 **마지막으로 지난 검사**가 어디서 막혔는지를 가리킨다 (함정 8)
   if (cond) { passN++; console.log(`  ✓ ${name}`); }
   else { fails.push(name); console.log(`  ✗ ${name} ${detail}`); }
 };
+
+/* ── 러너는 무엇이 던져도 요약을 낸다 (T-67 · 함정 8) ─────────────────────────
+ *
+ * **T-66이 여기서 배터리를 못 믿게 됐다.** 워커가 응답을 놓치면 `api.js`의 15초 상한이
+ * 거절하고, 그 거절이 **최상위 `await`** 를 타고 올라와 프로세스가 죽었다 — `통과 N · 실패 M`
+ * 줄이 아예 안 찍히고, 배터리는 그것을 *"아무도 안 죽었다"* 로 읽었다(AGENT-CHAIN §8).
+ *
+ * ★ **실측 셋이 이 설계를 정했다** (2026-09-09 · 이 티켓에서 직접 재 봤다):
+ * ```
+ * jsdom 타이머가 throw   →  virtualConsole 의 jsdomError 로 간다. 프로세스는 산다
+ * 떠돌이 Promise.reject  →  unhandledRejection (위 핸들러가 이미 받는다)
+ * 최상위 await 거절      →  ★ uncaughtException 으로 온다 — T-66이 죽은 자리
+ * ```
+ * ⚠️ **그래서 *"받아서 기록하고 계속 간다"* 로는 안 된다.** 최상위 `await`가 거절하면
+ * **모듈 본문은 이미 끝난 것**이라 계속 갈 곳이 없다. 핸들러만 달면 프로세스가
+ * **exit 0으로 조용히 끝나거나**(잰 값이다) jsdom rAF 때문에 **420초 hang**이 된다 —
+ * 둘 다 *"요약 없음"* 이고, **앞은 초록으로 보여서 더 나쁘다.**
+ *
+ * **그래서 가드는 계속 가는 장치가 아니라 요약을 내는 장치다:**
+ *   ① 사유를 남긴다(`errors`) — 조용히 지나가지 않는다
+ *   ② 종료 코드를 '중단'으로 못 박는다 — 나중에 정상 종료해도 초록이 안 된다
+ *   ③ 러너가 정말 죽었으면 요약을 내고 끝낸다. 살아 있으면 아무것도 안 한다
+ *      (판정은 **검사 수가 늘었는가** — 남의 관측이 아니라 러너 자신의 계수다)
+ */
+const runner = { aborted: null, watch: null, emitted: false, last: "(아직 없음)" };
+const errText = (e) => {
+  const msg = e && e.message ? e.message : String(e);
+  const at = String((e && e.stack) || "").split("\n")[1];
+  return at ? `${msg} @${at.trim()}` : msg;
+};
+const SUMMARY_RULE = "=".repeat(46);
+const summaryBody = () => {
+  let out = `\n${SUMMARY_RULE}\n통과 ${passN} · 실패 ${fails.length}\n`;
+  if (fails.length) out += "실패:\n  - " + fails.join("\n  - ") + "\n";
+  return out;
+};
+/** 요약을 낸다. **어디로 끝나든 여기 하나를 지난다** — 두 벌이 되면 한쪽만 낡는다.
+ *  파이프로 나가는 stdout은 비동기라 **write 콜백에서** 끝낸다(요약이 잘리면 숫자를 잃는다). */
+const emitSummary = (why = null) => {
+  if (runner.emitted) return;
+  runner.emitted = true;
+  let out = summaryBody();
+  if (why) {
+    out += `★ 중단 — ${why}\n`
+      + `  마지막으로 지난 검사: ${runner.last}\n`
+      + "  위 숫자는 도중까지의 것이다. **요약 없는 런과 실패 0인 런은 다른 것이다.**\n";
+  } else if (!fails.length) {
+    out += "프론트 렌더 경로 정상 — 실 API 응답으로 조립됨.\n";
+  }
+  const code = why ? EXIT_ABORTED : (fails.length ? EXIT_FAILED : EXIT_OK);
+  process.stdout.write(out, () => process.exit(code));
+};
+/** 마지막 방벽 — **죽어서 나가든 살아서 나가든 요약은 남는다.**
+ *  `exit` 핸들러에서는 동기 출력만 산다(콜백을 기다려 줄 루프가 이미 없다). */
+process.on("exit", () => {
+  if (runner.emitted) return;
+  runner.emitted = true;
+  process.stdout.write(summaryBody()
+    + `★ 중단 — ${runner.aborted ?? "러너가 요약 전에 끝났다"}\n`
+    + `  마지막으로 지난 검사: ${runner.last}\n`);
+});
+/** 러너가 죽었는지 살았는지 기다려 보는 창. **앱의 상한(15초)보다 넉넉히 길어야**
+ *  느린 왕복 하나를 죽음으로 오해하지 않는다. e2e 안전망(420초)보다는 훨씬 짧다. */
+const ABORT_IDLE_MS = 60_000;
+process.on("uncaughtException", (e) => {
+  const why = `잡히지 않은 예외 — ${errText(e)}`;
+  runner.aborted = why;
+  errors.push(why);                       // ① 사유가 남는다
+  process.exitCode = EXIT_ABORTED;        // ② 나중에 정상 종료해도 초록이 아니다
+  const mark = passN + fails.length;
+  clearTimeout(runner.watch);
+  runner.watch = setTimeout(() => {       // ③ 검사가 하나도 안 늘었으면 러너가 죽은 것이다
+    if (passN + fails.length === mark) emitSummary(why);
+  }, ABORT_IDLE_MS);
+});
+
+/**
+ * 상한을 둔 `await` — **러너의 모든 대기에 상한이 있다**(함정 8)의 그 상한이다.
+ *
+ * ⚠️ `until`과 다르다: `until`은 **조건**을 폴링하고 이것은 **프라미스**를 기다린다.
+ * 프라미스가 영영 안 정산되면 `until`은 도움이 안 된다 — 그 자리가 T-66이 물린 곳이다.
+ *
+ * **상한은 30초**: 앱 자신의 상한(`api.js`의 `REQ_TIMEOUT_MS` 15초)의 두 배다. 그래야
+ * **앱의 이름 붙은 거절이 항상 먼저 도착하고**(*"응답이 안 와요"*), 이 상한은 프라미스가
+ * **아예 정산되지 않는** 경우만 잡는다. 앱보다 짧으면 이쪽이 먼저 터져 원인을 가린다.
+ */
+const CAP_MS = 30_000;
+const capped = (name, p, ms = CAP_MS) => {
+  let timer;
+  return Promise.race([
+    Promise.resolve(p).finally(() => clearTimeout(timer)),
+    new Promise((_, rej) => {
+      timer = setTimeout(() => rej(new Error(`상한 ${ms / 1000}초 초과 — 막힌 자리: ${name}`)), ms);
+    }),
+  ]);
+};
+
 const $ = (s) => w.document.querySelector(s);
 // 캘린더는 좌우 두 달까지 5-pane이라 같은 날짜 셀이 여러 개다 — 가운데(보고 있는 달)만 본다
 const CUR = "#cal-track .calpane.cur";
@@ -113,9 +212,11 @@ for (let i = 0; i < 40; i++) {
   try { if (ev0("!!S.today")) { ready = true; break; } } catch { /* 아직 스크립트 평가 전 */ }
 }
 if (!ready) {
+  // **여기도 요약을 내고 끝낸다** (T-67) — 예전엔 `exit(1)`이라 *"요약 없이 죽은 런"* 과
+  // 종료 코드가 같았고, e2e가 둘을 못 갈랐다. 사유는 이름으로 남는다.
   console.log("✗ 부팅 실패 — 서버가 켜져 있는지, 토큰이 필요한지 확인하세요.");
-  console.log("  화면 메시지:", w.document.querySelector("#boot-msg")?.textContent);
-  process.exit(1);
+  emitSummary("부팅 실패 — 화면 메시지: "
+    + (w.document.querySelector("#boot-msg")?.textContent ?? "(없음)"));
 }
 
 // 픽스처 — 날짜가 바뀌어도 재현되도록 오늘 항목·기록을 보장한다
@@ -137,6 +238,112 @@ if (ev0("S.today.waiting.n") === 0) {
   await ev0(`Api.createTask({ title: "프론트 픽스처 대기" })`);
   await w.refreshToday(); await sleep(400);
 }
+
+/* ── T-67 · 러너는 무엇이 던져도 요약을 낸다 ─────────────────────────────────
+ *
+ * **T-66에서 배터리가 거짓말을 했다.** 워커가 응답을 놓치자 러너가 `통과 N · 실패 M` 줄을
+ * 못 내고 끝났고, 배터리는 **요약 없음을 *"아무도 안 죽었다"* 로** 읽었다 — 그 순간
+ * 변이표 전체가 근거를 잃는다(AGENT-CHAIN §8).
+ *
+ * ⚠️ **환경을 기다리지 않는다**(함정 14). 일부러 던지는 타이머를 심어 **계약**을 만든다 —
+ *    19:15의 그 실패는 이 계약의 한 사례일 뿐이다.
+ * ★ **이 블록은 일부러 앞에 있다.** 뒤에 두면 러너가 죽는 그 런에서 **이 검사부터 사라진다** —
+ *    자를 재는 검사가 대상보다 뒤에 있으면 안 된다.
+ * ⚠️ **하네스를 최종 트리에 남긴다**(담당 결정). 두 경로(jsdom 타이머 · uncaughtException)는
+ *    **node·jsdom 판이 바뀌면 갈라진다** — 실제로 이 티켓이 티켓의 전제 하나를 정정했다.
+ *    빼면 그 정정을 아무도 다시 못 센다. 비용은 왕복 없는 0.3초다.
+ */
+console.log("\n[T-67] 러너 — 무엇이 던져도 요약을 낸다");
+
+const T67_A = "T-67 하네스 A — jsdom 타이머가 던진다";
+const T67_B = "T-67 하네스 B — 최상위 await 가 거절하는 그 자리";
+const t67ErrBefore = errors.length, t67FailsBefore = fails.length;
+const t67ExitBefore = process.exitCode;
+
+/* 1 — **jsdom 타이머가 던지는 경로.** 실측으로 갈랐다(2026-09-09): 이것은
+ *     `uncaughtException`이 아니라 **virtualConsole 의 `jsdomError`** 로 가고 **프로세스는 산다.**
+ *     ⚠️ 티켓은 이 둘을 한 경로로 적었는데 **아니었다** — 그래서 둘을 따로 센다.
+ *     증거는 *"이 검사가 실행됐다"* 가 아니라 **던진 뒤에 심은 타이머가 돌았는가**다. */
+let t67Alive = false;
+w.setTimeout(() => { throw new Error(T67_A); }, 0);
+w.setTimeout(() => { t67Alive = true; }, 20);
+await sleep(300);
+ok("1 ★ 타이머 콜백에서 던져도 러너가 안 죽는다 — 그 뒤의 타이머가 계속 돈다",
+  t67Alive === true, `살아있나=${t67Alive}`);
+
+/* 1b — ★ **T-66이 실제로 죽은 자리.** 최상위 `await`가 거절하면 node 는 그것을
+ *      `uncaughtException`으로 올린다(실측). 그때 **모듈 본문은 이미 끝난 것**이라
+ *      *"기록하고 계속 간다"* 가 성립하지 않는다 — 가드가 **종료 코드를 못 박고 요약을 낼
+ *      채비**를 해야 한다. 안 그러면 프로세스가 **exit 0으로 조용히** 끝난다(그것도 실측이다).
+ *      여기서는 그 예외를 **직접 쏘아** 가드의 반응만 본다(러너는 안 죽인다). */
+process.emit("uncaughtException", new Error(T67_B));
+/* ⚠️ **`fails.length`를 여기서 찍는다 — 아래 검사들이 돌기 전에.** 6이 재려는 것은
+ *   *"가드가 **스스로** 실패를 만들었는가"* 인데, 나중에 재면 **1b·3이 빨간불일 때 그 값이
+ *   같이 움직여** 6이 딸려 죽는다(실측: M1에서 셋이 함께 죽었다). 남의 관측값을 자로 쓰는
+ *   그 모양이고, T-64가 좁힌 자리와 같다. **자는 가드가 만지는 순간의 값이어야 한다.** */
+const t67Guard = { code: process.exitCode, armed: !!runner.watch, why: runner.aborted,
+  failsAfter: fails.length };
+clearTimeout(runner.watch); runner.watch = null; runner.aborted = null;
+process.exitCode = t67ExitBefore;          // 이 런은 중단된 것이 아니다 — 원복한다
+ok("1b ★ 최상위 await 거절이 오는 자리를 가드가 받는다 — 종료 코드가 '중단'이 되고 감시가 걸린다",
+  t67Guard.code === EXIT_ABORTED && t67Guard.armed === true,
+  `코드=${t67Guard.code}(기대 ${EXIT_ABORTED}) 감시=${t67Guard.armed}`);
+
+// 우리가 심은 것만 걷어낸다 — 아래 '콘솔 오류 없음'이 하네스를 회귀로 읽으면 안 된다.
+const t67Planted = errors.splice(t67ErrBefore);
+
+/* 3 — **조용히 지나가지 않는다.** 삼키면 T-54가 없앤 부류가 검사 층에 생긴다.
+ *     ⚠️ 1·1b와 세는 것이 다르다: 저쪽은 **살아남았는가·코드가 바뀌었는가**이고
+ *     여기는 **무엇이 던졌는지가 글자로 남았는가**다. 스택 첫 줄까지 본다 — 메시지만으론
+ *     같은 문구를 내는 두 자리를 못 가른다. */
+ok("3 ★ 던진 것의 사유가 남는다 — 메시지와 스택 첫 줄이 (조용히 안 지나간다)",
+  t67Planted.some((e) => e.includes(T67_A))
+  && t67Planted.some((e) => e.includes(T67_B) && /@\s*at /.test(e)),
+  `${t67Planted.length}건: ${t67Planted.map((e) => e.slice(0, 60)).join(" | ")}`);
+
+/* 6 — **회귀.** 가드가 정상 검사까지 실패로 세면 안 되고, 자기가 심지 않은 것을
+ *     주워 담아도 안 된다. 종료 코드도 원래대로 돌아와 있어야 한다. */
+ok("6 정상 런은 그대로다 — 가드가 심은 것만 먹고 검사·종료 코드를 안 건드린다",
+  t67Guard.failsAfter === t67FailsBefore && errors.length === t67ErrBefore
+  && process.exitCode === t67ExitBefore
+  && t67Planted.length > 0
+  && t67Planted.every((e) => e.includes(T67_A) || e.includes(T67_B)),
+  `가드직후실패=${t67Guard.failsAfter}(전 ${t67FailsBefore}) errors=${errors.length}(전 ${t67ErrBefore})`
+  + ` 코드=${process.exitCode} 심은것=${t67Planted.length}`);
+
+/* 4 — **상한 없는 대기가 없다** (스캐너). 함정 8이 *"러너의 모든 대기에 상한이 있다"* 고
+ *     적는데 T-47 ⑧ 앞의 한 자리가 비어 있었다. **소스를 읽어 센다** — 그 자리가 다시
+ *     맨 `await` + `ev(`로 돌아가면 여기가 죽는다.
+ *     ⚠️ **파일 전체를 재지 않는다.** 그 꼴은 85곳이고 대부분 렌더 호출이다 —
+ *     전부 감싸는 것은 이 티켓의 범위가 아니다(§보고에 이름만 올렸다).
+ *     ★ **찾을 꼴을 쪼개서 조립한다.** 통짜로 적으면 **바로 아래 짝의 합성 문자열을
+ *     스캐너가 자기 소스에서 읽어** 늘 빨간불이다 — 실제로 한 번 그렇게 나왔다.
+ *     검사가 자기 자신을 대상으로 읽는 자리이고, T-55(검사와 구현이 같은 이름을 공유한다)의
+ *     사촌이다. 쪼개면 파일 어디에도 그 꼴이 연속으로 남지 않는다. */
+const t67Src = readFileSync(join(here, "front.mjs"), "utf8");
+const T67_BARE = "t47After = await " + "ev(";
+const T67_CAP = "t47After = await " + "capped(";
+const t67Capped = (src) => src.includes(T67_CAP) && !src.includes(T67_BARE);
+ok("4 ★ T-47 ⑧ 앞의 대기가 상한을 지난다 (스캐너 — 함정 8의 빈칸이었다)",
+  t67Capped(t67Src),
+  `감쌈=${t67Src.includes(T67_CAP)} 맨대기=${t67Src.includes(T67_BARE)}`);
+
+// 4의 짝 ★ 스캐너가 살아 있는가 — 합성 소스로 가른다(T-55 7의 짝과 같은 자리).
+ok("4 ★ 4의 스캐너가 살아 있다 (맨 대기를 잡고 감싼 것은 안 잡는다)",
+  !t67Capped("const " + T67_BARE + "`Api.task(x)`);")
+  && t67Capped(T67_CAP + '"이름", ev(`Api.task(x)`));'));
+
+/* 5 — **함정 8의 계약**: 막히면 **어디서** 막혔는지를 말한다. 이름 없는 상한은
+ *     *"뭔가 느렸다"* 만 남기고, 그건 아무 데도 못 가리킨다. */
+const t67Stuck = await capped("여기가 막혔다", new Promise(() => {}), 120)
+  .then(() => null, (e) => e.message);
+ok("5 ★ 상한에 걸리면 막힌 자리를 이름으로 말한다",
+  typeof t67Stuck === "string" && t67Stuck.includes("여기가 막혔다") && /상한 .*초 초과/.test(t67Stuck),
+  `${t67Stuck}`);
+
+// 5의 짝 ★ 끝나는 프라미스는 안 자른다 — 이게 없으면 "항상 자르는 상한"이 5만으로 통과한다.
+const t67Fast = await capped("빨리 끝나는 것", Promise.resolve("값"), 120);
+ok("5 ★ 끝나는 프라미스는 안 자르고 값을 그대로 준다 (5의 짝)", t67Fast === "값", `${t67Fast}`);
 
 console.log("\n[Today]");
 ok("헤더 날짜 렌더", /^\d+$/.test(txt("#td-day")), txt("#td-day"));
@@ -2324,12 +2531,26 @@ ok("⑦′ 떠나온 탭으로 돌려보낸다 — 대상이 없어진 캘린더
 const t47Cell = t47Target && w.document.querySelector(`#cal-track .c[data-d="${t47Target}"]`);
 if (t47Cell) t47Cell.dispatchEvent(new w.Event("click"));
 await sleep(700);
-const t47After = await ev(`Api.task(${JSON.stringify(t47Id)})`);
-ok("★⑧ pick이 풀린 뒤 날짜를 탭해도 없는 일이 안 옮겨간다",
-  !!t47Cell && !$("#sh-defer").classList.contains("on")
-  && !t47After.entries.some((e) => e.date === t47Target),
-  `target=${t47Target} cell=${!!t47Cell} deferSheet=${$("#sh-defer").classList.contains("on")}`
-  + ` entries=${JSON.stringify(t47After.entries.map((e) => e.date))}`);
+/* ★ **상한 없는 대기를 메운다** (T-67 ②). 함정 8이 *"러너의 모든 대기에 상한이 있다"* 고
+ * 적는데 **여기 하나가 비어 있었다** — 워커가 응답을 놓치면 이 `await`가 거절하면서
+ * **모듈 본문이 통째로 끝나고 요약을 잃었다**(2026-09-09 T-66에서 실측한 그 자리).
+ * ⚠️ **⑧의 단언은 한 글자도 안 고친다**(원인 미상인 실패를 지우면 원인을 잃는다).
+ *    답이 안 오면 **조용히 통과하지 않도록** 이름 붙은 빨간불을 대신 세운다 —
+ *    `{entries:[]}` 같은 값을 만들어 넘기면 ⑧이 *"안 옮겨갔다"* 로 **초록이 된다.** */
+let t47After = null;
+try {
+  t47After = await capped("T-47 ⑧ — Api.task 응답", ev(`Api.task(${JSON.stringify(t47Id)})`));
+} catch (e) {
+  ok(`★⑧ 앞 대기가 상한에 걸렸다 — ${e.message}`, false);
+}
+if (t47After) {
+  ok("★⑧ pick이 풀린 뒤 날짜를 탭해도 없는 일이 안 옮겨간다",
+    !!t47Cell && !$("#sh-defer").classList.contains("on")
+    && !t47After.entries.some((e) => e.date === t47Target),
+    `target=${t47Target} cell=${!!t47Cell} deferSheet=${$("#sh-defer").classList.contains("on")}`
+    + ` entries=${JSON.stringify(t47After.entries.map((e) => e.date))}`);
+}
+
 ev(`(() => { closeAll(); switchTab("today", false); })()`);
 await sleep(200);
 
@@ -3873,13 +4094,9 @@ ok("로드 후 부팅 오버레이 닫힘", !$("#boot").classList.contains("on")
 console.log("\n[런타임 오류]");
 ok("콘솔 오류 없음", errors.length === 0, errors.slice(0, 3).join(" / "));
 
-console.log(`\n${"=".repeat(46)}\n통과 ${passN} · 실패 ${fails.length}`);
-if (fails.length) { console.log("실패:\n  - " + fails.join("\n  - ")); process.exit(1); }
-// 성공 경로에도 **명시적으로 끝낸다.** 실패 경로는 위에서 exit(1)을 부르는데 성공은 그냥 끝나
-// 있었고, `pretendToBeVisual` jsdom 두 개가 rAF 타이머를 계속 돌려 이벤트 루프가 비지 않는다 →
-// 프로세스가 요약을 찍고도 **살아 있었다.**
-// 그동안 `e2e.mjs`의 안전망 SIGKILL(180초)이 유일한 종료 수단이었고, 그래서 검사가 다 통과해도
-// `npm run front`가 **exit 1**이었다 — 함정 8의 "끝의 ETIMEDOUT은 무해하다"가 그 흔적이다.
-// 실측: 검사 자체는 ~75초다. 옛 180초 창의 나머지 ~105초는 전부 이 hang이었다.
+// **요약은 `emitSummary` 하나가 낸다** (T-67). 예전엔 여기서 직접 찍고 `process.exit(1)`을
+// 불렀는데, 그러면 **요약을 내는 자리가 둘**(정상 끝 · 중단)이 되어 한쪽만 낡는다.
+// 성공 경로에도 명시적으로 끝낸다 — `pretendToBeVisual` jsdom 두 개가 rAF 타이머를 계속
+// 돌려 이벤트 루프가 안 비므로, 요약을 찍고도 프로세스가 살아 있었다(T-06이 없앤 그 hang).
 // 파이프로 나가는 stdout은 비동기라 write 콜백에서 나간다 — 요약이 잘리면 숫자를 잃는다.
-process.stdout.write("프론트 렌더 경로 정상 — 실 API 응답으로 조립됨.\n", () => process.exit(0));
+emitSummary();
