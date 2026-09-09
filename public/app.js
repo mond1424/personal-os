@@ -516,12 +516,17 @@ function renderToday() {
   if (!h) h = `<div class="trow"><span class="tbody"><span class="tmeta">오늘 예정이 없어요 — Works의 +로 추가</span></span></div>`;
   $("#td-list").innerHTML = h;
 
-  // 대기 상시 행
+  // 대기 상시 행 — **상태로 끝내지 않는다** (T-66 · ADR-048 ③).
+  // 전에는 `대기 1 — 제목 17일째`까지만 말하고 *"그래서 뭘 하라는 건지"* 는 흐린 라벨 하나에
+  // 맡겼다. **무엇을 하면 이 줄이 사라지는지**를 줄이 직접 말한다.
+  // ⚠️ `ageClass`는 그대로다 — 17일에 색은 이미 최댓값이었으므로 임계는 원인이 아니다(ADR-048 ③).
   const W = T.waiting, tw = $("#today-wait");
   if (W.n) {
     tw.style.display = "flex";
-    $("#tw-text").innerHTML =
-      `<b style="color:var(--ink)">대기 ${W.n}</b> — ${esc(W.top.title)} <b class="${ageClass(W.max_age)}">${W.max_age}일째</b>`;
+    $("#tw-more").textContent = `대기 ${W.n} ›`;      // 목록으로 가는 길 (T-66 ②)
+    $("#tw-text").textContent = W.top.title;
+    $("#tw-do").innerHTML =
+      `<b class="${ageClass(W.max_age)}">${W.max_age}일째</b> 미배정 — 날짜를 정하면 이 줄이 없어져요`;
   } else tw.style.display = "none";
 
   renderFeelings();
@@ -2394,6 +2399,16 @@ function extendTask(id) {
     toast(`연장 — 다시 1일째, 다음 기한 ${md(r.deadline)}`);
     await Promise.all([renderWorks(), refreshToday()]);
   });
+}
+/* ★ 대기 한 줄의 행동은 **그 자리에서 날짜를 고르는 것**이다 (T-66 · ADR-048 ①).
+ * 전에는 `goInbox()`라 Works 대기 세그까지만 갔고 **일정은 거기서 두 걸음 더**였다 —
+ * 라벨이 *"일정 정하기"* 라고 말하는데 결과가 세 걸음 뒤에 있었다. 라벨이 아니라 동작을 맞춘다.
+ * **새 경로를 만들지 않는다** — 재배정 행(`pickReassign`)과 같은 모양으로 이미 있는
+ * `pickSchedule` → `startPick({mode:"schedule"})`을 그대로 탄다.
+ * ⚠️ 대상은 **줄이 이름을 부른 그것**(`waiting.top`)이다. 목록의 다른 건은 `#tw-more`로 간다. */
+function pickWaitTop() {
+  const top = S.today.waiting.top;
+  if (top) pickSchedule(top.id);
 }
 function goInbox() {
   switchTab("works");

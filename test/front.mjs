@@ -3717,6 +3717,118 @@ delete w.Capacitor;
 await ev("renderMe()");
 w.toggleSet(false);
 
+/* ── T-66 · 대기 한 줄이 무엇을 하라는지 말하고, 그 자리에서 된다 (ADR-048) ────────
+ *
+ * **17일 동안 한 번도 안 눌린 버튼이 있었다.** 떠 있었고 색도 이미 최댓값이었다
+ * (`ageClass`는 15일부터 `age3`) — **무엇이 일어날지 몰라서 안 눌렸다.**
+ * 라벨은 *"일정 정하기"* 인데 실제로는 Works 대기 세그로 갈 뿐이었고 일정은 **거기서 두 걸음 더**였다.
+ * ★ **본체는 걸음 수다** — 문구가 아니라 동작을 맞췄으므로 **한 걸음이 세어져야** 고쳐진 것이다.
+ *
+ * ⚠️ **줄을 `id`로 찾지 않는다**(함정 15). `#today-wait`으로 찾으면 검사와 구현이 같은 이름을
+ *    공유해, 그 이름이 틀렸을 때 **양쪽이 함께 틀린다** — T-55에서 캘린더 12개가 숨은 칸에
+ *    쓰였는데 검사가 초록이던 것이 정확히 그 모양이다. **화면에 보이는 글자로 찾는다** —
+ *    앵커는 서버가 준 계약값(`waiting.top.title`)이지 구현이 고른 선택자가 아니다.
+ * ⚠️ **고정 날짜를 안 쓴다**(함정 12). *"17일째"* 도 픽스처가 만든 실제 일수를 상대로 읽는다.
+ */
+console.log("\n[T-66] 대기 한 줄 — 그 자리에서 날짜가 정해진다");
+
+await ev(`(async()=>{ await refreshToday(); closeAll(); })()`);
+const t66Top = JSON.parse(ev(`JSON.stringify(S.today.waiting.top ?? null)`));
+const t66N = ev(`S.today.waiting.n`), t66Age = ev(`S.today.waiting.max_age`);
+const t66Tab = () => $("#phone").dataset.tab;
+/** 줄은 **오늘 화면에서 top 의 제목이 보이는 카드**다 — 글자로 찾는다(함정 15). */
+const t66Row = () => [...w.document.querySelectorAll("#scr-today .card")]
+  .find((c) => t66Top && c.textContent.includes(t66Top.title)) ?? null;
+const t66Btn = (pred) => [...(t66Row()?.querySelectorAll("button") ?? [])].find(pred) ?? null;
+const t66Go = () => t66Btn((b) => t66Top && b.textContent.includes(t66Top.title));
+const t66More = () => t66Btn((b) => /^대기\s*\d/.test(b.textContent.trim()));
+/** **핸들러가 없으면 그 검사만 빨간불**이 되게 한다(T-60·T-63이 배운 자리 — 바로 부르면
+ *  `null is not a function`으로 러너가 죽고 요약을 통째로 잃는다).
+ *  ★ 인라인 `onclick`은 `return`이 붙어야 프라미스를 준다(함정 14 · T-63). */
+const t66Tap = async (b) => {
+  if (!b || typeof b.onclick !== "function") return "핸들러없음";
+  await b.onclick();
+  return "눌림";
+};
+// 문구는 **누르기 전에** 뜬 것으로 센다 — 3이 1의 왕복에 딸려 오지 않게.
+const t66Say = (t66Row()?.textContent ?? "").replace(/\s+/g, " ").trim();
+
+/* 1 ★ **이 티켓의 본체.** 누르면 **그 자리에서** 날짜 고르기가 열린다 — Works 로 안 간다.
+ *   `mode`와 `id`까지 센다: 아무 pick 이나 열어도 되는 게 아니라 **줄이 이름을 부른 그 일**이어야 한다. */
+const t66Hit1 = await t66Tap(t66Go());
+const t66Pick = JSON.parse(ev(`JSON.stringify(S.pick ? { mode: S.pick.mode, id: S.pick.id } : null)`));
+ok("1 ★ 대기 줄을 누르면 그 자리에서 날짜 고르기가 열린다 (Works 로 안 간다 — 세 걸음이 하나가 됐다)",
+  t66Hit1 === "눌림" && !!t66Pick && t66Pick.mode === "schedule" && t66Pick.id === t66Top?.id
+  && t66Tab() === "cal" && $("#pick-banner").classList.contains("on"),
+  `탭침=${t66Hit1} pick=${JSON.stringify(t66Pick)} 대상=${t66Top?.id} 탭=${t66Tab()}`
+  + ` 배너=${$("#pick-banner").classList.contains("on")}`);
+
+/* 2 ★ **1의 짝** — 목록으로 가는 길이 남는다. 대기가 여럿이면 전체를 보고 골라야 한다.
+ *   ★ **`대기 N`이 그 입구를 그대로 진다**(담당 결정): 원래 이 줄이 이미 들고 있던 글자라
+ *   화면에 버튼이 늘지 않고, `W.n`을 조건으로 걸지 않아 **입구가 사라질 수가 없다.**
+ *   (줄을 둘로 쪼개는 안은 버렸다 — 한 줄짜리 알림에 두 행은 위계를 다시 흐린다.) */
+ev(`exitPick()`);
+const t66Hit2 = await t66Tap(t66More());
+ok("2 ★ 목록으로 가는 길이 남는다 — '대기 N'이 Works 대기 세그로 간다 (1의 짝)",
+  t66Hit2 === "눌림" && t66Tab() === "works" && $("#w-inbox").classList.contains("on"),
+  `탭침=${t66Hit2} 탭=${t66Tab()} inbox=${$("#w-inbox").classList.contains("on")} n=${t66N}`);
+
+/* 3 ★ 문구가 **무엇을 하면 되는지** 말한다. 전에는 *"…17일째"* 까지만 말하고 그 뒤를
+ *   흐린 라벨 하나에 맡겼다 — **상태로 끝내지 않는다**(ADR-048).
+ *   ⚠️ **1과 같은 줄을 보지만 세는 것이 다르다**: 여기는 **글자만** 본다(핸들러도 탭도 안 만진다).
+ *   라벨(*"날짜 정하기"*)만으로는 이 조건이 참이 될 수 없다 — *"정하면 … 없어져"* 는 본문에만 있다. */
+ok("3 ★ 문구가 상태로 끝나지 않는다 — 무엇을 하면 이 줄이 없어지는지가 읽힌다",
+  t66Age !== null && t66Say.includes(`${t66Age}일째`) && /정하면[\s\S]*없어져/.test(t66Say),
+  `문구="${t66Say}" 일수=${t66Age}`);
+
+/* 4 ★ **누를 곳이 읽을 곳보다 흐리지 않다**(ADR-048 ②) — 스캐너.
+ *   `--faint`는 이 팔레트에서 가장 약한 색이고, 전에는 **행동에만** 그것이 붙어 있었다.
+ *   ⚠️ 이것은 *"더 세게 하기"* 가 아니다 — ADR-047 ③이 막은 것은 **개입의 강도**(소리·진동·빈도)이고
+ *   여기는 **한 화면 안의 위계**다. 소스와 **실제로 그려진 줄** 둘 다 본다:
+ *   `app.js`가 인라인으로 흐린 색을 다시 넣어도 뒤쪽이 잡는다. */
+const t66FaintIn = (src) => /id="today-wait"[\s\S]*?--faint/.test(src);
+const t66Block = /<div class="card" id="today-wait"[\s\S]*?\n {4}<\/div>/.exec(html)?.[0] ?? "";
+ok("4 ★ 대기 줄의 행동이 --faint 가 아니다 · 재배정 행과 같은 칩을 쓴다 (스캐너 · 위계)",
+  t66Block.length > 0 && !t66FaintIn(t66Block) && t66Block.includes("deferchip")
+  && !(t66Row()?.innerHTML ?? "--faint").includes("--faint"),
+  `블록=${t66Block.length}자 faint(소스)=${t66FaintIn(t66Block)}`
+  + ` faint(렌더)=${(t66Row()?.innerHTML ?? "").includes("--faint")}`);
+
+// 4의 짝 ★ 스캐너가 살아 있는가 — 합성 소스로 가른다(T-55 7의 짝과 같은 자리).
+ok("4 ★ 4의 스캐너가 살아 있다 (합성 --faint 를 잡는다)",
+  t66FaintIn(`<div id="today-wait"><b style="color:var(--faint)">x</b></div>`)
+  && !t66FaintIn(`<div id="today-wait"><b style="color:var(--sub)">x</b></div>`));
+
+/* 5 회귀 — **대기가 0이면 줄이 안 뜬다.** 두 길로 쪼개면서 `if (W.n)` 갈래를 잃기 쉽다.
+ *   재료만 갈아 끼우고 렌더 경로를 그대로 태운다. 다 세고 원래 재료로 되돌린다. */
+const t66Keep = ev(`JSON.stringify(S.today.waiting)`);
+/* ⚠️ **던지는 것까지 이 검사가 받는다.** `if (W.n)` 갈래를 잃으면 `W.top`이 `null`인데
+ *   `W.top.title`을 읽어 `renderToday`가 **던지고**, 그 예외가 `ev()`를 타고 올라가
+ *   **러너를 죽여 요약을 통째로 잃는다** — 배터리는 그것을 *"아무도 안 죽었다"* 로 읽는다
+ *   (AGENT-CHAIN §8 · T-60·T-63이 핸들러에서 배운 그 자리. 실제로 M5가 여기서 한 번 그랬다).
+ *   던진 것을 **문자열로 받아** 이 검사만 빨간불이 되게 한다. */
+const t66Empty = ev(`(()=>{ try {
+  S.today = { ...S.today, waiting: { n: 0, max_age: null, top: null, limit: S.today.waiting.limit } };
+  renderToday();
+  return document.querySelector("#today-wait").style.display;
+} catch (e) { return "던졌다: " + e.message; } })()`);
+ev(`(()=>{ S.today = { ...S.today, waiting: ${t66Keep} }; renderToday(); })()`);
+ok("5 대기가 0이면 줄이 안 뜬다 (회귀 · 던지지도 않는다) · 되돌리면 다시 뜬다",
+  t66Empty === "none" && $("#today-wait").style.display === "flex",
+  `빈=${t66Empty} 복구=${$("#today-wait").style.display}`);
+
+/* 6 ★ **원인이 아닌 곳을 안 고쳤다** — 스캐너. 17일에 색은 **이미 최댓값**이었으므로
+ *   `WAIT_LIMIT`도 `ageClass`도 원인이 아니다(ADR-048 ③ · 티켓 §금지 1행).
+ *   임계를 낮추면 화면은 더 시끄러워지고 **그 다음에도 안 눌린다.**
+ *   ⚠️ 소스 문자열이 아니라 **살아 있는 값**을 부른다 — 주석을 고쳐도 안 죽고 숫자를 고치면 죽는다. */
+const t66Ages = [1, 7, 8, 14, 15, 30].map((n) => ev(`ageClass(${n})`)).join(",");
+ok("6 임계가 그대로다 — WAIT_LIMIT 21 · ageClass 8/15 (스캐너 · 원인이 아닌 곳)",
+  ev(`WAIT_LIMIT`) === 21 && t66Ages === "age1,age1,age2,age2,age3,age3",
+  `WAIT_LIMIT=${ev(`WAIT_LIMIT`)} ageClass=${t66Ages}`);
+
+w.switchTab("today");
+await sleep(300);
+
 console.log("\n[부팅 · 연결 실패 복구]");
 ok("로드 후 부팅 오버레이 닫힘", !$("#boot").classList.contains("on"));
 
