@@ -292,6 +292,9 @@ class GuardPlugin : Plugin() {
         // 전엔 이것만 코드 상수여서 조정할 때마다 APK가 들었다.
         call.getInt("refireMinutes")?.let { s.watchRefireMinutes = it }
         call.getInt("maxPerNight")?.let { s.watchMaxPerNight = it }
+        // 누적을 말하기 시작하는 순번 (ADR-049 ① · T-68). 위 셋과 같은 자리에서 받는 이유도 같다 —
+        // **문구가 언제부터 달라지는가**는 밤 실측이 만질 값이고, 코드에 박으면 만질 때마다 APK가 든다.
+        call.getInt("tallyFrom")?.let { s.watchTallyFrom = it }
         // 아침 재료의 두 임계 (ADR-047 · T-60). **여기서 받는 이유는 T-51과 같다** —
         // 실사용에서 조정할 값을 코드 상수로 두면 조정할 때마다 APK가 든다.
         call.getInt("wakeAheadHours")?.let { s.wakeLookaheadHours = it }

@@ -30,6 +30,20 @@ object GuardWatch {
     //   그러면 조정할 때마다 APK가 든다. 9~11월에 가장 먼저 만질 값이 이 둘이다.
     //   ⚠️ 여기에 분(分)을 다시 박으면 `test/front.mjs`의 스캐너가 빨간불이 된다.
 
+    /**
+     * 오늘 밤 몇 번째인가 — 문구의 맨 앞 (ADR-049 ① · T-68).
+     *
+     * ★ **수(數)가 그대로 읽혀야 한다.** *"여러 번"* 으로 뭉개면 세는 것을 지우는 것이고,
+     *   그러면 열한 번째가 다시 첫 번째처럼 보인다. `%d`가 이 문구의 본체다.
+     *
+     * ⚠️ **여기 있는 것은 꼴뿐이다** — 몇 번째부터 말할지는 `GuardSettings.watchTallyFrom`이
+     *    진다(T-51과 같은 이유: 임계를 코드에 박으면 만질 때마다 APK가 든다).
+     * ⚠️ **앞의 수락이 무엇이었는지는 말하지 않는다.** 기기가 여기서 아는 것은 발동 수뿐이고,
+     *    *"수락하고 계속 썼다"* 를 문구가 단정하면 Override로 끝낸 밤에 거짓이 된다.
+     *    틀린 사실은 명령보다 빨리 신뢰를 깎는다(T-61이 `wakeSentence`에서 배운 자리).
+     */
+    private const val TALLY_FMT = "오늘 밤 %d번째예요. "
+
     private const val K_LAST_FIRE = "watch_last_fire_at"
     private const val K_NIGHT_KEY = "watch_night_key"
     private const val K_NIGHT_N = "watch_night_count"
@@ -98,7 +112,28 @@ object GuardWatch {
 
         val app = UsageProbe.currentApp(ctx)
         val title = if (level == 2) "아직 깨어 있네요" else "지금 자야 합니다"
+
+        /*
+         * 이번 발동을 포함한 그 밤의 순번 — ADR-049 ① (T-68).
+         *
+         * ★ **읽을 뿐 새로 저장하지 않는다.** 재료는 이미 `K_NIGHT_N`에 있고, 그 계수는
+         *   위에서 밤 키가 바뀌면 0으로 돌아간다. 누적을 따로 어디에 쌓으면 그것은
+         *   **파생을 물화하는 것**이고(아키텍처 원칙 1) 밤이 바뀌어도 안 지워진다.
+         * ★ **아래 증가분이 이 값을 그대로 쓴다** — 말한 수와 센 수가 한 식이라 갈라질 수 없다.
+         */
+        val n = pr.getInt(K_NIGHT_N, 0) + 1
+
         val body = buildString {
+            /*
+             * ★ **누적이 맨 앞이다** (ADR-049 ①). 한 밤 안에서 달라지는 것이 이 조각 하나뿐이라
+             *   뒤에 붙이면 매번 같은 앞부분이 먼저 읽히고 그대로 넘어간다(ADR-047 ①).
+             * ⚠️ **첫 발동엔 안 붙는다** — 앞이 없는데 앞을 세는 말은 알리는 것이 없는 소음이다.
+             *    그래서 `watchTallyFrom`의 하한이 2다(설정으로도 못 깬다).
+             * ⚠️ 첫 발동은 늘 Level 2이므로(`l2done`과 `K_NIGHT_N`이 한 번에 쓰인다)
+             *    아침 한 줄과 이 줄은 **같은 발동에 함께 서지 않는다.** 둘의 순서는 그래서
+             *    화면에서 다투지 않는다.
+             */
+            if (n >= s.watchTallyFrom) append(String.format(java.util.Locale.US, TALLY_FMT, n))
             // ★ **사실이 맨 앞이다** — 밤마다 달라지는 것이 이 문장 하나뿐이라
             //   뒤에 붙이면 매일 같은 앞부분이 먼저 읽히고 그대로 넘어간다(ADR-047 ①).
             if (wakeLine != null) append("$wakeLine. ")
@@ -110,7 +145,8 @@ object GuardWatch {
         GuardNotifications.fire(ctx, level, title, body, eventId = null, cause = "watch:bedtime")
 
         pr.edit().putLong(K_LAST_FIRE, now)
-            .putInt(K_NIGHT_N, pr.getInt(K_NIGHT_N, 0) + 1)
+            // 위에서 문구가 말한 그 수다 — 두 번 세지 않는다(T-68).
+            .putInt(K_NIGHT_N, n)
             .putBoolean(K_LEVEL2_DONE, true)
             .apply()
         return true
@@ -130,6 +166,8 @@ object GuardWatch {
             .put("continuousMin", GuardActivityLog.continuousScreenOnMin(ctx))
             .put("firedTonight", pr.getInt(K_NIGHT_N, 0))
             .put("maxPerNight", s.watchMaxPerNight)
+            // T-68 — *"왜 이 문구인가"* 를 밤 실측이 여기서 읽는다. `firedTonight`와 짝이다.
+            .put("tallyFrom", s.watchTallyFrom)
             .put("level2Done", pr.getBoolean(K_LEVEL2_DONE, false))
             .put("nightKey", pr.getString(K_NIGHT_KEY, null))
             // ADR-047 — *"안 떴다"* 의 이유가 여기서 읽힌다. 밤 실측이 보는 칸이다.

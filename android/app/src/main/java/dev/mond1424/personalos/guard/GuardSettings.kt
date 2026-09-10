@@ -102,6 +102,22 @@ class GuardSettings(ctx: Context) {
         get() = p.getInt(K_WATCH_MAX, 9)
         set(v) = p.edit().putInt(K_WATCH_MAX, v.coerceIn(1, 20)).apply()
 
+    /**
+     * 몇 번째 발동부터 문구가 **그 밤의 누적**을 말하는가 — ADR-049 ① (T-68).
+     *
+     * ★ **기본이 2인 이유.** *"앞이 있었다"* 가 처음 참이 되는 순간과 문구가 달라지는 순간이
+     *   같아야 한다. 3 이상으로 두면 **앞이 있는데도 없는 척하는 발동**이 생기고,
+     *   그것이 이 값이 고치려는 결함 그 자체다(열한 번째가 첫 번째와 똑같이 생겼던 것).
+     *
+     * ⚠️ **하한이 1이 아니라 2다** — 이웃 [watchMinutes]·[watchMaxPerNight]와 다르다.
+     *    1번째에 *"1번째예요"* 는 앞이 없는데 앞을 세는 말이라 아무것도 안 알리는 소음이고,
+     *    **첫 발동의 침묵은 설정으로도 못 깨야** 한다. 상한은 이웃과 같은 20 —
+     *    [watchMaxPerNight]보다 크게 두는 것이 이 값의 '끄기'다(별도 스위치를 안 만든 이유).
+     */
+    var watchTallyFrom: Int
+        get() = p.getInt(K_WATCH_TALLY, 2)
+        set(v) = p.edit().putInt(K_WATCH_TALLY, v.coerceIn(2, 20)).apply()
+
     companion object {
         private const val K_SOUND = "sound"
         private const val K_VIBRATION = "vibration"
@@ -111,6 +127,7 @@ class GuardSettings(ctx: Context) {
         private const val K_WATCH_MIN = "watch_minutes"
         private const val K_WATCH_REFIRE = "watch_refire_minutes"
         private const val K_WATCH_MAX = "watch_max_per_night"
+        private const val K_WATCH_TALLY = "watch_tally_from"
         private const val K_WAKE_AHEAD = "wake_lookahead_hours"
         private const val K_WAKE_STALE = "wake_stale_hours"
     }

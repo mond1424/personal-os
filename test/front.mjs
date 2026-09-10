@@ -1,7 +1,7 @@
 // 프론트 E2E — jsdom에 index.html + api.js + app.js를 올리고
 // 실행 중인 wrangler dev(기본 8788)에 실제 fetch로 붙는다.
 // 렌더 경로의 런타임 오류·조립 결과를 잡는 용도. 사용: node test/front.mjs [base]
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { JSDOM, VirtualConsole } from "jsdom";
@@ -4049,6 +4049,155 @@ ok("6 임계가 그대로다 — WAIT_LIMIT 21 · ageClass 8/15 (스캐너 · �
 
 w.switchTab("today");
 await sleep(300);
+
+/* ── T-68 · 열한 번째가 첫 번째인 척하지 않는다 (ADR-049) ────────────────────
+ *
+ * **jsdom은 Kotlin을 못 돌린다**(T-51·T-60이 배운 자리). 여기 아홉은 전부 스캐너이고
+ * **진짜 판정은 밤 실측**이다(티켓 §확인 절차 — 그 밤의 reaction 이 accepted 일색이 아닌가).
+ *
+ * 그래서 세는 방식을 하나 바꿨다: **정규식이 맞았는가**가 아니라
+ * **Kotlin에서 뽑아 온 재료로 JS가 한 밤을 돌려 본다.** 문구도 임계도 비교 연산자도
+ * 여기 안 적는다 — 적으면 구현이 틀릴 때 검사도 함께 틀린다(함정 15).
+ */
+console.log("\n[T-68] 밤 개입 — 문구가 오늘 밤 몇 번째인지 안다");
+
+const t68Kt = (f) => t46Bare(readFileSync(
+  join(here, "../android/app/src/main/java/dev/mond1424/personalos/guard/" + f), "utf8"));
+const t68Watch = t68Kt("GuardWatch.kt");
+const t68Alert = t68Kt("GuardAlertActivity.kt");
+const t68Layout = t46NoXml(readFileSync(
+  join(here, "../android/app/src/main/res/layout/activity_guard_alert.xml"), "utf8"));
+
+/** 발동 한 번의 누적 조각을 **구현에서 뽑은 재료로** 만든다. 못 뽑으면 `null` — 1이 그걸 센다.
+ *
+ * ⚠️ `t51Default`를 다시 쓴다. 같은 파일을 두 번 파싱하면 **파서가 두 벌**이 되고,
+ *    그게 이 리포가 파생에서 반복해 물린 모양이다(원칙 1의 사촌). */
+const t68Render = (src) => {
+  const fmt = /private const val (\w+) = "([^"]*%?[^"]*)"/.exec(src);
+  const at = /if \(n (>=|>|<=|<|==) s\.(\w+)\) append\(String\.format\([\w.]+, (\w+), n\)\)/.exec(src);
+  if (!fmt || !at || at[3] !== fmt[1]) return null;
+  const from = t51Default(at[2]);
+  if (from === null) return null;
+  const cmp = {
+    ">=": (a, b) => a >= b, ">": (a, b) => a > b, "<=": (a, b) => a <= b,
+    "<": (a, b) => a < b, "==": (a, b) => a === b,
+  }[at[1]];
+  return (n) => (cmp(n, from) ? fmt[2].replace(/%d/g, String(n)) : "");
+};
+const t68Line = t68Render(t68Watch);
+const t68Max = t51Default("watchMaxPerNight");
+const t68Later = t68Line ? Array.from({ length: t68Max - 1 }, (_, i) => i + 2) : [];
+
+/* 1 ★ **본체.** 두 번째부터 그 밤의 마지막까지, 순번이 문구 안에 **숫자 그대로** 있다.
+ *   ⚠️ *"여러 번"* 처럼 뭉개면 `%d`가 없어 치환이 안 되고 여기서 죽는다 — 세는 것을 지우면
+ *      열한 번째가 다시 첫 번째처럼 보이고, 그게 이 티켓이 고치는 결함이다. */
+ok("1 ★ 두 번째 이후 발동의 문구에 그 밤의 누적이 수(數)로 들어간다 (재료로 한 밤을 돌린다)",
+  !!t68Line && t68Later.length > 0 && t68Later.every((n) => t68Line(n).includes(String(n))),
+  t68Line
+    ? `n=2 "${t68Line(2)}" … n=${t68Max} "${t68Line(t68Max)}"`
+    : "재료를 못 뽑았다 (문구 상수 또는 붙이는 자리가 없다)");
+
+/* 1의 짝 ★ **뽑는 장치가 살아 있는가.** 1은 재료를 못 뽑으면 `null`로 죽는데, 그것이
+ *   *"안 실었다"* 인지 *"파서가 낡았다"* 인지 구별이 안 된다. 합성 소스로 가른다
+ *   (T-51 ③ · T-66 4의 짝과 같은 자리). ⚠️ **셋을 각각 흔든다** — 문구 · 게이트 · 재료 없음. */
+const t68Syn = (fmt, op) =>
+  `    private const val TALLY_FMT = "${fmt}"\n`
+  + `            if (n ${op} s.watchMaxPerNight) append(String.format(java.util.Locale.US, TALLY_FMT, n))`;
+const t68SynLine = t68Render(t68Syn("밤 %d회", ">="));
+const t68SynMute = t68Render(t68Syn("여러 번", ">="));
+ok("1 ★ 1의 파서가 살아 있다 — 수 있는 문구는 세고, 뭉갠 문구는 안 센다 · 게이트를 뒤집으면 따라간다",
+  !!t68SynLine && t68SynLine(t68Max).includes(String(t68Max))
+  && !!t68SynMute && !t68SynMute(t68Max).includes(String(t68Max))
+  && t68Render(t68Syn("밤 %d회", "<"))(t68Max) === ""
+  && t68Render('private const val X = "y"') === null,
+  `수있음="${t68SynLine ? t68SynLine(t68Max) : null}" 뭉갬="${t68SynMute ? t68SynMute(t68Max) : null}"`);
+
+/* 2 ★ **1의 짝 — 소음을 안 만들었는가.** 1번째에 *"1번째예요"* 는 앞이 없는데 앞을 세는 말이라
+ *   아무것도 안 알린다. 세 자리를 함께 본다: ① 첫 발동의 조각이 **빈 문자열**이고
+ *   ② 순번 `n`이 문구 조립에서 **그 한 줄 말고는 안 쓰이며**(다른 조각이 딸려 달라지면 죽는다)
+ *   ③ **제목**도 순번을 안 본다.
+ *   ★ **누적 줄 자체는 안 본다 — 그건 1의 몫이다.** 처음엔 `n`을 본문에서 **세었는데**,
+ *   그러면 누적을 통째로 지우는 변이(M1)에 **1과 함께 죽어** 무엇이 틀렸는지 못 가른다
+ *   (실측으로 그랬다 · AGENT-CHAIN §8 · T-64·T-67이 같은 자리에서 좁힌 그 모양).
+ *   그래서 **누적 줄을 뺀 나머지**에 순번이 새는지만 본다 — M1에서는 나머지가 곧 전부이고,
+ *   거기 `n`이 없으면 통과가 맞다. 2가 세는 것은 *"첫 번엔 그 말이 없다"* 하나다. */
+const t68Body = /val body = buildString \{([\s\S]*?)\n {8}\}/.exec(t68Watch)?.[1] ?? "";
+const t68Rest = t68Body.split("\n")
+  .filter((l) => !/append\(String\.format\([\w.]+, \w+, n\)\)/.test(l)).join("\n");
+const t68Leak = /\bn\b/.test(t68Rest);
+const t68Title = /val title = if \(level == 2\)[^\n]*/.exec(t68Watch)?.[0] ?? "";
+ok("2 ★ 첫 발동의 문구는 전과 같다 — 순번이 다른 조각으로 안 샌다 (1의 짝)",
+  (t68Line ? t68Line(1) === "" : true)
+  && t68Body.length > 0 && !t68Leak
+  && t68Title.length > 0 && !/\bn\b/.test(t68Title),
+  `첫조각="${t68Line ? t68Line(1) : "(재료 없음)"}" 나머지로샘=${t68Leak}`
+  + ` 제목속n=${/\bn\b/.test(t68Title)}`);
+
+/* 3 ★ **밤이 바뀌면 1부터 다시 센다.** 겨누는 것은 *"reset이라는 낱말이 있다"* 가 아니라
+ *   **문구가 읽는 그 계수가 밤 키 불일치에서 0으로 돌아가는가**다 — 키 이름을 구현에서
+ *   뽑아 그 이름으로 초기화 자리를 찾는다. 둘이 갈라지면 전날을 이어 센다. */
+const t68Src = /val n = pr\.getInt\((K_\w+), 0\) \+ 1/.exec(t68Watch)?.[1] ?? null;
+const t68Zeroed = t68Src !== null && new RegExp(
+  `if \\(pr\\.getString\\(K_NIGHT_KEY, null\\) != night\\) \\{[\\s\\S]{0,300}?putInt\\(${t68Src}, 0\\)`,
+).test(t68Watch);
+const t68NightFrom = /val night = nightKey\(s\.bedFrom, s\.bedTo\)/.test(t68Watch);
+ok("3 ★ 밤이 바뀌면 수가 0으로 돌아간다 — 문구가 읽는 계수와 초기화되는 계수가 같은 키다",
+  !!t68Src && t68Zeroed && t68NightFrom,
+  `문구가읽는키=${t68Src} 밤키에서0=${t68Zeroed} 밤이름=${t68NightFrom}`);
+
+/* 4 ★ **누적은 저장되지 않는다** — 파생 금지(원칙 1). 밤마다 초기화되는 계수 하나뿐이어야 한다.
+ *   ⚠️ *"새 키가 없다"* 를 **안 세는 방식으로 세지 않는다**: 쓰기 자체를 전부 뽑아
+ *      ① 전부 선언된 상수 키이고 ② **정수로 쓰이는 키가 문구가 읽는 그 계수 하나뿐**임을 본다.
+ *      정규식이 눈멀면 빈 배열이 되어 ②가 먼저 죽는다 — 조용히 통과하지 않는다.
+ *   ★ **쓰기의 개수는 안 센다.** 처음엔 *"정수 쓰기가 둘"* 을 세었는데, 그러면 초기화를
+ *   지우는 변이(M3)에 **3과 함께 죽는다**(실측으로 그랬다 · AGENT-CHAIN §8).
+ *   *"0으로 돌아가는가"* 는 3의 몫이고, 여기는 **계수가 하나뿐인가**만 본다. */
+const t68Keys = [...t68Watch.matchAll(/private const val (K_\w+) = "/g)].map((m) => m[1]);
+const t68Writes = [...t68Watch.matchAll(/put(?:Int|Long|String|Boolean)\(\s*([^,]+),/g)]
+  .map((m) => m[1].trim());
+const t68Foreign = t68Writes.filter((k) => !t68Keys.includes(k));
+const t68IntW = [...t68Watch.matchAll(/putInt\(\s*([^,]+),/g)].map((m) => m[1].trim());
+const t68Sql = readdirSync(join(here, "../migrations"))
+  .map((f) => readFileSync(join(here, "../migrations", f), "utf8")).join("\n");
+const t68NoCol = !/(tally|night_count|fired_tonight)/i.test(t68Sql);
+ok("4 ★ 누적을 저장하는 키도 컬럼도 없다 — 밤마다 0으로 가는 계수 하나만 쓴다 (파생 금지)",
+  t68Writes.length > 0 && t68Foreign.length === 0 && t68IntW.length > 0
+  && t68IntW.every((k) => k === t68Src) && t68NoCol,
+  `낯선키=${JSON.stringify(t68Foreign)} 정수쓰기=${JSON.stringify(t68IntW)} SQL컬럼없음=${t68NoCol}`);
+
+/* 5 ★ **발동 경로에 네트워크가 없다** (ADR-021 회귀). 누적을 서버에서 받아 오면 오프라인인
+ *   새벽이 통째로 조용해진다 — 재료는 이미 기기에 있다(ADR-049 ①).
+ *   ⚠️ **낱말 하나가 아니라 이름 넷을 겨눈다**(T-60이 `/wake/i`로 물린 자리).
+ *   짝으로 `nextWake`(캐시 읽기)가 **남아 있는지**도 본다 — 그것까지 지우면 아침 한 줄이 죽는다. */
+const T68_NET = /HttpURLConnection|openConnection|GuardSync\.pull|GuardEventQueue\.flush/;
+ok("5 ★ 발동 경로(GuardWatch)에 네트워크 호출이 없다 — 누적은 기기가 안다",
+  !T68_NET.test(t68Watch) && /GuardSync\.nextWake/.test(t68Watch),
+  `네트워크=${T68_NET.exec(t68Watch)} 캐시읽기=${/GuardSync\.nextWake/.test(t68Watch)}`);
+
+// 5의 짝 ★ 스캐너가 살아 있다 — 넷 중 어느 이름이 들어와도 잡는다(안 잡으면 5는 늘 초록이다).
+ok("5 ★ 5의 스캐너가 살아 있다 (합성 조회 셋을 각각 잡고, 캐시 읽기는 안 잡는다)",
+  ["val c = (URL(x).openConnection() as HttpURLConnection)", "GuardSync.pull(ctx)",
+    "runCatching { GuardEventQueue.flush(ctx) }"].every((l) => T68_NET.test(l))
+  && !T68_NET.test("val w = GuardSync.nextWake(ctx, now, 18, 48)"));
+
+/* 6 ★ **수락 버튼에 마찰을 안 붙였다** — 이 티켓의 경계(ADR-049 §기각한 대안 1행).
+ *   대가는 누를 때가 아니라 **누적**에 붙는다. 여기에 대기·사유를 붙이면
+ *   **처음 한 번에 자는 밤도 함께 벌하고**, 막으면 OS 무음 처리로 관측까지 잃는다(ADR-047 ③).
+ *   핸들러 본문과 **레이아웃** 둘 다 본다 — 코드가 깨끗해도 XML이 버튼을 죽여 두면 같은 일이다. */
+const t68AcceptBlk = /accept\.setOnClickListener \{([\s\S]*?)\n {8}\}/.exec(t68Alert)?.[1] ?? "";
+const T68_FRICTION = /startWait|waitLeft|guard_reason|isEnabled|postDelayed|alpha/;
+const t68AcceptXml = /<Button[^>]*?android:id="@\+id\/guard_accept"[\s\S]*?\/>/.exec(t68Layout)?.[0] ?? "";
+ok("6 ★ [알겠습니다]에 대기도 사유도 안 붙었다 (②의 경계 · 핸들러와 레이아웃 둘 다)",
+  /finishWith\("accepted", null\)/.test(t68AcceptBlk) && !T68_FRICTION.test(t68AcceptBlk)
+  && t68AcceptXml.length > 0 && !/android:enabled="false"/.test(t68AcceptXml),
+  `핸들러="${t68AcceptBlk.trim().replace(/\s+/g, " ")}"`
+  + ` xml에서죽임=${/android:enabled="false"/.test(t68AcceptXml)}`);
+
+// 6의 짝 ★ 스캐너가 살아 있다 — 대기를 붙인 합성 핸들러를 잡는다(안 잡으면 6은 늘 초록이다).
+ok("6 ★ 6의 스캐너가 살아 있다 (합성 대기·사유를 잡고, 지금 모양은 안 잡는다)",
+  T68_FRICTION.test('finishWith("accepted", null)\n            startWait(waitSec, go, note, reason)')
+  && T68_FRICTION.test('accept.postDelayed({ finishWith("accepted", null) }, 60_000L)')
+  && !T68_FRICTION.test('finishWith("accepted", null)\n            GuardRecheck.arm(this, level)'));
 
 console.log("\n[부팅 · 연결 실패 복구]");
 ok("로드 후 부팅 오버레이 닫힘", !$("#boot").classList.contains("on"));
