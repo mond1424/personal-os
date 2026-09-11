@@ -14,7 +14,7 @@
 
 | 메서드 · 경로 | 요청 body | 응답(요약) | 담당 |
 |---|---|---|---|
-| GET `/api/today` | — | Today 조립(todo·done·reassign·waiting·overdue·events·periods·feelings·logs·guard) · `guard = {fired, last_at, ignored}` 또는 집계 실패 시 `null` (T-45) | `daily.assembleToday` |
+| GET `/api/today` | — | Today 조립(todo·done·reassign·waiting·overdue·events·periods·feelings·logs·guard) · `guard = {fired, last_at, ignored, unasked}` 또는 집계 실패 시 `null` (T-45 · T-70). ⚠️ **`unasked`를 `ignored`에 접지 않는다** — 접으면 `ignored`가 *"물었는데 안 했다"+"안 물었다"* 라는 옛 뜻으로 돌아간다 | `daily.assembleToday` |
 | POST `/api/logs` | `{text, ts?}` | `{date}` (201) | `daily.addLog` |
 | PATCH `/api/logs/:id` | `{ts?, text?}` | `{id, date}` | `daily.editLog` |
 | PUT `/api/daily/feelings` | `{values: Record<string,number>}` | `{date, fields}` | `daily.setFeelings` |
@@ -77,12 +77,12 @@
 | PUT `/api/events/:id/protect` | `{protect_from?, protect_level?, protect_sleep_min?, protect_prep_min?}` 또는 `{protect:false}` | `{id, protected, ...}` · **본문 수정과 분리**(마감된 날에도 부착 가능) | `events.setProtect` |
 | GET `/api/guard/events?limit` | — | 발동 이력 rows | `guard.events` |
 | GET `/api/guard/schedule?days` | — | `{d, mode, friction_mult, events:[{event_id, start, deadline, fires[]}], wake:[{date, at, leaveBy, title, source}]}` · **기기가 하루 1회 pull**. `wake` = 하루에 하나, 그 날 **가장 이른 약속**(수업 ∪ 시각 있는 일정 · 지난 것·종일은 제외) — Level 2가 밤마다 다른 말을 할 재료(T-60 · ADR-047). **재료이지 판정이 아니다**. `leaveBy` = `at − (이동+준비)` 기상 시각(T-61) — **접는 것은 시각까지고 "몇 시간"은 기기가 그 자리에서 잰다** | `guard.schedule` |
-| POST `/api/guard/events` | `{cause, level, client_id?, fired_at?, event_id?, risk_score?, risk_snapshot?, foreground_app?, source?, reaction?, reason?, ai_used?, ai_verdict?, ai_unavailable_reason?, ai_reason?}` | `{id, on_date, level, mode, duplicate?}` (201) · **upsert** — `client_id`로 재전송 멱등, 반응 후행 채움. `ai_unavailable_reason`(0016)은 `ai_verdict='unavailable'`일 때만 남고 **닫힌 목록 밖이면 조용히 비운다** — 400을 던지면 기기 `flush()`가 발동 행을 버린다. `ai_reason`(0017)은 그 **반대편**이다 — `approve`·`deny`일 때만 남는 자유 문자열(모델이 쓴 문장)이고, 500자를 넘으면 **거부가 아니라 자른다**(같은 이유). **판정만 담아 뒤늦게 보내도 된다**(T-39): `client_id`만으로 기존 행의 `ai_used`·`ai_verdict`·`ai_unavailable_reason`·`ai_reason`을 **`NULL → 값`으로만** 채운다(`ai_used`는 `0 → 1`만). `cause`·`level`이 없어도 400이 아니고, **`level`은 못 바꾼다**(불변성 트리거). **저장되는 `risk_snapshot`은 보낸 것과 다르다**(T-32): 서버가 §6.6 항을 `server` 키 아래 얹고 `risk_score`를 낸다 — 전부 **`fired_at` 기준**이라 오프라인 큐가 늦게 올라와도 그 밤의 값이다. 기기 항은 이름·값 그대로. `risk_snapshot`을 안 보내면 **얹지 않는다**(둘 다 NULL) | `guard.record` |
+| POST `/api/guard/events` | `{cause, level, client_id?, fired_at?, event_id?, risk_score?, risk_snapshot?, foreground_app?, source?, reaction?, reason?, ai_used?, ai_verdict?, ai_unavailable_reason?, ai_reason?, asked?}` | `{id, on_date, level, mode, duplicate?}` (201) · **upsert** — `client_id`로 재전송 멱등, 반응 후행 채움. `ai_unavailable_reason`(0016)은 `ai_verdict='unavailable'`일 때만 남고 **닫힌 목록 밖이면 조용히 비운다** — 400을 던지면 기기 `flush()`가 발동 행을 버린다. `ai_reason`(0017)은 그 **반대편**이다 — `approve`·`deny`일 때만 남는 자유 문자열(모델이 쓴 문장)이고, 500자를 넘으면 **거부가 아니라 자른다**(같은 이유). **판정만 담아 뒤늦게 보내도 된다**(T-39): `client_id`만으로 기존 행의 `ai_used`·`ai_verdict`·`ai_unavailable_reason`·`ai_reason`을 **`NULL → 값`으로만** 채운다(`ai_used`는 `0 → 1`만). `cause`·`level`이 없어도 400이 아니고, **`level`은 못 바꾼다**(불변성 트리거). **저장되는 `risk_snapshot`은 보낸 것과 다르다**(T-32): 서버가 §6.6 항을 `server` 키 아래 얹고 `risk_score`를 낸다 — 전부 **`fired_at` 기준**이라 오프라인 큐가 늦게 올라와도 그 밤의 값이다. 기기 항은 이름·값 그대로. `risk_snapshot`을 안 보내면 **얹지 않는다**(둘 다 NULL). **`asked`(T-70 · 0023)는 *"반응 버튼이 사용자 앞에 있었는가"*** 이고 *"알림이 떴는가"* 가 아니다 — boolean 만 받고 **키가 없거나 딴 꼴이면 `NULL`(=모른다)이다.** 거짓으로 접으면 옛 APK의 행이 *"자리가 없었다"* 로 **단언**되어 경계 노릇을 못 한다. `client_id`만으로 **뒤늦게 올려도 되고**(FSI·알림 탭은 발동 시점에 알 수 없다) **`0 → 1`만 오른다**(`MAX`) | `guard.record` |
 | POST `/api/guard/verify` | `{client_id, cause, level_candidate:4, event_id?, risk_snapshot?, foreground_app?}` | `{level:3\|4, approved, reason, ai_used, cached, source}` · **어떤 경우에도 200** — 판정 불가는 `level:3`. `source` = `ai\|cache\|cap\|timeout\|error\|off`. `level_candidate≠4`는 400(격상 전용) | `guard.verifyLevel4` |
 | POST `/api/guard/events/:id/react` | `{reaction, reason?, reacted_at?}` | `{id, reaction, reacted_at}` · 두 번째는 409 | `guard.react` |
 | POST `/api/guard/events/:id/outcome` | `{outcome}` | `{id, outcome, outcome_at}` · 재확정 409 | `guard.setOutcome` |
-| GET `/api/guard/pending-outcome` | — | outcome 미확정 rows(+`event_title`) · **`later_fires`**(같은 `on_date`의 더 뒤 발동 수 · 사실) · **`outcome_inferred`**(`"failure"\|null` · 뜻). ⚠️ **`outcome`은 안 건드린다** — 추론은 저장하지 않고 조회할 때 계산한다(ADR-044 · 원칙 1). 레벨로 안 거른다 | `guard.pendingOutcome` |
-| GET `/api/guard/l2-nag` | — | `{streak, threshold, ack, over}` — 감지 경로 Level 2(`cause LIKE 'watch:%'`)가 **연속으로 몇 번 무시됐나**. `reaction IS NULL`은 세지도 끊지도 않는다(유예 36h). **컬럼이 아니라 조회다**(원칙 1 · T-60) | `guard.l2Nag` |
+| GET `/api/guard/pending-outcome` | — | outcome 미확정 rows(+`event_title`) · **`later_fires`**(같은 `on_date`의 더 뒤 발동 수 · 사실) · **`outcome_inferred`**(`"failure"\|null` · 뜻). ⚠️⚠️ **`reaction='unasked'`는 여기 안 들어온다**(T-70) — 반응할 자리가 없던 발동에 *"결과가 어땠나요?"* 를 묻는 것은 이 값이 없애려는 것과 같은 모양이다. ⚠️ **`outcome`은 안 건드린다** — 추론은 저장하지 않고 조회할 때 계산한다(ADR-044 · 원칙 1). 레벨로 안 거른다 | `guard.pendingOutcome` |
+| GET `/api/guard/l2-nag` | — | `{streak, threshold, ack, over}` — 감지 경로 Level 2(`cause LIKE 'watch:%'`)가 **연속으로 몇 번 무시됐나**. `reaction IS NULL`도 **`'unasked'`(T-70)도 세지도 끊지도 않는다** — 둘 다 *"사용자가 뭘 했는지 모른다"* 다. ★ 끊게 하면 더 나쁘다: 아무도 응답한 적 없는데 카드가 *"응답했다"* 를 근거로 침묵한다. **컬럼이 아니라 조회다**(원칙 1 · T-60) | `guard.l2Nag` |
 | POST `/api/guard/l2-nag/ack` | — | `{...l2Nag, ack: streak, over: false}` — *"끄기"*·*"그대로"* 둘 다 지난다. 같은 숫자로 다시 묻지 않기 위해서다 | `guard.ackL2Nag` |
 | GET `/api/collected/pending` | — | `[{id, source, summary, starts_at}]` · **`state='new'`이고 `starts_at`이 `[t.now, +7일]`인 것만**(T-42 결정 ①). 창 밖·과거·`dismissed`·`starts_at IS NULL`은 안 준다. **`description`은 안 싣는다** — 카드가 원문 한 줄만 쓴다 | `collected.pending` |
 | POST `/api/collected/:id/accept` | — | `{id, event_id, state:'accepted', duplicate}` · `events` 행 하나를 만든다(`title` = `summary` **원문 그대로** · `date`·`time` = `starts_at`). **보호 규칙은 안 붙인다**. ⚠️ **멱등** — 이미 `accepted`면 `events`를 또 만들지 않고 `duplicate:true`로 있던 id를 준다(순차 한정) | `collected.accept` |
@@ -94,7 +94,7 @@
 | POST `/api/guard/watch-apps` | `{source, identifier, label?}` | `{source, identifier}` (201) | `guard.addWatchApp` |
 | DELETE `/api/guard/watch-apps/:source/:identifier` | — | `{deleted}` | `guard.removeWatchApp` |
 | GET `/api/health` | — | `{ok, date, now}` | (인라인) |
-| POST `/api/admin/auto-close` | — | `{closed, orphaned, guard_ignored, uclass, as_of}` | `scheduled.autoClose` |
+| POST `/api/admin/auto-close` | — | `{closed, orphaned, guard_ignored, guard_unasked, uclass, as_of}` | `scheduled.autoClose` |
 | — | | ↑ `uclass`(T-41)는 학사 iCal 수집 결과다: `{skipped:'no_token'\|'too_soon'\|'error'\|null, collected, added, changed}`. **던지지 않는다** — `guard_ignored`와 같은 이유로 `.catch`로 삼키고 실패 사유는 `settings.uclass_last_error`에 남는다. 토큰(`UCLASS_ICAL_URL`)이 없으면 `no_token`으로 끝나 아무 일도 안 한다. **성공하면 `uclass_last_collect_at`·`uclass_last_seen_count`(VEVENT 수)를 쓰고 error를 지운다**(T-43). **2xx여도 `BEGIN:VCALENDAR`가 없으면 `not_calendar`로 실패**시킨다 — 로그인 HTML이 '0건 성공'으로 남으면 방학과 구별이 안 된다 | |
 
 > **라우트 순서 주의** — 리터럴 경로를 와일드카드보다 **앞**에 둔다. 실제로 두 번 물렸다:
@@ -241,8 +241,11 @@
 - `pendingOutcome(env)` → outcome 미확정 목록(Today 확정 카드용)
 - `l2Nag(env)` → `{streak, threshold, ack, over}` — 감지 L2 연속 무시. **세는 것이지 저장하지 않는다**(T-60)
 - `ackL2Nag(env)` → 지금 연속을 `settings`에 적어 같은 숫자로 다시 묻지 않게 한다(사용자의 결정이라 파생이 아니다)
-- `finalizeIgnored(env, t)` → `{ignored, cutoff}` · **루프의 닫는 쪽**(ADR-025). 반응 없이 `GRACE_H`(36시간)를
-  넘긴 발동을 `ignored`로 확정한다. 유예가 긴 이유는 오프라인 큐다 — 기기가 발동과 반응을 **함께** 나중에
+- `finalizeIgnored(env, t)` → `{ignored, unasked, cutoff}` · **루프의 닫는 쪽**(ADR-025). 반응 없이 `GRACE_H`(36시간)를
+  넘긴 발동을 확정한다. ★ **`ignored`와 `unasked`로 갈리고, 가르는 것은 레벨이 아니라 `asked`다**(T-70 · ADR-047 §정정) —
+  `level == 2`는 *지금 우연히 맞는* 대응이라 T-71이 L2에 반응 자리를 주면 거짓이 되는데, **그 APK가 언제 깔렸는지는
+  이 층이 모른다**(CLAUDE.md §사람이 하는 것의 상태). `asked`는 발동과 함께 와서 그 물음이 안 생긴다.
+  ⚠️ `asked`가 `NULL`(옛 APK)이어도 `ignored`로 **확정하지 않는다** — 확정은 *"물었는데 안 했다"* 는 주장이다. 유예가 긴 이유는 오프라인 큐다 — 기기가 발동과 반응을 **함께** 나중에
   올리므로(ADR-023) 서버가 먼저 박으면 트리거가 진짜 반응을 막고 소급 복구가 안 된다.
   `autoClose`가 부르고, 거기서 던지면 자동 마감이 통째로 멈추므로 `.catch`로 격리돼 있다
 - `modes(env, t)` / `setMode(env, t, key, reason?)` → 파라미터 프로파일(ADR-019). active는 부분 유니크 인덱스라 **해제 → 설정 batch**
@@ -273,7 +276,7 @@
 - 소비처는 지금 `guard.verifyLevel4` 하나. §6.3 관리인 chat(Phase 4)까지 **범용 확장을 미리 하지 않는다**
 
 ### scheduled.ts — Cron
-- `autoClose(env, t)` → `{closed, orphaned, guard_ignored, as_of}` · 열린 과거 마감 + 고아 예정일 처리 + `finalizeIgnored`
+- `autoClose(env, t)` → `{closed, orphaned, guard_ignored, guard_unasked, as_of}` · 열린 과거 마감 + 고아 예정일 처리 + `finalizeIgnored`
   - **`t`를 받는다**(T-23). `t.now`가 `daily`·`summaries.mech`에 **저장**되므로 경계에서 갈라지면
     마감 기록이 잘못된 날에 남고 트리거가 그것을 동결한다. `/api/admin/auto-close`는 미들웨어의 `t`를 넘긴다
 - `scheduled(event, env)` → void · Cron 엔트리. **cron에는 요청이 없으므로 여기가 `loadTime`의 경계다**
@@ -307,7 +310,7 @@
 **Life Model(0012)** — `lmItems(env, section)` · `lmItemGet` · `lmSections`(섹션별 개수) · `stInsertLmItem` · `stUpdateLmItem`(version은 트리거) · `stDeleteLmItem` · `lmSchemaActive(env, section)` · `lmSchemasAll`
 **analysis 앵커(0012)** — `stInsertAnalysis(..., anchorType, anchorId, modelTier, sourceVersions)` · `analysesByAnchor(env, type, id)`
 **보호 규칙(0010)** — `stSetProtect(env, id, from, level, sleepMin, prepMin)`(본문 수정과 분리) · `protectedEvents(env, fromDate, days)`(앞으로의 보호 일정 — 예약 재료)
-**guard(0010)** — `guardEventsList(env, limit)` · `guardEventGet(env, id)` · `stInsertGuardEvent(env, e)` · `stReactGuardEvent(env, id, reaction, reason, at)`(`AND reaction IS NULL`) · `stClassifyOverride` · `stSetGuardOutcome`(`AND outcome IS NULL`) · `guardEventsUnreacted(env, before)` · `guardEventsPendingOutcome(env)` · `guardWatchL2Recent(env, limit)`(감지 L2의 최근 반응 — 연속 무시 재료 · T-60) · `guardAiCallsOn(env, onDate)`(ADR-024 일일 상한) · `guardAiVerdictFor(env, onDate, eventId)`(ADR-024 캐시 — `'unavailable'`은 제외, `fired_at DESC, id DESC`)
+**guard(0010)** — `guardEventsList(env, limit)` · `guardEventGet(env, id)` · `stInsertGuardEvent(env, e)` · `stReactGuardEvent(env, id, reaction, reason, at)`(`AND reaction IS NULL`) · `stMarkGuardAsked(env, id)`(**`MAX(IFNULL(asked,0),1)` — 올리기만 한다** · T-70 · 0023) · `stClassifyOverride` · `stSetGuardOutcome`(`AND outcome IS NULL`) · `guardEventsUnreacted(env, before)` · `guardEventsPendingOutcome(env)` · `guardWatchL2Recent(env, limit)`(감지 L2의 최근 반응 — 연속 무시 재료 · T-60) · `guardAiCallsOn(env, onDate)`(ADR-024 일일 상한) · `guardAiVerdictFor(env, onDate, eventId)`(ADR-024 캐시 — `'unavailable'`은 제외, `fired_at DESC, id DESC`)
 **guard_modes** — `guardModes(env)` · `guardActiveMode(env)` · `stClearActiveMode` · `stSetActiveMode` (부분 유니크 인덱스 때문에 **해제 → 설정** 순서)
 **watch_apps** — `watchApps(env, source?)` · `stAddWatchApp` · `stRemoveWatchApp`
 **시간표 (0021)** — `timetableRules(env)` → `TimetableRule[]` · `stClearTimetable(env)` · `stInsertTimetableRule(env, id, subject, weekday, start, end, termStart, termEnd, now)`

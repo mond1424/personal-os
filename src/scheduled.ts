@@ -34,9 +34,10 @@ export async function autoClose(env: Env, t: TimeCtx) {
     await db.stUpsertMech(env, "daily", date, mech, t.now).run();
   }
 
-  // H-3) 반응 없이 남은 Guard 발동 → 'ignored' 확정 (ADR-025의 닫는 쪽).
+  // H-3) 반응 없이 남은 Guard 발동 → 'ignored' 또는 'unasked' 확정 (ADR-025의 닫는 쪽).
+  //      ★ 가르는 것은 **반응 버튼이 앞에 있었는가**다(T-70) — 레벨이 아니다.
   //      마감과 독립이다 — 여기서 던지면 자동 마감이 통째로 멈춘다.
-  const ign = await finalizeIgnored(env, t).catch(() => ({ ignored: 0 }));
+  const ign = await finalizeIgnored(env, t).catch(() => ({ ignored: 0, unasked: 0 }));
 
   // H-4) 학사 마감 수집 (T-41 · ADR-037). **H-3과 같은 이유로 독립이다** —
   //      원천이 밖에 있어 실패가 흔하고(토큰 만료·서버 점검·네트워크),
@@ -48,7 +49,9 @@ export async function autoClose(env: Env, t: TimeCtx) {
 
   return {
     closed: open.results.length, orphaned: orphans.results.length,
-    guard_ignored: ign.ignored, uclass: col, as_of: t.d,
+    // ★ 둘을 갈라서 보고한다 — 합치면 *"무시가 줄었다"* 와 *"안 물은 것을 안 세게 됐다"* 가
+    //   같은 숫자가 된다(T-70). 오늘 밤 판정이 그 구별 위에 선다.
+    guard_ignored: ign.ignored, guard_unasked: ign.unasked, uclass: col, as_of: t.d,
   };
 }
 

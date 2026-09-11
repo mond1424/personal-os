@@ -705,10 +705,18 @@ export interface GuardEventRow {
   // 왜 **그렇게 답했나** (0017). 위와 뜻이 다르다 — 저쪽은 닫힌 목록을 기계가 세고,
   // 이쪽은 모델이 쓴 문장을 사람이 읽는다. 판정(approve·deny)이 있을 때만 값이 있다.
   ai_reason: string | null;
-  reaction: "accepted" | "override" | "ignored" | null; reacted_at: string | null;
+  // 'unasked' = 물었다고 볼 수 없는 발동 (T-70 · 0023). **기기는 못 보낸다** —
+  // `finalizeIgnored` 하나가 쓴다. 뜻은 *"안 물었다(또는 모른다)"* 이지 *"안 했다"* 가 아니다.
+  reaction: "accepted" | "override" | "ignored" | "unasked" | null; reacted_at: string | null;
   override_reason: string | null; override_class: "avoidant" | "legitimate" | null;
   task_id: string | null; period_id: string | null; event_id: string | null;
   outcome: "success" | "failure" | null; outcome_at: string | null; created_at: string;
+  /**
+   * ★ **반응 버튼이 사용자 앞에 있었는가** (T-70 · 0023). 알림이 떴는가가 아니다.
+   * `NULL`은 **이 발동을 올린 층이 그걸 안 셌다**는 뜻이고(옛 APK), "없었다"가 아니다 —
+   * 그 구별이 곧 `ignored`의 옛 뜻과 새 뜻의 경계다(0023 ①).
+   */
+  asked: 0 | 1 | null;
 }
 
 export const guardEventsList = (env: Env, limit = 100) =>
@@ -733,15 +741,30 @@ export const stInsertGuardEvent = (
     ai_reason: string | null;
     task_id: string | null; period_id: string | null; event_id: string | null;
     client_id: string | null; created_at: string;
+    // 반응 버튼이 앞에 있었는가 (T-70 · 0023). **안 보낸 기기는 NULL이고 그것이 경계다.**
+    asked: 0 | 1 | null;
   },
 ) => q(env, `INSERT INTO guard_events
     (id, fired_at, on_date, cause, level, mode, source, foreground_app,
      risk_score, risk_snapshot, ai_used, ai_verdict, ai_unavailable_reason, ai_reason,
-     task_id, period_id, event_id, client_id, created_at)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+     task_id, period_id, event_id, client_id, created_at, asked)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
   .bind(e.id, e.fired_at, e.on_date, e.cause, e.level, e.mode, e.source, e.foreground_app,
     e.risk_score, e.risk_snapshot, e.ai_used, e.ai_verdict, e.ai_unavailable_reason, e.ai_reason,
-    e.task_id, e.period_id, e.event_id, e.client_id, e.created_at);
+    e.task_id, e.period_id, e.event_id, e.client_id, e.created_at, e.asked);
+
+/**
+ * *"그 화면이 떴다"* 를 **뒤늦게** 채운다 (T-70). `stAmendGuardAi`와 같은 자리·같은 이유다:
+ * 발동 행이 먼저 올라간 뒤 `GuardAlertActivity`가 떠서 `markAsked`가 따로 오는 밤이 있다
+ * (잠긴 화면의 FSI·알림 탭 — 기기가 발동 시점에 미리 알 수 없는 경로다).
+ *
+ * ⚠️ **올리기만 한다(`MAX`).** `ai_used`와 같은 모양이고 같은 이유다 —
+ *    한 번 앞에 섰으면 선 것이고, 되돌리면 물었던 발동이 안 물은 것이 된다.
+ *    `IFNULL`이 먼저 오는 이유: 옛 행은 NULL이라 `MAX(NULL, 1)`이 NULL이 된다.
+ *    트리거(0023)가 마지막 방벽이지만 **이 문장이 먼저 막는다.**
+ */
+export const stMarkGuardAsked = (env: Env, id: string) =>
+  q(env, "UPDATE guard_events SET asked = MAX(IFNULL(asked, 0), 1) WHERE id = ?").bind(id);
 
 /**
  * 판정을 **뒤늦게** 채운다 (T-39). 기기가 검증을 끝냈을 때 그 발동 행이 이미 올라가 있으면
@@ -806,13 +829,20 @@ export const guardEventsUnreacted = (env: Env, before: string) =>
  *    여기에 시각을 적을 일이 없다.
  *
  * **뜻은 여기서 정하지 않는다** — *"그래서 실패로 보인다"* 는 도메인 판단이라 `services/guard.ts`다.
+ *
+ * ⚠️⚠️ **`reaction != 'unasked'`가 T-70이 막은 자리다.** 이 조건은 `reaction IS NOT NULL`
+ *    하나였는데, 0023이 `unasked`를 만들자 **그 발동들이 자동으로 여기 들어왔다** —
+ *    반응할 자리가 없었던 발동에 *"결과가 어땠나요?"* 를 묻게 되고, 40일치가 한꺼번에 온다.
+ *    ★ **그건 이 티켓이 없애려는 것과 같은 모양이다**: 안 물어봐 놓고 답을 요구한다.
+ *    NULL을 빼는 이유(아직 반응이 안 왔다)와 **다른 이유로** `unasked`를 뺀다 —
+ *    이쪽은 *"영영 안 올 것을 안다"* 이고, 그래서 조건이 둘이다.
  */
 export const guardEventsPendingOutcome = (env: Env) =>
   q(env, `SELECT g.*, e.title AS event_title, e.date AS event_date,
                  (SELECT COUNT(*) FROM guard_events l
                    WHERE l.on_date = g.on_date AND l.fired_at > g.fired_at) AS later_fires
           FROM guard_events g LEFT JOIN events e ON e.id = g.event_id
-          WHERE g.outcome IS NULL AND g.reaction IS NOT NULL
+          WHERE g.outcome IS NULL AND g.reaction IS NOT NULL AND g.reaction != 'unasked'
           ORDER BY g.fired_at DESC LIMIT 20`)
     .all<GuardEventRow & {
       event_title: string | null; event_date: string | null; later_fires: number;
@@ -830,12 +860,19 @@ export const guardEventsPendingOutcome = (env: Env) =>
  *
  * `level`·`ai_verdict`는 **고르지 않는다.** 사용자에게 Level 3/4는 뜻이 없고 `approve`·`deny`는
  * T-38이 관측용으로 만든 것이다 — 화면에 낼 수 없는 값은 애초에 응답에 안 싣는다.
+ *
+ * ★ **`ignored`와 `unasked`를 한 칸에 합치지 않는다** (T-70). 합치면 `ignored`가 옛 뜻
+ *   (*"물었는데 안 했다"* + *"안 물었다"*)으로 되돌아가고, **그게 이 티켓의 결함 그 자체다.**
+ *   ⚠️ 합이 `fired`가 아니다 — 나머지는 `accepted`·`override`·아직 NULL이다.
  */
 export const guardDayTally = (env: Env, onDate: string) =>
   q(env, `SELECT COUNT(*) AS fired, MAX(fired_at) AS last_at,
-                 SUM(CASE WHEN reaction = 'ignored' THEN 1 ELSE 0 END) AS ignored
+                 SUM(CASE WHEN reaction = 'ignored' THEN 1 ELSE 0 END) AS ignored,
+                 SUM(CASE WHEN reaction = 'unasked' THEN 1 ELSE 0 END) AS unasked
             FROM guard_events WHERE on_date = ?`)
-    .bind(onDate).first<{ fired: number; last_at: string | null; ignored: number | null }>();
+    .bind(onDate).first<{
+      fired: number; last_at: string | null; ignored: number | null; unasked: number | null;
+    }>();
 
 /**
  * 감지 경로 Level 2의 최근 반응 — **연속 무시를 세는 재료** (T-60 · ADR-047 ③).

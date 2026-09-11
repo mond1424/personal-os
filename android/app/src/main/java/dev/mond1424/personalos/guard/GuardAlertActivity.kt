@@ -100,6 +100,14 @@ class GuardAlertActivity : Activity() {
         notifId = intent.getIntExtra(EX_NOTIF_ID, -1)
         clientId = intent.getStringExtra(EX_CLIENT_ID)
 
+        // ★ **반응 버튼이 사용자 앞에 섰다** (T-70 · 0023). 이 화면이 그 버튼을 가졌고,
+        //   그래서 **이 화면이 그 사실의 주인이다** — `fire()`가 예측해서 쓰지 않는다.
+        //   여기까지 오는 길이 셋이고(직접 startActivity · 잠긴 화면의 FSI · 알림 탭)
+        //   뒤의 둘은 발동 시점에 알 수 없다. 어느 길로 왔든 `onCreate`는 지난다.
+        //   ⚠️ 이 줄이 없으면 반응 없이 닫힌 L3 발동이 `unasked`로 새어, **진짜 무시가
+        //      안 세어진다** — 이 티켓이 고치려던 것의 정반대다.
+        clientId?.let { runCatching { GuardEventQueue.markAsked(this, it) } }
+
         findViewById<TextView>(R.id.guard_level).text = "LEVEL $level"
         findViewById<TextView>(R.id.guard_title).text = intent.getStringExtra(EX_TITLE) ?: "Guard"
         findViewById<TextView>(R.id.guard_body).text = intent.getStringExtra(EX_BODY) ?: ""

@@ -77,7 +77,34 @@ const settingsMap = async (env: Env): Promise<Record<string, string>> =>
   Object.fromEntries((await db.settingsAll(env)).results.map((r) => [r.key, r.value]));
 
 const LEVELS = [1, 2, 3, 4];
+/**
+ * 기기가 **보낼 수 있는** 반응. ⚠️ `'unasked'`는 여기 없고, 없는 것이 계약이다 —
+ * 그건 반응이 아니라 서버의 사후 판정이고, 쓰는 곳은 `finalizeIgnored` 하나다(T-70 · 0023).
+ * 넣으면 기기가 자기 발동을 *"안 물었다"* 로 선언할 수 있게 된다.
+ */
 const REACTIONS = ["accepted", "override", "ignored"];
+
+/**
+ * 물었다고 볼 수 없는 발동 (T-70 · ADR-047 §정정).
+ *
+ * ★ **뜻을 못 박는다: *"안 물었다(또는 물었는지 모른다)"* 이지 *"안 했다"* 가 아니다.**
+ * 40일치 `ignored`가 이 값이었어야 했다 — L2 알림엔 `addAction`이 없어 반응 버튼이
+ * 사용자 앞에 선 적이 없는데, 유예가 지나자 cron이 그것을 *"무시했다"* 로 박았다.
+ * 그 수가 나그 카드를 띄웠고, 사용자가 껐고, 켤 자리가 없어 T-63이 났다.
+ */
+const UNASKED = "unasked";
+
+/**
+ * **반응 버튼이 사용자 앞에 있었는가.** 알림이 떴는가가 아니다(0023 ①).
+ *
+ * ⚠️ **`asked == null`은 `false`로 읽는다 — 그런데 뜻이 다르다.**
+ *   `0`   기기가 세었고, 없었다
+ *   NULL  ★ 이 발동을 올린 층이 안 셌다(옛 APK) — **모른다**
+ * 둘 다 `ignored`로 **확정하지 않는다**: 확정은 *"물었는데 안 했다"* 라는 주장이고,
+ * 모르는 것을 그렇게 적는 것이 이 티켓이 없애는 결함이다. 갈라 두는 자리는 `asked` 칸이다 —
+ * 값이 비었으면 옛 뜻, 있으면 새 뜻(티켓 ④의 경계가 날짜가 아니라 칸인 이유).
+ */
+const wasAsked = (row: { asked: 0 | 1 | null }) => row.asked === 1;
 
 /**
  * `ai_verdict='unavailable'`의 **이유** — 닫힌 목록 (T-31 · 0016).
@@ -149,6 +176,21 @@ const aiAmendOf = (input: any) => {
   };
   return a.ai_used || a.ai_verdict || a.ai_unavailable_reason || a.ai_reason ? a : null;
 };
+
+/**
+ * 기기가 보낸 **반응 버튼이 앞에 있었는가** (T-70 · 0023). 알림이 떴는가가 아니다.
+ *
+ * ⚠️ **키가 없으면 `null`이고, `null`은 `0`이 아니다.** `false`로 접으면 옛 APK가 올린
+ *    행이 *"반응 자리가 없었다"* 로 **단언**되고, 그 순간 이 칸이 경계 노릇을 못 한다
+ *    (티켓 ④가 날짜 대신 이 칸을 경계로 삼은 이유 — 0023 ①).
+ *    `ai_unavailable_reason`·`ai_reason`이 *"옛 APK가 이 키 없이 올리는 행이 살아야 한다"*
+ *    고 한 것과 같은 자리이고, 여기는 **살리는 것만으로 모자라 구별까지** 해야 한다.
+ *
+ * ⚠️ 참/거짓이 아닌 값(문자열·숫자·객체)도 `null`이다 — *"모른다"* 가 사실이다.
+ *    `Boolean(x)`로 접으면 `"false"`·`0`이 서로 다른 답을 내고 아무도 그것을 못 센다.
+ */
+const askedOf = (input: any): 0 | 1 | null =>
+  input?.asked === true ? 1 : input?.asked === false ? 0 : null;
 
 // Override 사유에 **길이 하한을 두지 않는다.**
 // 20자 규칙을 뒀다가 실사용에서 마찰이 아니라 강제로 읽혀 걷어냈다 —
@@ -438,6 +480,15 @@ const DEFAULT_L2_NAG = 3;
  *    (기기가 오프라인이면 발동과 반응을 함께 늦게 올린다 — ADR-023) 어젯밤 발동은 오늘
  *    구조적으로 NULL이다. NULL이 끊으면 이 값은 **영원히 0에 가깝고 카드가 한 번도 안 뜬다** —
  *    `daily.ts`가 `ignored`를 문장으로 말하지 않기로 한 것과 같은 자리다.
+ *
+ * ⚠️⚠️ **`unasked`도 세지도 끊지도 않는다** (T-70). NULL과 **같은 이유**다 — 둘 다
+ *    *"사용자가 무엇을 했는지 모른다"* 이고, 이 카드가 세는 것은 *"물었는데 안 했다"* 다.
+ *    ★ **끊게 하면 더 나쁘다**: 반응하지 않은 발동이 연속을 끊게 되어, 이 카드는
+ *      *"사용자가 응답했다"* 를 근거로 침묵하게 된다 — 아무도 응답한 적이 없는데.
+ *
+ * ★ **이 카드가 다시는 안 뜰 수 있다. 그것이 옳다.** 지금 임계를 넘긴 것은 40일치
+ *   **거짓 `ignored`** 였고(ADR-047 §정정), 그 수가 사용자에게 *"꺼 둘까요?"* 를 권했다.
+ *   L2에 반응할 자리가 생기기 전까지(T-71) 이 값이 0에 머무는 것은 결함이 아니라 사실이다.
  */
 export async function l2Nag(env: Env) {
   const [rows, settings] = await Promise.all([
@@ -449,6 +500,7 @@ export async function l2Nag(env: Env) {
   let streak = 0;
   for (const r of rows.results) {
     if (r.reaction === null) continue;          // 아직 확정 전 — 모른다는 뜻이다
+    if (r.reaction === UNASKED) continue;       // ★ 물어본 적이 없다 — 모른다는 뜻이다 (T-70)
     if (r.reaction !== "ignored") break;        // 한 번이라도 응답했으면 연속이 끊긴다
     streak++;
   }
@@ -606,6 +658,12 @@ export async function record(env: Env, t: TimeCtx, input: any) {
       // 전엔 여기서 `reaction`만 봐서, 기기를 고쳐도 판정이 서버에 안 실렸다.
       const amend = aiAmendOf(input);
       if (amend) await db.stAmendGuardAi(env, dup.id, amend).run();
+      // ★ **`asked`도 뒤늦게 온다** (T-70). 발동 시점에는 알 수 없는 경로가 둘 있다:
+      //   잠긴 화면의 FSI가 개입 화면을 띄우는 밤과, 사용자가 알림을 탭해 여는 밤.
+      //   둘 다 `GuardAlertActivity`가 뜬 뒤에야 사실이 되므로 기기가 따로 올린다
+      //   (`amendFire`·`recordReaction`이 이미 간 길 — 새 패턴을 만들지 않는다).
+      //   **올리기만 한다**: `stMarkGuardAsked`가 `MAX`라 1을 0으로 되돌릴 수 없다.
+      if (askedOf(input) === 1) await db.stMarkGuardAsked(env, dup.id).run();
       return { id: dup.id, on_date: dup.on_date, level: dup.level, mode: dup.mode, duplicate: true };
     }
   }
@@ -661,6 +719,9 @@ export async function record(env: Env, t: TimeCtx, input: any) {
     event_id: input.event_id ?? null,
     client_id: clientId,
     created_at: t.now,
+    // 반응 버튼이 앞에 있었는가 (T-70). **안 보낸 기기는 `null`이고 그것이 경계다** —
+    // 0016·0017이 *"옛 APK가 이 키 없이 올리는 행이 살아야 한다"* 고 한 자리와 같다.
+    asked: askedOf(input),
   }).run();
 
   // 기기가 발동과 반응을 한 번에 올리는 경우(오프라인에서 둘 다 일어난 뒤 나중에 동기화).
@@ -743,12 +804,19 @@ export async function finalizeIgnored(env: Env, t: TimeCtx) {
   // fired_at은 동일 오프셋 ISO다 — 문자열 비교로 순서가 보존된다.
   const cutoff = isoNow(Date.parse(t.now) - GRACE_H * 3_600_000, t.offsetMin);
   const stale = await db.guardEventsUnreacted(env, cutoff);
+  let ignored = 0, unasked = 0;
   for (const row of stale.results) {
+    // ★ **가르는 것은 레벨이 아니라 `asked`다** (T-70). 티켓 ①이 못 박은 자리다:
+    //   `level == 2`는 *지금 우연히 맞는* 대응이고, T-71이 L2에 반응 자리를 주는
+    //   순간 거짓이 된다 — 그리고 **그 APK가 언제 깔렸는지는 이 층이 모른다.**
+    //   `asked`는 발동과 함께 오므로 그 물음이 아예 안 생긴다.
+    const reaction = wasAsked(row) ? "ignored" : UNASKED;
+    if (reaction === "ignored") ignored++; else unasked++;
     // 트리거가 이미 반응이 있으면 거부한다. WHERE reaction IS NULL이 먼저 걸러
     // 경합(같은 순간 기기가 올린 반응)에서도 조용히 지나간다.
-    await db.stReactGuardEvent(env, row.id, "ignored", null, t.now).run();
+    await db.stReactGuardEvent(env, row.id, reaction, null, t.now).run();
   }
-  return { ignored: stale.results.length, cutoff };
+  return { ignored, unasked, cutoff };
 }
 
 // ── Level 4 AI 검증 (ADR-024) ────────────────────────────────

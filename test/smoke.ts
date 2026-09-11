@@ -4,6 +4,7 @@
  * 재배정 → 자동 마감(Cron 경로) → 대기 연장.
  */
 import { readFileSync, readdirSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";   // T-70 — 0023의 표 재작성을 전수로 맞춰 본다
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import worker from "../src/index";
@@ -17,7 +18,7 @@ import type { Env } from "../src/types";
 import { makeD1, rawOf } from "./d1shim";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const schema = ["0001_init.sql", "0002_models.sql", "0003_ai_provider.sql", "0004_events.sql", "0005_delete_scope.sql", "0006_fix_model_high.sql", "0007_defer_reason.sql", "0008_cancel_task.sql", "0009_cancel_reason.sql", "0010_guard.sql", "0011_guard_sync.sql", "0012_life_model.sql", "0013_analysis_backfill.sql", "0014_schema_titles.sql", "0015_me_history_reason.sql", "0016_guard_unavailable_reason.sql", "0017_ai_reason.sql", "0018_collected_items.sql", "0019_guard_ai_immutable.sql", "0020_cal_sync.sql", "0021_timetable.sql", "0022_places.sql"]
+const schema = ["0001_init.sql", "0002_models.sql", "0003_ai_provider.sql", "0004_events.sql", "0005_delete_scope.sql", "0006_fix_model_high.sql", "0007_defer_reason.sql", "0008_cancel_task.sql", "0009_cancel_reason.sql", "0010_guard.sql", "0011_guard_sync.sql", "0012_life_model.sql", "0013_analysis_backfill.sql", "0014_schema_titles.sql", "0015_me_history_reason.sql", "0016_guard_unavailable_reason.sql", "0017_ai_reason.sql", "0018_collected_items.sql", "0019_guard_ai_immutable.sql", "0020_cal_sync.sql", "0021_timetable.sql", "0022_places.sql", "0023_guard_asked.sql"]
   .map((f) => readFileSync(join(here, "../migrations/" + f), "utf8")).join("\n");
 const env: Env = { DB: makeD1(schema) };
 const raw = rawOf(env.DB);
@@ -771,22 +772,35 @@ ok("fired_at·reacted_at이 로컬 오프셋 표기로 저장",
   !!utcRow && utcRow.fired_at === `${N1}T14:00:00+09:00` && utcRow.reacted_at === `${N1}T14:00:30+09:00`,
   `${utcRow?.fired_at} / ${utcRow?.reacted_at}`);
 
-// (7.6) 반응 없는 발동의 'ignored' 확정 (ADR-025 — 루프의 닫는 쪽)
+// (7.6) 반응 없는 발동의 확정 (ADR-025 — 루프의 닫는 쪽)
 // 유예 36시간: 기기가 오프라인이면 발동과 반응을 함께 늦게 올린다. 먼저 박으면 진짜 반응이 막힌다.
+//
+// ⚠️ **T-70 뒤로 이 절이 세는 것은 *"어떤 값이 되는가"* 가 아니다.** 확정은 이제
+//    `ignored`와 `unasked` 둘로 갈리고(반응 버튼이 앞에 있었는가), **그 갈림은 [T-70] 1·2가
+//    센다.** 여기 subject 는 ADR-025가 세운 것 그대로다 — *"무반응이 영원히 NULL로
+//    남지 않는다"*. 값까지 못 박으면 갈림을 흔드는 변이가 **이 절까지 끌고 죽어**
+//    어느 것이 깨졌는지 못 읽는다(AGENT-CHAIN §8).
 const oldFire = await api("POST", "/api/guard/events", {
   cause: "watch:bedtime", level: 2, client_id: "dev-uuid-old",
   fired_at: `${D_3}T02:00:00+09:00`,   // 사흘 전 — **유예 36시간을 확실히 넘긴 쪽**
 });
 const acG = await api("POST", "/api/admin/auto-close");
 const oldRow = ((await api("GET", "/api/guard/events")).json as any[]).find((r) => r.id === oldFire.json.id);
-ok("유예를 넘긴 무반응 발동 → ignored", !!oldRow && oldRow.reaction === "ignored", oldRow?.reaction);
-ok("auto-close가 확정 수를 보고", acG.json.guard_ignored >= 1, acG.json.guard_ignored);
+ok("유예를 넘긴 무반응 발동 → 확정된다 (NULL로 안 남는다)",
+  !!oldRow && oldRow.reaction !== null && oldRow.reacted_at !== null, oldRow?.reaction);
+ok("auto-close가 확정 수를 보고",
+  (acG.json.guard_ignored + acG.json.guard_unasked) >= 1,
+  `ignored=${acG.json.guard_ignored} unasked=${acG.json.guard_unasked}`);
 // 유예 안쪽(미래 fired_at)은 건드리지 않는다 — 늦게 도착할 반응의 자리를 비워 둔다
 const freshRow = ((await api("GET", "/api/guard/events")).json as any[]).find((r) => r.client_id === "dev-uuid-1");
 ok("유예 안쪽 발동은 NULL 유지", !!freshRow && freshRow.reaction === null, freshRow?.reaction);
 // 멱등 — 이미 ignored인 행을 두 번 건드려 409가 나면 안 된다
+// ⚠️ **둘 다 0이어야 한다** — T-70 뒤로는 확정이 두 값으로 갈리므로 `ignored`만 보면
+//    `unasked` 쪽 재확정이 그대로 새어 나간다.
+const acG2 = await api("POST", "/api/admin/auto-close");
 ok("재실행 시 같은 행을 다시 확정하지 않음",
-  (await api("POST", "/api/admin/auto-close")).json.guard_ignored === 0);
+  (acG2.json.guard_ignored + acG2.json.guard_unasked) === 0,
+  `ignored=${acG2.json.guard_ignored} unasked=${acG2.json.guard_unasked}`);
 
 // (7.7) 마감 요약이 읽는 개입 집계 (T-45) — `today`에 얹는다. 새 호출을 만들지 않는다.
 // **상대로 잰다**(before → after). 앞 블록들이 오늘 귀속으로 만든 행 수를 세어 두면
@@ -821,8 +835,11 @@ ok("④ ignored도 집계된다 (응답에만 — 문장에는 안 쓴다)",
   g45AfterIgn.ignored === g45AfterNow.ignored + 1 && g45AfterIgn.fired === g45AfterNow.fired + 1,
   `ignored ${g45AfterNow.ignored}→${g45AfterIgn.ignored}`);
 // ⑤ 화면에 낼 수 없는 값은 **응답에 아예 안 싣는다** — level·ai_verdict는 사용자에게 뜻이 없다.
-ok("⑤ 집계는 fired·last_at·ignored 셋뿐 — level·ai_verdict를 안 보낸다",
-  JSON.stringify(Object.keys(g45AfterIgn).sort()) === JSON.stringify(["fired", "ignored", "last_at"]),
+// ⚠️ **T-70이 `unasked`를 넷째로 더했다** — `ignored`에 접지 않는 것이 그 티켓의 본체다
+//    (접으면 이 칸이 *"물었는데 안 했다"+"안 물었다"* 라는 옛 뜻으로 되돌아간다).
+ok("⑤ 집계는 fired·last_at·ignored·unasked 넷뿐 — level·ai_verdict를 안 보낸다",
+  JSON.stringify(Object.keys(g45AfterIgn).sort())
+    === JSON.stringify(["fired", "ignored", "last_at", "unasked"]),
   JSON.stringify(Object.keys(g45AfterIgn)));
 
 // (7.8) 뒤에 또 깨어 있었으면 묻지 않아도 안다 (T-56 · ADR-044)
@@ -2858,6 +2875,282 @@ ok("★ 장소를 지우면 그곳의 전이도 함께 간다 (이름 없는 전
   plDel.status === 200 && plOrphans() === 0
   && !plDel.json.places.some((p: any) => p.net_id === NET_HOME),
   `남은행=${plOrphans()}`);
+
+/* ══════════════════════════════════════════════════════════════
+ * [T-70] 안 물은 것을 안 했다고 적지 않는다 (ADR-047 §정정 · 0023)
+ *
+ * 40일치 `ignored`가 관측이 아니었다. L2 알림엔 `addAction`이 없어 **반응 버튼이 사용자
+ * 앞에 선 적이 없는데**, 유예가 지나자 cron 이 그것을 *"무시했다"* 로 박았다. 그 수가
+ * 나그 카드를 띄웠고, 사용자가 껐고, 켤 자리가 없어 T-63이 났다.
+ *
+ * ★ **1이 본체이고 2가 짝이다** — *"전부 ignored"* 가 결함이었으므로 **안 되는 것과
+ *   되는 것이 둘 다** 세어져야 고쳐진 것이다. 하나만 두면 *"전부 건너뛴다"* 도 통과한다.
+ * ⚠️ **개수를 세지 않는다**(AGENT-CHAIN §8) — *"unasked 가 몇 건이냐"* 는 이웃 변이와
+ *    함께 움직인다. **그 발동 하나가 무엇이 됐는가**를 본다.
+ * ══════════════════════════════════════════════════════════════ */
+console.log("\n[T-70] 반응할 자리가 없던 발동은 ignored 가 아니다 (ADR-047 §정정)");
+
+/* fixture 날짜는 **상대로** 잡는다(함정 12). 유예(36시간)를 확실히 넘기려면 사흘 전이다 —
+ * `D_2`는 경계·시각에 따라 36시간에 가까워질 수 있고, 그 밤은 *언젠가 반드시 온다.* */
+const t70Fire = async (hm: string, cid: string, asked?: boolean) =>
+  api("POST", "/api/guard/events", {
+    cause: "watch:bedtime", level: 2, client_id: cid,
+    fired_at: `${D_3}T${hm}:00+09:00`,
+    ...(asked === undefined ? {} : { asked }),
+  });
+const t70Row = async (cid: string) =>
+  ((await api("GET", "/api/guard/events")).json as any[]).find((r) => r.client_id === cid);
+
+// 셋을 같은 밤에 세운다 — **같은 level·같은 cause다.** 가르는 것이 레벨이 아님을 이것이 센다.
+await t70Fire("03:00", "t70-noask", false);    // 기기가 세었고, 버튼이 앞에 없었다
+await t70Fire("03:10", "t70-asked", true);     // 기기가 세었고, 버튼이 앞에 있었다
+await t70Fire("03:20", "t70-legacy");          // 옛 APK — 키가 아예 없다
+await api("POST", "/api/admin/auto-close");
+const t70NoAsk = await t70Row("t70-noask");
+const t70Asked = await t70Row("t70-asked");
+const t70Legacy = await t70Row("t70-legacy");
+
+/* ⚠️ **`=== "unasked"`로 안 쓴다.** 그러면 *"값을 null 로 둔다"* 변이가 3과 함께 여기를
+ *   죽여, *"ignored 로 박혔다"* 와 *"아무것도 안 썼다"* 가 같아 보인다. 1이 세는 것은
+ *   **ignored 가 안 된다** 하나이고, *"그래서 무엇이 되는가"* 는 3의 몫이다. */
+ok("1 ★ 반응할 자리가 없던 발동은 유예가 지나도 ignored 가 안 된다",
+  !!t70NoAsk && t70NoAsk.reaction !== "ignored"
+  && !!t70Legacy && t70Legacy.reaction !== "ignored",
+  `없었다=${t70NoAsk?.reaction} 옛APK=${t70Legacy?.reaction}`);
+
+/* ★ 2는 1의 짝이자 회귀다. **level 도 cause 도 1과 같고 `asked` 만 다르다** —
+ *   그래서 *"L2를 통째로 건너뛰는 구현"*(= `level == 2`로 가르는 것)이 여기서 죽는다. */
+ok("2 ★ 반응할 자리가 있던 발동은 전과 같이 ignored 가 된다 (1의 짝 · 같은 level·cause)",
+  t70Asked?.reaction === "ignored" && t70Asked?.level === t70NoAsk?.level
+  && t70Asked?.cause === t70NoAsk?.cause,
+  `있었다=${t70Asked?.reaction} level=${t70Asked?.level}/${t70NoAsk?.level}`);
+
+/* 3 ★ **그 자리가 `null`이 아니다 — 뜻이 이름에 있다.**
+ *   `null`로 두면 *"아직 유예가 안 지났다"* 와 화면에서 같아 보인다(조용한 실패의 새 얼굴).
+ *   ⚠️ **값만 보면 모자란다** — 이름 없는 값은 화면에 **키가 날것으로** 뜬다(티켓 ③ 넷째).
+ *      그래서 `public/app.js`의 라벨까지 함께 센다. */
+const t70AppJs = readFileSync(join(here, "../public/app.js"), "utf8");
+const t70LabelLine = t70AppJs.match(/reaction === "unasked"\) return "([^"]+)"/);
+const t70Label = t70LabelLine?.[1] ?? "";
+/* ★ **뜻을 못 박는다: "안 물었다"이지 "안 했다"가 아니다.** 라벨이 사용자를 주어로 만들면
+ *   이 티켓이 없앤 그 문장이 화면에 그대로 돌아온다 — *"무반응"* 은 `ignored`의 몫이다. */
+const t70SaysNotDone = /무반응|무시|안 ?했|지나침|넘김/.test(t70Label);
+ok("3 ★ 그 자리에 값이 있다 (null 이 아니다) · 이름이 뜻을 말한다 — 화면 라벨까지",
+  t70NoAsk?.reaction != null && t70NoAsk?.reacted_at != null
+  && t70Label.length > 0 && !t70SaysNotDone,
+  `값=${t70NoAsk?.reaction} 라벨="${t70Label}" 안했다체=${t70SaysNotDone}`);
+
+/* 4 ★ **이 수를 세는 곳 넷이 함께 움직인다.** 하나라도 놓치면 한 화면은 옛 뜻으로,
+ *   다른 화면은 새 뜻으로 말한다. **자리를 센다** — 그 발동 하나가 각 자리에서 무엇이 됐나.
+ *
+ *   ① guardDayTally        ignored 와 unasked 가 갈려 있다
+ *   ② l2Nag                unasked 는 세지도 끊지도 않는다 (NULL 과 같은 이유)
+ *   ③ pendingOutcome       ⚠️ unasked 는 "결과가 어땠나요?"에 안 들어간다
+ *   ④ app.js 라벨          위 3이 센다
+ *
+ * ⚠️ **1·2의 fixture 를 안 쓴다.** 저쪽 값은 `finalizeIgnored`의 갈림이 정하므로, 그 갈림을
+ *    흔드는 변이가 **여기까지 끌고 죽는다** — 그러면 *"집계가 깨졌다"* 와 *"갈림이 깨졌다"* 가
+ *    화면에서 같아 보인다(AGENT-CHAIN §8 · T-64·T-67·T-68이 세 번 물린 그 모양).
+ *    ★ 여기 fixture 는 **값을 직접 세워** 집계만 본다. */
+const t70Night = addDays(
+  (raw.prepare("SELECT MAX(fired_at) AS m FROM guard_events").get() as any).m.slice(0, 10), 2);
+const t70NagBefore = (await api("GET", "/api/guard/l2-nag")).json;
+await api("POST", "/api/guard/events", {
+  cause: "watch:bedtime", level: 2, client_id: "t70-nag-u",
+  fired_at: `${t70Night}T22:00:00+09:00`,
+});
+// 기기가 보낼 수 없는 값이라(아래 6) 서버가 쓰는 그 자리를 직접 만든다 — NULL → 값은 열려 있다.
+raw.prepare("UPDATE guard_events SET reaction='unasked', reacted_at=? WHERE client_id='t70-nag-u'")
+  .run(`${t70Night}T23:00:00+09:00`);
+const t70NagAfterU = (await api("GET", "/api/guard/l2-nag")).json;
+await api("POST", "/api/guard/events", {
+  cause: "watch:bedtime", level: 2, client_id: "t70-nag-i",
+  fired_at: `${t70Night}T22:10:00+09:00`, reaction: "ignored",
+  reacted_at: `${t70Night}T22:10:30+09:00`,
+});
+const t70NagAfterI = (await api("GET", "/api/guard/l2-nag")).json;
+/* ② unasked 로는 안 움직이고(세지 않는다), 그 **뒤에** 온 ignored 는 앞의 연속에 이어진다
+ *   (끊지 않았다). ⚠️ 끊게 하면 더 나쁘다: 아무도 응답한 적이 없는데 카드가
+ *   *"응답했다"* 를 근거로 침묵한다. */
+const t70NagOk = t70NagAfterU.streak === t70NagBefore.streak
+  && t70NagAfterI.streak === t70NagBefore.streak + 1;
+
+/* ① 같은 밤 같은 level·cause 인데 **한 칸에 안 뭉친다.** 뭉치면 `ignored`가 옛 뜻으로 돌아간다.
+ *   ⚠️ **SQL을 여기서 다시 쓰지 않는다** — 구현 함수를 그대로 부른다. 검사가 자기 SQL로
+ *      세면 `guardDayTally`가 무엇을 세든 초록이다(함정 15의 사촌 · 실제로 한 번 그랬다). */
+const t70Tally = (await db.guardDayTally(env, t70Night))!;
+const t70Today = (raw.prepare("SELECT on_date AS d FROM guard_events WHERE client_id='t70-nag-u'")
+  .get() as any).d;
+const t70Split = t70Tally.ignored === 1 && t70Tally.unasked === 1 && t70Today === t70Night;
+
+/* ③ **이것이 제일 조용한 자리다.** `reaction IS NOT NULL` 하나였던 조건에 `unasked`가
+ *   자동으로 걸려, 반응할 자리가 없던 발동에 *"결과가 어땠나요?"* 를 묻게 된다 —
+ *   ★ 안 물어봐 놓고 답을 요구하는 것이라 **이 티켓이 없애려는 것과 같은 모양**이다. */
+const t70PendIds = ((await api("GET", "/api/guard/pending-outcome")).json as any[])
+  .map((r) => r.client_id);
+const t70PendOk = !t70PendIds.includes("t70-nag-u") && t70PendIds.includes("t70-nag-i");
+
+ok("4 ★ 세는 곳 넷이 새 뜻으로 센다 (집계 갈림 · 나그 · 결과 카드 · 라벨)",
+  t70Split && t70PendOk && t70NagOk,
+  `집계 i=${t70Tally.ignored}/u=${t70Tally.unasked} 결과카드=${t70PendOk}`
+  + ` 나그 ${t70NagBefore.streak}→${t70NagAfterU.streak}→${t70NagAfterI.streak}`);
+
+/* 4b ★ **4의 스캐너 절반** — ③은 `pendingOutcome` 하나를 봤다. 같은 모양의 조건이
+ *   나중에 다른 곳에 생기면 그 자리는 아무도 안 센다. **`reaction IS NOT NULL`을
+ *   쓰는 문장은 전부 `unasked`를 함께 말해야 한다**(빼든 넣든, 판단을 적은 것이어야 한다).
+ *   ⚠️ **지금 있는 그 한 곳을 흔들면 4와 함께 죽는다 — 필연이다**(자리가 하나뿐이라 그렇다).
+ *      이 검사가 단독으로 사는 것은 **새 자리가 생겼을 때**이고, 그게 이것을 둔 이유다:
+ *      눈먼 문장을 하나 더하면 **4b만** 빨간불이 된다(실측으로 확인했다). */
+const t70DbSrc = readFileSync(join(here, "../src/db/index.ts"), "utf8")
+  .replace(/\/\*[\s\S]*?\*\//g, " ").replace(/(^|[^:])\/\/[^\n]*/g, "$1");
+const t70NotNullStmts = t70DbSrc.split(/(?=\bexport const\b)/)
+  .filter((s) => /reaction IS NOT NULL/.test(s));
+const t70Blind = t70NotNullStmts.filter((s) => !/unasked/.test(s));
+ok("4b ★ `reaction IS NOT NULL`을 쓰는 곳이 전부 unasked 를 판단한다 (4의 스캐너)",
+  t70NotNullStmts.length >= 1 && t70Blind.length === 0,
+  `문장=${t70NotNullStmts.length} 눈먼곳=${t70Blind.length}`);
+
+/* 5 ★ **과거 행이 안 바뀐다.** 이력은 사실의 기록이지 정돈의 대상이 아니다 —
+ *   40일치 거짓 `ignored`도 **그대로 둔다**(티켓 ④). 경계는 날짜가 아니라 `asked` 칸이다.
+ *   ⚠️ `asked` 도 같은 모양으로 지킨다: **한 번 앞에 섰으면 선 것이다**(1 → 0 금지).
+ *
+ * ⚠️ **4와 같은 이유로 1·2의 fixture 를 안 쓴다** — 저 값은 갈림이 정하고, 갈림이 흔들리면
+ *    *"덮어쓰기가 뚫렸다"* 와 *"갈림이 깨졌다"* 가 여기서 같아 보인다. 값을 직접 세운다.
+ *    ⚠️ **`ignored` 쪽을 `unasked`로 밀어 본다** — 같은 값으로 다시 쓰는 것은 트리거가
+ *       원래 통과시키므로(T-50 ③) **다른 값이라야 거부가 뜻을 갖는다.** */
+const t70ImmI = (raw.prepare("SELECT id AS i FROM guard_events WHERE client_id='t70-nag-i'")
+  .get() as any).i as string;
+const t70ImmU = (raw.prepare("SELECT id AS i FROM guard_events WHERE client_id='t70-nag-u'")
+  .get() as any).i as string;
+await api("POST", "/api/guard/events", {
+  cause: "watch:bedtime", level: 2, client_id: "t70-imm",
+  fired_at: `${t70Night}T22:20:00+09:00`, asked: true,
+});
+const t70ImmA = (raw.prepare("SELECT id AS i FROM guard_events WHERE client_id='t70-imm'")
+  .get() as any).i as string;
+const t70Keeps = t50Blocked("UPDATE guard_events SET reaction='unasked' WHERE id=?", t70ImmI)
+  && t50Blocked("UPDATE guard_events SET reaction='ignored' WHERE id=?", t70ImmU)
+  && t50Blocked("UPDATE guard_events SET asked=0 WHERE id=?", t70ImmA)
+  && t50Blocked("UPDATE guard_events SET asked=NULL WHERE id=?", t70ImmA);
+// 짝 — **채우는 것 자체는 통과해야** 위 거부가 뜻을 가진다(T-50 ⑤와 같은 모양).
+const t70Fills = !t50Blocked("UPDATE guard_events SET asked=1 WHERE id=?", t70ImmU);
+ok("5 ★ 확정된 뜻과 asked 는 되돌릴 수 없다 · 0 → 1 은 열려 있다 (이력은 고치지 않는다)",
+  t70Keeps && t70Fills, `막음=${t70Keeps} 채움=${t70Fills}`);
+
+/* 6 ★ **사용자가 실제로 반응하면 그 값이 이긴다** — 자동 판정이 덮지 않는다.
+ *   ⚠️ 그리고 그 **반대 방향**도 막는다: `unasked`는 서버의 사후 판정이지 반응이 아니라서
+ *      기기가 보낼 수 없다. 보낼 수 있으면 기기가 자기 발동을 *"안 물었다"* 로 선언한다.
+ *
+ * ⚠️ **앞 절반은 단독 변이로 못 죽인다 — 못 찾은 것이 아니라 증명이다**(T-65가 쓴 그 구별).
+ *    방어가 셋이고 서로 독립이다: ① `guardEventsUnreacted`의 `reaction IS NULL`
+ *    ② `stReactGuardEvent`의 `WHERE ... AND reaction IS NULL` ③ 0023 트리거.
+ *    하나를 빼도 나머지 둘이 막으므로 값이 안 움직인다(①을 빼면 **멱등 검사**가,
+ *    ③을 빼면 **5**가 대신 빨간불이 된다). 뒷 절반(400)이 이 검사의 단독 자리다. */
+await t70Fire("03:30", "t70-real", false);      // 자리는 없었다고 왔는데
+await api("POST", "/api/guard/events", {        // 사용자가 실제로 눌렀다 (늦게 도착)
+  client_id: "t70-real", reaction: "accepted", reacted_at: `${D_3}T03:31:00+09:00`,
+});
+await api("POST", "/api/admin/auto-close");
+const t70Real = await t70Row("t70-real");
+const t70DeviceSaysUnasked = await api("POST", "/api/guard/events", {
+  cause: "watch:bedtime", level: 2, client_id: "t70-spoof",
+  fired_at: `${D_3}T03:40:00+09:00`, reaction: "unasked",
+});
+ok("6 ★ 사용자 반응이 이긴다 (자동 판정이 안 덮는다) · 기기는 unasked 를 못 보낸다",
+  t70Real?.reaction === "accepted" && t70DeviceSaysUnasked.status === 400,
+  `실제반응=${t70Real?.reaction} 기기선언=${t70DeviceSaysUnasked.status}`);
+
+/* 7 ★ **0023의 표 재작성이 아무것도 안 잃었다.**
+ *   `reaction` CHECK 는 SQLite 에서 바꿀 수 없어 0010처럼 표를 다시 썼는데, **그때는 행이
+ *   없었고 지금은 40일치가 있다.** 옮긴 정의를 눈으로 맞추면 한 줄이 조용히 사라진다
+ *   (0019가 트리거에 대해 적어 둔 그 경고). **전수로 비교한다** — 0022까지의 스키마와
+ *   0023까지의 스키마를 각각 만들어 컬럼·인덱스·트리거·FK 를 맞춰 보고, **차이가
+ *   의도한 셋뿐**임을 센다. 앞의 검사들은 전부 0023 스키마 위에서 도는 것이라 **무엇이
+ *   사라졌는지는 아무도 안 본다.** */
+const t70Build = (upTo: string) => {
+  const d = new DatabaseSync(":memory:");
+  for (const f of readdirSync(join(here, "../migrations")).filter((f) => f.endsWith(".sql")).sort()) {
+    if (f > upTo) break;
+    d.exec(readFileSync(join(here, "../migrations/" + f), "utf8"));
+  }
+  return {
+    cols: (d.prepare("SELECT * FROM pragma_table_info('guard_events')").all() as any[])
+      .map((c) => `${c.name}|${c.type}|${c.notnull}|${c.dflt_value}|${c.pk}`),
+    fks: (d.prepare("SELECT * FROM pragma_foreign_key_list('guard_events')").all() as any[])
+      .map((f) => `${f.from}->${f.table}.${f.to}`).sort(),
+    // 주석과 공백을 벗긴다 — 옮기면서 줄바꿈이 달라지는 것은 잃은 것이 아니다.
+    objs: Object.fromEntries((d.prepare(
+      "SELECT type||' '||name AS k, sql FROM sqlite_master WHERE tbl_name='guard_events' AND sql IS NOT NULL",
+    ).all() as any[]).map((r) => [r.k, String(r.sql).replace(/--[^\n]*/g, " ").replace(/\s+/g, " ").trim()])),
+  };
+};
+const t70Before22 = t70Build("0022_zzz");
+const t70After23 = t70Build("0023_zzz");   // ★ 0023 까지만 — 뒤의 마이그레이션이 이 등식을 깨면 안 된다
+const t70LostCols = t70Before22.cols.filter((c) => !t70After23.cols.includes(c));
+const t70OrderKept = JSON.stringify(t70Before22.cols)
+  === JSON.stringify(t70After23.cols.slice(0, t70Before22.cols.length));
+const t70LostObjs = Object.keys(t70Before22.objs).filter((k) => !(k in t70After23.objs));
+const t70LostFks = t70Before22.fks.filter((f) => !t70After23.fks.includes(f));
+/* 달라진 객체는 **둘뿐이고**, 달라진 내용은 **여기 적은 셋뿐**이다.
+ * ★ 구현에서 베껴 오는 것이 아니라 **의도한 차이를 선언**하는 것이다 — 나머지 800자는
+ *   손으로 옮긴 것이라 **거기가 위험한 자리**이고, 그 전부를 이 등식이 지킨다. */
+const t70Changed = Object.keys(t70Before22.objs)
+  .filter((k) => k in t70After23.objs && t70Before22.objs[k] !== t70After23.objs[k]);
+const t70Intended: Record<string, string> = {
+  "table guard_events": t70Before22.objs["table guard_events"]
+    .replace("'ignored'))", "'ignored','unasked'))")                          // ② CHECK 를 넓혔다
+    .replace("ai_reason TEXT,", "ai_reason TEXT, asked INTEGER CHECK (asked IN (0,1)),"), // ① 새 칸
+  "trigger trg_guard_event_immutable": t70Before22.objs["trigger trg_guard_event_immutable"]
+    .replace("!= OLD.ai_reason) BEGIN",                                       // ① 을 지키는 한 줄
+      "!= OLD.ai_reason) OR (IFNULL(OLD.asked,0) != 0 AND IFNULL(NEW.asked,-1) != OLD.asked) BEGIN"),
+};
+const t70ChangeOk = t70Changed.length === 2
+  && t70Changed.every((k) => t70Intended[k] === t70After23.objs[k]);
+ok("7 ★ 0023의 표 재작성이 아무것도 안 잃었다 — 컬럼·FK·인덱스·트리거 전수 비교",
+  t70LostCols.length === 0 && t70OrderKept && t70LostObjs.length === 0
+  && t70LostFks.length === 0 && t70ChangeOk,
+  `잃은컬럼=${t70LostCols.length} 순서=${t70OrderKept} 잃은객체=${t70LostObjs.join(",") || "없음"}`
+  + ` 잃은FK=${t70LostFks.length} 달라진곳=${t70Changed.length}(${t70ChangeOk})`);
+
+/* 7b ★ **7의 짝 — 스캐너가 살아 있는가.** 7은 *"차이가 없다"* 를 세므로, 비교가 눈멀면
+ *   구현과 무관하게 초록이다(T-65가 센 그 모양). 일부러 하나를 빼고 잡히는지 본다. */
+const t70Blinded = { ...t70After23, objs: { ...t70After23.objs } };
+delete (t70Blinded.objs as any)["trigger trg_guard_event_nodelete"];
+const t70CatchesLoss = Object.keys(t70Before22.objs).some((k) => !(k in t70Blinded.objs));
+const t70CatchesCol = t70Before22.cols.filter((c) => !t70After23.cols.slice(1).includes(c)).length > 0;
+ok("7b ★ 7의 스캐너가 살아 있다 — 객체 하나·컬럼 하나를 빼면 잡는다",
+  t70CatchesLoss && t70CatchesCol, `객체=${t70CatchesLoss} 컬럼=${t70CatchesCol}`);
+
+/* 7c ★ **7의 나머지 절반 — 행이 그대로 건너오는가.**
+ *   7은 *모양*을 봤다. 0023은 표를 다시 쓰므로 **값도 옮겨진다**: `INSERT … SELECT` 의
+ *   컬럼 목록이 한 칸이라도 어긋나면 40일치가 조용히 밀린다.
+ *   ⚠️ **로컬 dev DB로는 이걸 못 잰다** — 거기 `guard_events`가 비어 있다. 값이 있는 것은
+ *      원격뿐이고, 원격 적용은 **되돌릴 수 없는 단 한 번**이다. 그래서 여기서 미리 태운다:
+ *      0022까지의 표에 **모든 칸을 채운 행**을 넣고, 0023을 적용하고, 전수로 맞춰 본다. */
+const t70RowCopy = (() => {
+  const d = new DatabaseSync(":memory:");
+  const migs = readdirSync(join(here, "../migrations")).filter((f) => f.endsWith(".sql")).sort();
+  for (const f of migs) { if (f > "0022_zzz") break; d.exec(readFileSync(join(here, "../migrations/" + f), "utf8")); }
+  // ★ 컬럼 목록을 **표에서 읽어** 채운다 — 손으로 적으면 새 칸이 생겼을 때 이 검사가 눈먼다.
+  const cols = (d.prepare("SELECT * FROM pragma_table_info('guard_events')").all() as any[])
+    .map((c) => String(c.name));
+  const val = (n: string) => n === "level" ? 2 : n === "ai_used" ? 1
+    : n === "risk_score" ? 77 : n === "source" ? "'android'"
+    : n === "ai_verdict" ? "'deny'" : n === "ai_unavailable_reason" ? "'cap'"
+    : n === "reaction" ? "'ignored'" : n === "override_class" ? "'avoidant'"
+    : n === "outcome" ? "'failure'"
+    : /_id$/.test(n) && n !== "client_id" ? "NULL"      // FK — 상대 행을 안 만든다
+    : `'v:${n}'`;
+  d.exec(`INSERT INTO guard_events (${cols.join(",")}) VALUES (${cols.map(val).join(",")})`);
+  const before = d.prepare("SELECT * FROM guard_events").get() as Record<string, unknown>;
+  d.exec(readFileSync(join(here, "../migrations/0023_guard_asked.sql"), "utf8"));
+  const after = d.prepare("SELECT * FROM guard_events").get() as Record<string, unknown>;
+  const moved = cols.filter((c) => String(before[c]) !== String(after[c]));
+  return { n: cols.length, moved, asked: "asked" in after ? after.asked : "칸이 없다", rows: d.prepare("SELECT COUNT(*) AS n FROM guard_events").get() as any };
+})();
+ok("7c ★ 표를 다시 써도 행이 그대로 건너온다 — 모든 칸 전수 비교 · 옛 행의 asked 는 NULL",
+  t70RowCopy.rows.n === 1 && t70RowCopy.moved.length === 0 && t70RowCopy.asked === null,
+  `칸=${t70RowCopy.n} 밀린칸=${t70RowCopy.moved.join(",") || "없음"} asked=${t70RowCopy.asked}`);
 
 // ── 결과 ─────────────────────────────────────────────────────
 console.log(`\n${"=".repeat(46)}\n통과 ${passN} · 실패 ${fails.length}`);

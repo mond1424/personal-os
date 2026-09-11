@@ -72,9 +72,44 @@ object GuardEventQueue {
             .put("event_id", eventId ?: JSONObject.NULL)
             .put("foreground_app", foregroundApp ?: JSONObject.NULL)
             .put("mode", JSONObject.NULL)          // 서버가 활성 모드로 채운다
+            // ★ **반응 버튼이 사용자 앞에 있었는가** (T-70 · 0023). *"알림이 떴는가"* 가 아니다.
+            //   발동 시점에는 아직 아무 버튼도 앞에 없다 — 그래서 `false`로 시작하고,
+            //   **버튼을 가진 화면이 직접 `markAsked`로 뒤집는다**(아래).
+            //   ⚠️ 옛 서버는 이 키를 그냥 무시한다 — APK를 먼저 깔아도 안전하다.
+            .put("asked", false)
         if (riskSnapshot != null) o.put("risk_snapshot", riskSnapshot)
         write(ctx, read(ctx) + o)
         return clientId
+    }
+
+    /**
+     * **반응 버튼이 사용자 앞에 섰다** (T-70 · 0023).
+     *
+     * ★ **부르는 곳은 `GuardAlertActivity.onCreate` 하나다 — 버튼을 가진 화면 자신이다.**
+     *   `GuardNotifications.fire()`가 예측해서 쓰지 않는다. 그 자리의 `shown`은
+     *   *"내가 startActivity 를 성공했는가"* 라서 **두 경로를 놓친다**:
+     *     ① 잠긴 화면의 FSI — 시스템이 이 화면을 띄운다(`shown=false`인데 버튼은 앞에 있다)
+     *     ② 사용자가 알림을 탭해서 연 경우 — 발동보다 한참 뒤다
+     *   ⚠️ **그 둘을 놓치면 L3가 `unasked`로 새고**, 그러면 이 티켓이 고치려던 것과
+     *      정반대로 **진짜 무시가 안 세어진다**(티켓 검사 2).
+     *
+     * ⚠️ **T-71이 L2 알림에 반응 버튼을 달면 그 핸들러도 여기를 지나야 한다.**
+     *    자리가 늘어나는 곳과 이 값을 내는 곳이 **같아야** 이름과 세는 것이 안 갈라진다(함정 15).
+     *
+     * 이미 밀어 올려 큐에서 빠졌으면 **이것만 담은 항목을 새로 넣는다** —
+     * `recordReaction`·`amendFire`가 이미 간 길이고, 서버가 `client_id`로 찾아 올린다.
+     * 서버는 `MAX`로만 올리므로 두 번 와도, 순서가 뒤집혀도 같은 값이 된다.
+     */
+    fun markAsked(ctx: Context, clientId: String) {
+        val list = read(ctx)
+        val hit = list.firstOrNull { it.optString("client_id") == clientId }
+        if (hit != null) {
+            if (hit.optBoolean("asked", false)) return   // 이미 참 — 큐를 흔들지 않는다
+            hit.put("asked", true)
+            write(ctx, list)
+            return
+        }
+        write(ctx, list + JSONObject().put("client_id", clientId).put("asked", true))
     }
 
     /**

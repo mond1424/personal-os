@@ -1,6 +1,6 @@
 -- docs/schema-current.sql — 스키마 스냅샷 (자동 생성)
 -- migrations/ 전체를 인메모리 sqlite에 적용한 뒤 sqlite_master를 덤프한 것.
--- 최신 마이그레이션: 0022_places.sql  ·  갱신 2026-09-06
+-- 최신 마이그레이션: 0023_guard_asked.sql  ·  갱신 2026-09-11
 -- 0013·0014는 DDL을 바꾸지 않는다: 0013 = analyses backfill(트리거를 원문 그대로 복원) ·
 --   0014 = lm_schema.body에 title 얹기(UPDATE만).
 -- 0015 = me_history에 reason TEXT 추가(ADR-027 — 모드 하향 사유). ALTER라 컬럼이 표 끝에 붙는다.
@@ -46,12 +46,21 @@
 --   오는 것이 정상**이라, `logs`에 뒀으면 `logs_frozen_ins`가 삽입 자체를 막아 409로 죽었다(함정 6).
 --   ⚠️ place_visits.place_id는 ON DELETE CASCADE다 — 이름이 사라진 전이는 읽을 수 없는 기록이다.
 --   AUTOINCREMENT라 `sqlite_sequence`가 생기는데, sql이 NULL이라 이 덤프에는 안 실린다.
+-- 0023 = guard_events 재작성(T-70 · ADR-047 §정정 — 안 물은 것을 안 했다고 적지 않는다).
+--   ★ **표를 다시 쓴 것은 0010 이후 처음이다** — reaction CHECK에 'unasked'가 필요한데
+--   SQLite는 CHECK를 변경할 수 없다. 0010 때는 행이 없었고 **지금은 40일치가 있다.**
+--   그래서 정의를 sqlite_master에서 글자 그대로 옮기고 셋만 고쳤다(표 이름 · CHECK · asked).
+--   ⚠️ 컬럼 순서는 그대로이고 asked만 끝에 붙는다 — 옮긴 것과 옮겨진 것을 맞출 수 있어야 한다.
+--   ★ asked = **반응 버튼이 사용자 앞에 있었는가.** '알림이 떴는가'도 '화면이 떴는가'도 아니다.
+--   NULL = 이 발동을 올린 층이 그걸 안 셌다(옛 APK) — **"없었다"가 아니라 "모른다"**이고,
+--   그 구별이 ignored 의 옛 뜻과 새 뜻을 가르는 **경계다**(날짜가 아니라 칸이다).
+--   'unasked'는 기기가 못 보낸다 — applyReaction 의 입력 목록에 없고 finalizeIgnored 만 쓴다.
+--   ⚠️ 트리거의 asked 절은 ai_used 와 같은 모양이다: NULL→0·NULL→1·0→1은 되고 1→0은 안 된다.
 -- 손으로 고치지 않는다 — 마이그레이션을 추가하고 다시 덤프한다 (CLAUDE.md 세션 종료 규칙).
 
 -- ==========================================================
 -- 테이블
 -- ==========================================================
-
 CREATE TABLE analyses (
   id           TEXT PRIMARY KEY,     -- YYYYMMDD-NNN
   prompt       TEXT NOT NULL,
@@ -130,8 +139,11 @@ CREATE TABLE "guard_events" (
   ai_used         INTEGER NOT NULL DEFAULT 0,       -- model_high 호출 여부 (ADR-024)
   ai_verdict      TEXT CHECK (ai_verdict IN ('approve','deny','unavailable')),
 
-  reaction        TEXT CHECK (reaction IN ('accepted','override','ignored')),
+  reaction        TEXT CHECK (reaction IN ('accepted','override','ignored','unasked')),
                                                     -- NULL = 아직 반응 없음. 발동 시점엔 비어 있다
+                                                    -- 'unasked' = 물었다고 볼 수 없는 발동 (T-70 · 0023)
+                                                    --   ★ "안 했다"가 아니라 "안 물었다(또는 모른다)"다
+                                                    --   쓰는 곳은 finalizeIgnored 하나. 기기는 못 보낸다
   reacted_at      TEXT,
   override_reason TEXT,                             -- §6.3 마찰에서 타이핑한 한 문장
   override_class  TEXT CHECK (override_class IN ('avoidant','legitimate')),
@@ -159,6 +171,10 @@ CREATE TABLE "guard_events" (
     -- 2xx가 아닌 응답. 코드까지 남긴다 — 401(토큰 만료)과 503(과부하)의 대응이 다르다.
     OR ai_unavailable_reason GLOB 'http_[0-9][0-9][0-9]'
   ), ai_reason TEXT,
+
+  -- ★ T-70. **반응 버튼이 사용자 앞에 있었는가.** 알림이 떴는가가 아니다(위 ①).
+  --   NULL = 이 발동을 올린 층이 그걸 안 셌다(옛 APK) — "없었다"가 아니라 "모른다".
+  asked           INTEGER CHECK (asked IN (0,1)),
 
   CHECK (reaction != 'override' OR override_reason IS NOT NULL)   -- Override엔 사유 필수 (§6.3)
 );
@@ -355,7 +371,6 @@ CREATE TABLE watch_apps (
 -- ==========================================================
 -- 뷰
 -- ==========================================================
-
 CREATE VIEW v_period_achievement AS
 SELECT p.id, p.title, ROUND(AVG(s.current_rate), 1) AS achievement
 FROM periods p LEFT JOIN v_task_stats s
@@ -392,7 +407,6 @@ FROM tasks t;
 -- ==========================================================
 -- 인덱스
 -- ==========================================================
-
 CREATE INDEX idx_analyses_anchor ON analyses(anchor_type, anchor_id);
 
 CREATE INDEX idx_collected_state ON collected_items(state, starts_at);
@@ -441,7 +455,6 @@ CREATE INDEX idx_wait_ext_task ON wait_extensions(task_id, extended_at);
 -- ==========================================================
 -- 트리거
 -- ==========================================================
-
 CREATE TRIGGER trg_analyses_no_del BEFORE DELETE ON analyses
 BEGIN SELECT RAISE(ABORT, 'analysis는 영구 보존 — 삭제 불가'); END;
 
@@ -504,6 +517,11 @@ WHEN
   OR (OLD.ai_verdict            IS NOT NULL AND IFNULL(NEW.ai_verdict,'')            != OLD.ai_verdict)
   OR (OLD.ai_unavailable_reason IS NOT NULL AND IFNULL(NEW.ai_unavailable_reason,'') != OLD.ai_unavailable_reason)
   OR (OLD.ai_reason             IS NOT NULL AND IFNULL(NEW.ai_reason,'')             != OLD.ai_reason)
+  -- ── 여기부터 T-70이 더한 하나 ────────────────────────────
+  -- ★ `ai_used`와 **같은 모양이고 같은 이유다: 한 번 앞에 섰으면 선 것이다.**
+  --   NULL → 0 · NULL → 1 · 0 → 1 은 된다(기기가 뒤늦게 "그 화면이 떴다"를 올린다 — T-39의 자리).
+  --   1 → 0 · 1 → NULL 은 안 된다 — 되돌리면 물었던 발동이 안 물은 것이 된다.
+  OR (IFNULL(OLD.asked,0) != 0 AND IFNULL(NEW.asked,-1) != OLD.asked)
 BEGIN
   SELECT RAISE(ABORT, 'Guard 이벤트는 수정할 수 없음 — 사후 확정 필드만 한 번 채울 수 있음');
 END;

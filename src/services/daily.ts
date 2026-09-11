@@ -64,9 +64,17 @@ export async function assembleToday(env: Env, t: TimeCtx) {
      * 화면에서는 둘 다 침묵이지만(결정 ②) 응답에서는 갈라 둔다(T-43이 세운 자리).
      * `ignored`는 싣되 **문장으로 말하지 않는다**: `finalizeIgnored`의 유예가 36시간이라
      * 마감 시점엔 구조적으로 늘 0이고, 말하는 순간 주어가 사용자가 된다(결정 ①).
+     *
+     * ★ **`unasked`를 `ignored`에 접지 않는다** (T-70). 접으면 이 칸이 옛 뜻
+     *   (*"물었는데 안 했다"* + *"안 물었다"*)으로 되돌아가고, 그게 이 티켓의 결함이다.
+     *   말하지 않는 이유는 `ignored`와 같고(주어가 사용자가 된다), **세는 이유도 같다** —
+     *   응답에서 갈라 두지 않으면 12월에 그 둘을 한 표에서 세게 된다.
      */
     guard: guardTally
-      ? { fired: guardTally.fired, last_at: guardTally.last_at, ignored: guardTally.ignored ?? 0 }
+      ? {
+        fired: guardTally.fired, last_at: guardTally.last_at,
+        ignored: guardTally.ignored ?? 0, unasked: guardTally.unasked ?? 0,
+      }
       : null,
   };
 }

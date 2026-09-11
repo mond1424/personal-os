@@ -2709,6 +2709,9 @@ function guardReactionLabel(row) {
   if (row.reaction == null) return "아직 반응 없음";
   if (row.reaction === "accepted") return "수용";
   if (row.reaction === "ignored") return "무반응 확정";
+  // T-70 — **"안 했다"가 아니라 "안 물었다"다.** 반응 버튼이 사용자 앞에 선 적이 없는 발동이라
+  // `finalizeIgnored`가 `ignored` 대신 이것을 쓴다(0023). 라벨이 없으면 키가 날것으로 뜬다.
+  if (row.reaction === "unasked") return "물어보지 않음";
   if (row.reaction !== "override") return String(row.reaction);
   const klass = { avoidant: "회피", legitimate: "정당" }[row.override_class] || row.override_class;
   return ["Override", row.override_reason ? `“${row.override_reason}”` : "", klass || ""].filter(Boolean).join(" · ");
