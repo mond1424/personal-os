@@ -103,7 +103,9 @@ ok("빈 Log 400", (await api("POST", "/api/logs", { text: "  " })).status === 40
  * ⚠️ 아래 `Feelings 눈금`·`Score 7`이 이 절이 흔든 값을 원래대로 덮는다 — §4의 물화 검사
  *    (`mech.feelings.energy === 6` · `mech.score === 7`)가 그 값을 읽기 때문이다.
  */
-const ktBare = (p: string) => readFileSync(join(here, p), "utf8")
+// ⚠️ `\r`를 먼저 걷는다 (함정 16) — 파일이 한 번 CRLF로 저장되면 이 소스를 보는 스캐너가
+//    구현은 한 글자도 안 변했는데 함께 빨간불이 된다. T-69의 변이 배터리가 그렇게 울었다.
+const ktBare = (p: string) => readFileSync(join(here, p), "utf8").replace(/\r\n/g, "\n")
   .split("\n").filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join("\n");
 const ktScaleStore = ktBare("../android/app/src/main/java/dev/mond1424/personalos/widget/ScaleStore.kt");
 const ktStr = (src: string, name: string) =>
@@ -1154,7 +1156,8 @@ ok("긴 이유는 잘리되 행은 산다 (400을 던지면 flush가 행을 버�
 // **끊기는 자리를 검사가 직접 봐야 한다** — 언어가 달라 타입이 이어 주지 않는다.
 // ⚠️ **주석을 걷어내고 본다.** 안 그러면 그 줄을 `//`로 막아도 정규식이 그대로 맞아
 // 초록이 된다 — 배선을 끊는 가장 쉬운 방법이 검사를 못 지나가야 한다(T-36의 `isComment`와 같다).
-const ktCode = (p: string) => readFileSync(join(here, p), "utf8")
+// ⚠️ `\r`를 먼저 걷는다 (함정 16) — 위 `ktBare`와 같은 이유다.
+const ktCode = (p: string) => readFileSync(join(here, p), "utf8").replace(/\r\n/g, "\n")
   .split("\n").filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join("\n");
 const ktQueue = ktCode("../android/app/src/main/java/dev/mond1424/personalos/guard/GuardEventQueue.kt");
 const ktNotif = ktCode("../android/app/src/main/java/dev/mond1424/personalos/guard/GuardNotifications.kt");
