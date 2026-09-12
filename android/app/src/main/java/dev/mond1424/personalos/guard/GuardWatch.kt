@@ -46,6 +46,14 @@ object GuardWatch {
 
     private const val K_LAST_FIRE = "watch_last_fire_at"
     private const val K_NIGHT_KEY = "watch_night_key"
+
+    /**
+     * **감시(watch:bedtime)가 오늘 밤 몇 번 발동했나** — `watchMaxPerNight`가 읽는 **동작의 값**.
+     *
+     * ⚠️ **문구의 *"N번째"* 는 이것이 아니다**(T-69). 그쪽은 `GuardNight.count`이고
+     *    재확인·경로 A 알람까지 센다. **여기에 그것들을 더하면 상한이 먼저 차서
+     *    감시 발동이 줄어든다 — 말을 고치려다 동작을 바꾸는 것이다.**
+     */
     private const val K_NIGHT_N = "watch_night_count"
     private const val K_LEVEL2_DONE = "watch_l2_done"
 
@@ -70,11 +78,13 @@ object GuardWatch {
     private fun evalInner(ctx: Context): Boolean {
         val s = GuardSettings(ctx)
         if (!s.watchEnabled) return false
-        if (!inBedWindow(s.bedFrom, s.bedTo)) return false
+        if (!GuardNight.inWindow(s.bedFrom, s.bedTo)) return false
 
         // 취침 창을 하나의 '밤'으로 묶는다. 창 시작 시점의 날짜를 키로 쓴다 —
         // 자정을 넘겨도 같은 밤이어야 상한이 제대로 걸린다.
-        val night = nightKey(s.bedFrom, s.bedTo)
+        // ★ **경계의 정의는 `GuardNight` 하나다**(T-69) — 문구의 두 수가 같은 밤·같은 창을
+        //   기준으로 재려면 여기서 따로 판단하면 안 된다.
+        val night = GuardNight.key(s.bedFrom, s.bedTo)
         val pr = prefs(ctx)
         if (pr.getString(K_NIGHT_KEY, null) != night) {
             pr.edit().putString(K_NIGHT_KEY, night)
@@ -84,6 +94,8 @@ object GuardWatch {
 
         // 연속 사용 — 화면이 켜진 채로 얼마나 붙잡고 있었나.
         // 잠깐 시간 확인하는 것과 구분하려면 '연속'이어야 한다.
+        // ⚠️ **발동 조건이 읽는 값은 이것 하나다**(T-69 §금지 2행). 개입 뒤 0으로 돌아가는 것이
+        //    이 값의 뜻이고, 문구는 **다른 값**을 읽는다(아래 `windowMin`).
         val usedMin = GuardActivityLog.continuousScreenOnMin(ctx)
         if (usedMin < s.watchMinutes) return false
 
@@ -114,14 +126,35 @@ object GuardWatch {
         val title = if (level == 2) "아직 깨어 있네요" else "지금 자야 합니다"
 
         /*
-         * 이번 발동을 포함한 그 밤의 순번 — ADR-049 ① (T-68).
+         * 이번 발동을 포함한 **그 밤의 방해 순번** — ADR-049 ① (T-68) · ADR-026 (T-69 ①).
          *
-         * ★ **읽을 뿐 새로 저장하지 않는다.** 재료는 이미 `K_NIGHT_N`에 있고, 그 계수는
-         *   위에서 밤 키가 바뀌면 0으로 돌아간다. 누적을 따로 어디에 쌓으면 그것은
-         *   **파생을 물화하는 것**이고(아키텍처 원칙 1) 밤이 바뀌어도 안 지워진다.
-         * ★ **아래 증가분이 이 값을 그대로 쓴다** — 말한 수와 센 수가 한 식이라 갈라질 수 없다.
+         * ★ **감시 발동 수가 아니라 방해 수다**(T-69). 사용자가 겪는 것은 *"몇 번 방해받았나"* 이고
+         *   ADR-026이 *"재확인도 하나의 발동"* 이라 정의했다. `K_NIGHT_N`은 감시만 세므로
+         *   그것을 말하면 **다섯 번 방해받은 밤에 *"3번째"* 라고 말한다.**
+         * ⚠️ **그렇다고 `K_NIGHT_N`을 넓히지 않는다** — 상한이 그것을 읽어 **발동이 줄어든다.**
+         *   세는 것이 다르므로 계수도 둘이고, 둘의 뜻은 각자의 선언 옆에 적혀 있다.
+         *
+         * ★ **읽을 뿐 새로 저장하지 않는다.** 재료는 이미 `GuardNight`에 있고 밤이 바뀌면
+         *   저절로 0이다. 누적을 따로 쌓으면 **파생을 물화하는 것**이다(아키텍처 원칙 1).
+         * ★ **증가는 `GuardNotifications.fire()`가 한다** — 감시·재확인·경로 A가 전부 그곳을
+         *   지나므로 세는 자리가 하나다. 여기서 더하면 나머지 둘을 영영 못 센다.
          */
-        val n = pr.getInt(K_NIGHT_N, 0) + 1
+        val n = GuardNight.count(ctx) + 1
+
+        // 이번 발동을 포함한 **감시 발동 수** — 상한이 읽는 값이고, 아래에서 그대로 저장된다.
+        // ★ `n`과 나란히 둔다: **두 수가 여기서 갈린다**는 것이 한눈에 보여야 다음 사람이 안 합친다.
+        val fired = pr.getInt(K_NIGHT_N, 0) + 1
+
+        /*
+         * 문구가 말할 **창 안의 화면 시간** — 발동 조건이 읽는 `usedMin`과 **다른 것을 잰다**(T-69 ②).
+         *
+         * `usedMin`은 개입 화면이 닫힐 때마다 0으로 돌아간다(그게 *"방금 N분 연속"* 의 뜻이다).
+         * 그 값을 문구에 실으면 **두 번째 개입부터 세 시간을 써도 늘 *"15분째"*** 이고,
+         * 옆의 *"3번째"* 와 한 문장에서 서로를 반박한다 — 이 티켓의 본체다.
+         */
+        val windowMin = GuardActivityLog.screenOnMinSince(
+            ctx, GuardNight.windowStartMs(s.bedFrom, s.bedTo),
+        )
 
         val body = buildString {
             /*
@@ -129,15 +162,18 @@ object GuardWatch {
              *   뒤에 붙이면 매번 같은 앞부분이 먼저 읽히고 그대로 넘어간다(ADR-047 ①).
              * ⚠️ **첫 발동엔 안 붙는다** — 앞이 없는데 앞을 세는 말은 알리는 것이 없는 소음이다.
              *    그래서 `watchTallyFrom`의 하한이 2다(설정으로도 못 깬다).
-             * ⚠️ 첫 발동은 늘 Level 2이므로(`l2done`과 `K_NIGHT_N`이 한 번에 쓰인다)
-             *    아침 한 줄과 이 줄은 **같은 발동에 함께 서지 않는다.** 둘의 순서는 그래서
-             *    화면에서 다투지 않는다.
+             * ⚠️ **T-68이 적어 둔 *"둘은 함께 서지 않는다"* 는 T-69로 깨졌다 — 정정한다.**
+             *    그때는 `n`이 감시 발동 수여서 `n == 1 ⟺ level == 2`였다. 이제 `n`은 **방해 수**라
+             *    경로 A 알람이 창 안에서 먼저 울린 밤이면 **첫 감시 발동에 이미 `n >= 2`** 이고,
+             *    그러면 아침 한 줄과 이 줄이 같은 문장에 함께 선다.
+             *    ★ **그것이 맞다** — 둘 다 사실이고, 방해가 두 번이었다는 것도 사실이다.
              */
             if (n >= s.watchTallyFrom) append(String.format(java.util.Locale.US, TALLY_FMT, n))
             // ★ **사실이 맨 앞이다** — 밤마다 달라지는 것이 이 문장 하나뿐이라
             //   뒤에 붙이면 매일 같은 앞부분이 먼저 읽히고 그대로 넘어간다(ADR-047 ①).
             if (wakeLine != null) append("$wakeLine. ")
-            append("취침 창(${s.bedFrom}~${s.bedTo}) 안에서 ${usedMin}분째 화면을 보고 있어요.")
+            // ⚠️ **`usedMin`을 여기 쓰지 않는다**(T-69). 그것은 게이트의 값이고 개입 뒤 0이 된다.
+            append("취침 창(${s.bedFrom}~${s.bedTo})에 들어온 뒤 ${windowMin}분 화면을 켜 두셨어요.")
             if (app != null) append(" 지금 ${app}.")
             if (level >= 3) append(" 내일이 무너집니다.")
         }
@@ -145,8 +181,10 @@ object GuardWatch {
         GuardNotifications.fire(ctx, level, title, body, eventId = null, cause = "watch:bedtime")
 
         pr.edit().putLong(K_LAST_FIRE, now)
-            // 위에서 문구가 말한 그 수다 — 두 번 세지 않는다(T-68).
-            .putInt(K_NIGHT_N, n)
+            // ★ **감시 발동만 센다 — 상한이 읽는 값이다**(T-69 검사 2의 자리).
+            //   문구가 말한 `n`은 여기가 아니라 `GuardNight`가 센다. **이 줄에 방해 수를 쓰면
+            //   재확인·경로 A까지 상한에 세어져 밤마다 발동이 줄어든다.**
+            .putInt(K_NIGHT_N, fired)
             .putBoolean(K_LEVEL2_DONE, true)
             .apply()
         return true
@@ -160,11 +198,19 @@ object GuardWatch {
         return JSONObject()
             .put("enabled", s.watchEnabled)
             .put("bedFrom", s.bedFrom).put("bedTo", s.bedTo)
-            .put("inWindow", inBedWindow(s.bedFrom, s.bedTo))
+            .put("inWindow", GuardNight.inWindow(s.bedFrom, s.bedTo))
             .put("thresholdMin", s.watchMinutes)
             .put("refireMin", s.watchRefireMinutes)   // T-51 — 둘이 같은 화면에 보여야 짝으로 읽힌다
             .put("continuousMin", GuardActivityLog.continuousScreenOnMin(ctx))
+            // T-69 ② — **문구가 말하는 분**. 위 `continuousMin`(게이트)과 나란히 보여야
+            // 밤 실측이 *"둘이 왜 다른가"* 를 읽는다. 같아 보이면 다음 사람이 하나를 지운다.
+            .put("windowMin", GuardActivityLog.screenOnMinSince(
+                ctx, GuardNight.windowStartMs(s.bedFrom, s.bedTo),
+            ))
             .put("firedTonight", pr.getInt(K_NIGHT_N, 0))
+            // T-69 ① — **문구가 말하는 순번**. `firedTonight`(감시만)와 짝으로 읽는다:
+            // 둘이 벌어진 만큼이 재확인·경로 A로 방해받은 횟수다.
+            .put("interruptedTonight", GuardNight.count(ctx))
             .put("maxPerNight", s.watchMaxPerNight)
             // T-68 — *"왜 이 문구인가"* 를 밤 실측이 여기서 읽는다. `firedTonight`와 짝이다.
             .put("tallyFrom", s.watchTallyFrom)
@@ -177,10 +223,12 @@ object GuardWatch {
                 ?.let { runCatching { JSONObject(it) }.getOrNull() } ?: JSONObject.NULL)
     }
 
-    /** 테스트용 — 밤 상한·Level 2 이력을 지운다. */
+    /** 테스트용 — 밤 상한·Level 2 이력을 지운다. **방해 계수도 함께** 지운다(T-69). */
     fun resetNight(ctx: Context) {
         prefs(ctx).edit().remove(K_NIGHT_KEY).remove(K_NIGHT_N)
             .remove(K_LEVEL2_DONE).remove(K_LAST_FIRE).apply()
+        // 한쪽만 지우면 다음 발동이 *"1번째"* 인데 문구는 *"6번째"* 라고 말한다.
+        GuardNight.reset(ctx)
     }
 
     // ── Level 2의 아침 판정 (ADR-047 · T-60) ─────────────────
@@ -252,29 +300,8 @@ object GuardWatch {
     }
 
     // ── helpers ─────────────────────────────────────────────
-
-    private fun hm(s: String): Int {
-        val m = Regex("^([01]?\\d|2[0-3]):([0-5]\\d)$").find(s.trim()) ?: return -1
-        return m.groupValues[1].toInt() * 60 + m.groupValues[2].toInt()
-    }
-
-    /** from > to면 자정을 넘는 창으로 읽는다 (00:30~06:00은 안 넘고, 23:00~05:00은 넘는다). */
-    private fun inBedWindow(from: String, to: String): Boolean {
-        val f = hm(from); val t = hm(to)
-        if (f < 0 || t < 0) return false
-        val c = Calendar.getInstance()
-        val now = c.get(Calendar.HOUR_OF_DAY) * 60 + c.get(Calendar.MINUTE)
-        return if (f <= t) now in f until t else now >= f || now < t
-    }
-
-    /** 창이 자정을 넘으면 시작한 날짜를 밤의 이름으로 쓴다. */
-    private fun nightKey(from: String, to: String): String {
-        val f = hm(from); val t = hm(to)
-        val c = Calendar.getInstance()
-        val now = c.get(Calendar.HOUR_OF_DAY) * 60 + c.get(Calendar.MINUTE)
-        if (f > t && now < t) c.add(Calendar.DAY_OF_YEAR, -1)   // 창 후반 — 어제 밤이다
-        return "%04d-%02d-%02d".format(
-            c.get(Calendar.YEAR), c.get(Calendar.MONTH) + 1, c.get(Calendar.DAY_OF_MONTH),
-        )
-    }
+    //
+    // ★ **창 경계(`inBedWindow`·`nightKey`·`hm`)는 `GuardNight`로 옮겼다**(T-69).
+    //   문구의 두 수가 *"같은 밤·같은 창"* 을 기준으로 재야 서로를 반박하지 않는데,
+    //   경계 판단이 두 곳에 있으면 자정 근처에서 갈라진다. **정의는 한 곳이다.**
 }

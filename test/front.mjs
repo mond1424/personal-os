@@ -2395,7 +2395,11 @@ ok("표에 없는 딥링크·다른 스킴은 아무것도 안 연다",
 // ④ 찬 시작·더운 시작이 **둘 다** 배선돼 있다 — JS 한 쪽, Kotlin 한 쪽.
 //    ⚠️ 주석을 걷어내고 본다(smoke의 `ktCode`와 같은 자리): 배선을 `//`로 막는 것이
 //       검사를 지나가면, 배선을 끊는 가장 쉬운 방법이 초록이 된다.
-const t46Bare = (s) => s.split("\n").filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join("\n");
+/* ⚠️ **`\r`를 먼저 걷는다** (T-69에서 물렸다). 여기 스캐너 여럿이 `\n`으로 **줄이 붙어 있는지**를
+ *    세는데, 파일이 CRLF로 저장되면 그 자리가 `)\r\n`이 되어 **구현이 그대로인데 빨간불**이 된다.
+ *    윈도우 편집기·도구가 한 번 다시 쓰면 그만인 일이라 *"회귀했다"* 와 구별이 안 된다. */
+const t46Bare = (s) => s.replace(/\r\n/g, "\n")
+  .split("\n").filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join("\n");
 const t46NoXml = (s) => s.replace(/<!--[\s\S]*?-->/g, " ");
 const T46_WARM = /addListener\s*\??\.?\s*\(\s*["']appUrlOpen["']/;   // 더운 시작
 const T46_COLD = /getLaunchUrl\s*\(/;                                // 찬 시작
@@ -4135,15 +4139,40 @@ ok("2 ★ 첫 발동의 문구는 전과 같다 — 순번이 다른 조각으�
 
 /* 3 ★ **밤이 바뀌면 1부터 다시 센다.** 겨누는 것은 *"reset이라는 낱말이 있다"* 가 아니라
  *   **문구가 읽는 그 계수가 밤 키 불일치에서 0으로 돌아가는가**다 — 키 이름을 구현에서
- *   뽑아 그 이름으로 초기화 자리를 찾는다. 둘이 갈라지면 전날을 이어 센다. */
-const t68Src = /val n = pr\.getInt\((K_\w+), 0\) \+ 1/.exec(t68Watch)?.[1] ?? null;
-const t68Zeroed = t68Src !== null && new RegExp(
-  `if \\(pr\\.getString\\(K_NIGHT_KEY, null\\) != night\\) \\{[\\s\\S]{0,300}?putInt\\(${t68Src}, 0\\)`,
-).test(t68Watch);
-const t68NightFrom = /val night = nightKey\(s\.bedFrom, s\.bedTo\)/.test(t68Watch);
+ *   뽑아 그 이름으로 초기화 자리를 찾는다. 둘이 갈라지면 전날을 이어 센다.
+ *
+ *   ⚠️ **T-69가 그 계수를 옮겼다 — 검사도 따라간다**(CLAUDE.md §기준선: 검사가 옛 동작을
+ *      검사하고 있으면 고치고 그 사실을 말한다). 문구가 읽는 것은 이제 감시 발동 수가 아니라
+ *      **방해 수**(`GuardNight`)이고, 밤 키로 0이 되는 자리도 그 파일에 있다.
+ *      ★ **주장은 그대로다** — *"문구가 읽는 그 계수가 밤이 바뀌면 0이다"*. 사는 곳만 옮겼다.
+ *      ⚠️ 파일 이름도 여기 안 적는다 — `GuardWatch`가 부르는 이름을 뽑아 그 파일을 연다.
+ *      ⚠️ **모양 둘을 다 읽는다.** 문구가 다시 `GuardWatch`의 계수를 읽게 되어도 이 주장은
+ *         여전히 참이므로, 그때 빨간불이 되면 **참인데 우는 검사**가 된다. 그 자리는
+ *         T-69 1의 몫이다 — *"세는 자리가 세 경로의 합류점인가"*. */
+const t68Owner = /val n = (\w+)\.count\(ctx\) \+ 1/.exec(t68Watch)?.[1] ?? null;
+const t68Local = /val n = pr\.getInt\((K_\w+), 0\) \+ 1/.exec(t68Watch)?.[1] ?? null;
+/** 계수를 **올리는** 자리의 주인 — `fire()`가 부르는 이름. 4·7이 문구와 따로 이것을 쓴다. */
+const t68Bumper = /(\w+)\.note\(ctx\)/.exec(t68Kt("GuardNotifications.kt"))?.[1] ?? null;
+const t68OwnerSrc = t68Bumper ? t68Kt(`${t68Bumper}.kt`) : "";
+const t68MsgSrc = t68Owner ? t68Kt(`${t68Owner}.kt`) : t68Watch;
+const t68CountFn = /fun count\(ctx: Context\): Int[\s\S]*?\n {4}\}\.getOrDefault\(0\)/
+  .exec(t68MsgSrc)?.[0] ?? "";
+// 밤 키가 다르면 0 — 옮긴 모양은 `else 0`으로 읽고, 옛 모양은 `putInt(…, 0)`으로 쓴다.
+const t68Src = t68Local
+  ?? (/pr\.getInt\((K_\w+), 0\) else 0/.exec(t68CountFn)?.[1] ?? null);
+const t68Zeroed = t68Src !== null && (t68Local
+  ? new RegExp(
+    `if \\(pr\\.getString\\(K_NIGHT_KEY, null\\) != night\\) \\{[\\s\\S]{0,300}?putInt\\(${t68Src}, 0\\)`,
+  ).test(t68Watch)
+  // 세는 쪽(note)도 같은 계수를 같은 밤 키로 연다 — 읽기만 0이면 다음 밤이 전날을 이어 쓴다.
+  : /pr\.getString\(K_\w+, null\) == key\(/.test(t68CountFn) && new RegExp(
+    `pr\\.getString\\(K_\\w+, null\\) == night\\) pr\\.getInt\\(${t68Src}, 0\\) else 0`,
+  ).test(t68MsgSrc));
+const t68NightFrom = /val night = (\w+\.key|nightKey)\(s\.bedFrom, s\.bedTo\)/.test(t68Watch);
 ok("3 ★ 밤이 바뀌면 수가 0으로 돌아간다 — 문구가 읽는 계수와 초기화되는 계수가 같은 키다",
   !!t68Src && t68Zeroed && t68NightFrom,
-  `문구가읽는키=${t68Src} 밤키에서0=${t68Zeroed} 밤이름=${t68NightFrom}`);
+  `주인=${t68Owner ?? "GuardWatch"} 문구가읽는키=${t68Src} 밤키에서0=${t68Zeroed}`
+  + ` 밤이름=${t68NightFrom}`);
 
 /* 4 ★ **누적은 저장되지 않는다** — 파생 금지(원칙 1). 밤마다 초기화되는 계수 하나뿐이어야 한다.
  *   ⚠️ *"새 키가 없다"* 를 **안 세는 방식으로 세지 않는다**: 쓰기 자체를 전부 뽑아
@@ -4151,18 +4180,26 @@ ok("3 ★ 밤이 바뀌면 수가 0으로 돌아간다 — 문구가 읽는 계�
  *      정규식이 눈멀면 빈 배열이 되어 ②가 먼저 죽는다 — 조용히 통과하지 않는다.
  *   ★ **쓰기의 개수는 안 센다.** 처음엔 *"정수 쓰기가 둘"* 을 세었는데, 그러면 초기화를
  *   지우는 변이(M3)에 **3과 함께 죽는다**(실측으로 그랬다 · AGENT-CHAIN §8).
- *   *"0으로 돌아가는가"* 는 3의 몫이고, 여기는 **계수가 하나뿐인가**만 본다. */
-const t68Keys = [...t68Watch.matchAll(/private const val (K_\w+) = "/g)].map((m) => m[1]);
-const t68Writes = [...t68Watch.matchAll(/put(?:Int|Long|String|Boolean)\(\s*([^,]+),/g)]
+ *   *"0으로 돌아가는가"* 는 3의 몫이고, 여기는 **계수가 하나뿐인가**만 본다.
+ *
+ *   ⚠️ **T-69 뒤로는 파일이 둘이다** — 감시 발동 수(`GuardWatch`)와 방해 수(그 주인).
+ *      **주장은 그대로다**: *"각자 정수 계수 하나뿐이고, 낯선 키를 쓰지 않는다."*
+ *      둘을 합쳐 세지 않는다 — 합치면 한쪽이 둘이 되어도 통과한다. */
+const t68DeclKeys = (s) => [...s.matchAll(/private const val (K_\w+) = "/g)].map((m) => m[1]);
+const t68PutKeys = (s) => [...s.matchAll(/put(?:Int|Long|String|Boolean)\(\s*([^,]+),/g)]
   .map((m) => m[1].trim());
-const t68Foreign = t68Writes.filter((k) => !t68Keys.includes(k));
-const t68IntW = [...t68Watch.matchAll(/putInt\(\s*([^,]+),/g)].map((m) => m[1].trim());
+const t68IntKeys = (s) => [...new Set(
+  [...s.matchAll(/putInt\(\s*([^,]+),/g)].map((m) => m[1].trim()),
+)];
+const t68Files = [t68Watch, t68OwnerSrc];
+const t68Foreign = t68Files.flatMap((s) => t68PutKeys(s).filter((k) => !t68DeclKeys(s).includes(k)));
+const t68IntW = t68Files.map(t68IntKeys);
 const t68Sql = readdirSync(join(here, "../migrations"))
   .map((f) => readFileSync(join(here, "../migrations", f), "utf8")).join("\n");
-const t68NoCol = !/(tally|night_count|fired_tonight)/i.test(t68Sql);
+const t68NoCol = !/(tally|night_count|fired_tonight|interrupt)/i.test(t68Sql);
 ok("4 ★ 누적을 저장하는 키도 컬럼도 없다 — 밤마다 0으로 가는 계수 하나만 쓴다 (파생 금지)",
-  t68Writes.length > 0 && t68Foreign.length === 0 && t68IntW.length > 0
-  && t68IntW.every((k) => k === t68Src) && t68NoCol,
+  t68Files.every((s) => t68PutKeys(s).length > 0) && t68Foreign.length === 0
+  && t68IntW.every((ks) => ks.length === 1) && t68NoCol,
   `낯선키=${JSON.stringify(t68Foreign)} 정수쓰기=${JSON.stringify(t68IntW)} SQL컬럼없음=${t68NoCol}`);
 
 /* 5 ★ **발동 경로에 네트워크가 없다** (ADR-021 회귀). 누적을 서버에서 받아 오면 오프라인인
@@ -4198,6 +4235,221 @@ ok("6 ★ 6의 스캐너가 살아 있다 (합성 대기·사유를 잡고, 지�
   T68_FRICTION.test('finishWith("accepted", null)\n            startWait(waitSec, go, note, reason)')
   && T68_FRICTION.test('accept.postDelayed({ finishWith("accepted", null) }, 60_000L)')
   && !T68_FRICTION.test('finishWith("accepted", null)\n            GuardRecheck.arm(this, level)'));
+
+/* ── T-69 · 한 문장 안의 두 수가 서로를 반박한다 ────────────────────────────
+ *
+ * *"오늘 밤 3번째예요. 취침 창 안에서 15분째 화면을 보고 있어요."* — 3번째면 창 안에서
+ * 최소 45분은 지났다. **한 값이 두 일을 하고 있었다**(발동 조건이자 문구의 재료).
+ *
+ * ★ **셋(3·4·5)은 스캐너가 아니다.** 티켓이 요구한 것은 *"관계를 재라"* 였고 **관계는
+ *   정규식으로 못 잰다.** 그래서 `GuardActivityLog`의 두 함수를 **Kotlin 본문 그대로 옮겨
+ *   한 밤을 돌린다** — 규칙을 검사에 다시 적지 않는다(함정 15). 옮기기가 실패하면 셋이 함께
+ *   빨간불이고(조용히 통과하지 않는다), **`5의 짝`이 옛 규칙을 넣어 모순이 실제로 잡히는지**를 본다.
+ * ⚠️ **나머지(1·2·6·7)는 스캐너다** — 세는 자리가 안드로이드 런타임이라 jsdom이 못 돈다.
+ *    **진짜 판정은 밤 실측**이다(티켓 §확인 절차 — ★★ 그 밤의 발동 횟수·시각이 전과 같은가). */
+console.log("\n[T-69] 한 문장의 두 수 — 무엇을 세는지가 갈렸는가");
+
+const t69Watch = t68Watch;                       // 같은 파일을 두 번 파싱하지 않는다(T-68 §)
+const t69Dir = join(here, "../android/app/src/main/java/dev/mond1424/personalos/guard");
+const t69Raw = (f) => readFileSync(join(t69Dir, f), "utf8");
+const t69Log = t68Kt("GuardActivityLog.kt");
+const t69Notif = t68Kt("GuardNotifications.kt");
+const t69Recheck = t68Kt("GuardRecheck.kt");
+const t69Alarm = t68Kt("AlarmReceiver.kt");
+
+/* 1 ★ **문구의 "N번째"가 재확인·경로 A까지 센다** (ADR-026 *"재확인도 하나의 발동"*).
+ *   세는 자리를 **세 경로의 합류점**에 두었는가로 본다 — 경로마다 세면 넷째 경로가 생겼을 때
+ *   조용히 빠진다(T-70이 `markAsked`를 발동 경로가 아니라 화면으로 옮긴 그 이유).
+ *   ⚠️ **주인의 이름을 검사에 적지 않는다** — 양쪽에서 뽑아 **같은 것인지**를 본다:
+ *      문구가 읽는 계수(`GuardWatch`)와 `fire()`가 올리는 계수. 둘이 갈라지면 문구는
+ *      감시 발동만 세던 옛 수로 돌아간 것이다. */
+const t69Note = t68Bumper ? new RegExp(`\\b${t68Bumper}\\.note\\(ctx\\)`) : null;
+const t69Bump = !!t69Note && t69Note.test(t69Notif);
+const t69Same = !!t68Owner && t68Owner === t68Bumper;
+const t69Paths = [t69Watch, t69Recheck, t69Alarm]
+  .filter((s) => /GuardNotifications\.fire\(/.test(s)).length;
+const t69NotInPath = !!t69Note && ![t69Watch, t69Recheck, t69Alarm].some((s) => t69Note.test(s));
+ok("1 ★ 문구의 순번이 재확인·경로 A까지 센다 — 세는 자리가 세 경로의 합류점 하나다",
+  t69Same && t69Bump && t69Paths === 3 && t69NotInPath,
+  `문구가읽는주인=${t68Owner} fire가올리는주인=${t68Bumper} 같다=${t69Same}`
+  + ` fire를부르는경로=${t69Paths}/3 경로에서직접안센다=${t69NotInPath}`);
+
+/* 2 ★ **1의 짝 — 동작이 안 바뀌었다.** 밤 상한이 읽는 계수에는 **감시 발동만** 들어간다.
+ *   이 티켓의 약속이 *"문구만 고친다"* 이므로 **안 바뀐 것이 세어져야** 고쳐진 것이다.
+ *   ★ 상한의 계수를 **게이트 줄에서** 뽑는다(위치가 아니라 뜻으로) — *"`watchMaxPerNight`와
+ *     비교되는 그 계수"*. 그리고 **guard/ 전체에서** 그것을 만지는 파일을 센다:
+ *     다른 파일이 한 줄만 올려도 밤마다 발동이 줄어드는데 `GuardWatch`만 보면 안 보인다. */
+const t69CapK = /if \(pr\.getInt\((K_\w+), 0\) >= s\.watchMaxPerNight\) return false/
+  .exec(t69Watch)?.[1] ?? null;
+const t69CapVal = t69CapK
+  ? (new RegExp(`const val ${t69CapK} = "(\\w+)"`).exec(t69Raw("GuardWatch.kt"))?.[1] ?? null)
+  : null;
+const t69Touching = t69CapVal
+  ? readdirSync(t69Dir).filter((f) => f.endsWith(".kt"))
+    .filter((f) => new RegExp(`\\b${t69CapK}\\b|"${t69CapVal}"`).test(t46Bare(t69Raw(f))))
+  : [];
+ok("2 ★ 밤 상한이 세는 수는 안 바뀐다 — 감시 발동만 (1의 짝 · 동작 불변)",
+  !!t69CapVal && t69Touching.length === 1 && t69Touching[0] === "GuardWatch.kt",
+  `상한계수=${t69CapK}("${t69CapVal}") 만지는파일=${JSON.stringify(t69Touching)}`);
+
+/* ── 3·4·5의 재료: Kotlin 본문을 그대로 옮겨 돌린다 ──────────────────────────
+ *
+ * ★ **규칙을 검사에 다시 적지 않는다.** 구현이 틀리면 검사도 함께 틀리는 것이 T-55에서
+ *   물린 모양이다(함정 15). 옮기다 막히면 `null`이 되고 **셋이 함께 빨간불**이 된다. */
+const t69Body = (src, name) => {
+  const i = src.indexOf(`fun ${name}(`);
+  if (i < 0) return null;
+  const rest = src.slice(i);
+  const j = rest.indexOf("\n    }");                 // 함수의 닫는 괄호 — 안쪽은 더 깊다
+  return j < 0 ? null : rest.slice(rest.indexOf("{") + 1, j);
+};
+/** Kotlin → JS. **이 두 함수가 쓰는 문법만** 옮긴다 — 모르는 것이 남으면 아래에서 던진다. */
+const t69Js = (body) => body
+  .replace(/\/\/[^\n]*/g, "")
+  .replace(/\bwhen \((.+)\) \{/g, "switch ($1) {")
+  .replace(/^(\s*)("\w+") -> (\{[\s\S]*?\}|[^\n]+)$/gm, "$1case $2: $3; break;")
+  .replace(/\bval\b|\bvar\b/g, "let")
+  .replace(/(\d)_(?=\d)/g, "$1")
+  .replace(/\b(\d+)L\b/g, "$1")
+  .replace(/maxOf\(/g, "Math.max(")
+  .replace(/o\.optLong\("at"\)/g, "o.at")
+  .replace(/o\.optString\("kind"\)/g, "o.kind")
+  .replace(/arr\.getJSONObject\(i\)/g, "arr[i]")
+  .replace(/for \(i in 0 until arr\.length\(\)\)/g, "for (let i = 0; i < arr.length; i++)")
+  .replace(/System\.currentTimeMillis\(\)/g, "NOW")
+  .replace(/read\(ctx\)/g, "SAMPLES")
+  // ⚠️ **한 줄 안에서만** 접는다. `[^;]`는 줄바꿈도 먹어서 앞의 `if (…)`부터 삼켰고,
+  //    그러면 `if Math.trunc(…)`이라는 못 쓰는 문장이 나온다(실측으로 그랬다).
+  .replace(/\(([^\n;]*?)\)\.toInt\(\)/g, "Math.trunc($1)");
+const t69Fn = (src, name) => {
+  const b = t69Body(src, name);
+  if (b === null) return null;
+  // eslint-disable-next-line no-new-func
+  try {
+    return new Function("SAMPLES", "NOW", "sinceMs", t69Js(b));
+  } catch {
+    return null;                                   // 옮기다 막혔다 — 3·4·5가 함께 빨간불이다
+  }
+};
+const t69Gate0 = t69Fn(t69Log, "continuousScreenOnMin");      // 발동 조건이 읽는 값
+const t69Msg0 = t69Fn(t69Log, "screenOnMinSince");            // 문구가 읽는 값
+
+/** 한 밤. **고정 시각을 안 쓴다**(함정 12) — 전부 창 시작 W 로부터의 상대 분이다. */
+const T69_MIN = 60_000;
+const t69W = Date.now() - 200 * T69_MIN;           // 창이 200분 전에 시작했다
+const t69At = (min) => t69W + min * T69_MIN;
+/* 창 **10분 전**부터 화면을 켜고 있었고, 창 안 25·50·75분에 개입이 셋 있었다.
+ * 개입은 각각 2분 화면을 붙잡았다 — `FLAG_KEEP_SCREEN_ON`이라 **Guard가 켠 화면**이다(T-30). */
+const t69Fires = [25, 50, 75];
+const t69Hold = 2;
+const t69Pre = 10;
+const t69Samples = [
+  { at: t69At(-t69Pre), until: t69At(-t69Pre), kind: "screen_on", app: "" },
+  ...t69Fires.flatMap((f) => [
+    { at: t69At(f), until: t69At(f), kind: "intervene_on", app: "" },
+    { at: t69At(f + t69Hold), until: t69At(f + t69Hold), kind: "intervene_off", app: "" },
+  ]),
+];
+/* 발동 **시점**에서 본 값. ⚠️ **그 순간의 표본은 아직 없다** — `fire()`가 `startActivity`를
+ * 부르고 `onCreate`가 `intervene_on`을 남기는 것은 그 뒤다. 같이 넣으면 게이트가 0이 되어
+ * 검사가 실제와 다른 밤을 본다. */
+const t69See = (fn, t, since) =>
+  fn(t69Samples.filter((s) => s.at < t69At(t)), t69At(t), since);
+const t69Ran = !!t69Gate0 && !!t69Msg0;
+const t69MsgAt = t69Ran ? t69Fires.map((f) => t69See(t69Msg0, f, t69W)) : [];
+const t69GateAt = t69Ran ? t69Fires.map((f) => t69See(t69Gate0, f, t69W)) : [];
+
+/* 3 ★ **"N분"이 창에 들어온 뒤를 잰다.** 두 마디를 함께 본다:
+ *   ① 값이 **창 시작에서부터**다 — 창 10분 전부터 켜 두었어도 첫 발동에서 25분이다.
+ *      35분이면 창 밖을 실은 것이고, 그러면 *"창에 들어온 뒤"* 가 거짓이 된다.
+ *   ② **문구가 그 함수를 읽는다** — 값이 맞아도 `GuardWatch`가 옛 값을 실으면 소용없다. */
+const t69MsgReads = /val windowMin = GuardActivityLog\.screenOnMinSince\(/.test(t69Watch)
+  && /\$\{windowMin\}분 화면을/.test(t69Watch);
+ok("3 ★ 문구의 분이 창에 들어온 뒤를 잰다 (창 밖은 안 싣는다 · 문구가 그 값을 읽는다)",
+  t69Ran && t69MsgAt[0] === t69Fires[0] && t69MsgReads,
+  `첫발동분=${t69MsgAt[0]} (창밖 ${t69Pre}분을 실으면 ${t69Fires[0] + t69Pre})`
+  + ` 문구가읽는다=${t69MsgReads} 옮기기=${t69Ran}`);
+
+/* 4 ★ **3의 짝 — 발동 조건이 읽는 값은 안 바뀌었다.** 개입이 닫힐 때마다 0에서 다시 센다:
+ *   두 번째 발동의 게이트는 `50 - (25+2) = 23`분이어야 한다. 이 값이 창 기준으로 바뀌면
+ *   **임계를 한 번 넘은 밤은 내내 넘은 채로 있게 되고, 그건 발동 규칙이 바뀐 것이다.** */
+const t69GateWant = [t69Fires[0] + t69Pre,
+  ...t69Fires.slice(1).map((f, i) => f - (t69Fires[i] + t69Hold))];
+const t69GateLine = /val usedMin = GuardActivityLog\.continuousScreenOnMin\(ctx\)\n\s*if \(usedMin < s\.watchMinutes\) return false/
+  .test(t69Watch);
+ok("4 ★ 발동 조건이 읽는 연속 값은 안 바뀐다 — 개입 뒤 0에서 다시 센다 (3의 짝 · 동작 불변)",
+  t69Ran && JSON.stringify(t69GateAt) === JSON.stringify(t69GateWant) && t69GateLine,
+  `게이트=${JSON.stringify(t69GateAt)} 기대=${JSON.stringify(t69GateWant)} 조건줄=${t69GateLine}`);
+
+/* 5 ★ **본체 — 두 수가 서로를 반박하지 않는다.**
+ *   ⚠️ *"두 수가 같다"* 로 세지 않는다(티켓이 막은 자리) — 다른 것을 세는 수라 같을 리 없다.
+ *   ★ **세는 것은 관계다:** 화면을 끄지 않은 밤이라면 개입과 개입 사이에 **실제로 흐른 시간만큼**
+ *     분 수가 늘어 있어야 한다(Guard 자신이 붙잡고 있던 몫만 빼고). 안 늘면
+ *     *"3번째"* 와 *"15분째"* 가 한 문장에서 서로를 반박한다.
+ *   ⚠️ **개수를 세지 않는다**(AGENT-CHAIN §8) — *"몇 번 커졌나"* 가 아니라
+ *      **그 발동 하나에서 얼마나 커졌는가**를 본다. */
+const t69Grew = t69Ran ? t69Fires.slice(1).map((f, i) => ({
+  n: i + 2, 잰것: t69MsgAt[i + 1] - t69MsgAt[i], 흐른것: f - t69Fires[i] - t69Hold,
+})) : [];
+ok("5 ★ 한 문장의 두 수가 서로 모순되지 않는다 — 순번이 오르면 분도 흐른 만큼 오른다 (본체)",
+  t69Grew.length > 0 && t69Grew.every((g) => g.잰것 >= g.흐른것),
+  t69Grew.map((g) => `${g.n}번째 +${g.잰것}분(흐른것 ${g.흐른것})`).join(" · ") || "옮기기 실패");
+
+/* 5의 짝 ★ **이 장치가 그 결함을 실제로 잡는가.** 3·4·5가 전부 옮겨 돌리므로, 옮기는 장치가
+ *   눈멀면 셋이 조용히 초록이 된다. **옛 구현을 그대로 넣어** 본다 — 옛 문구가 실은 값은
+ *   게이트의 그 값이었고, 그러면 *"3번째인데 23분째"* 가 나와야 한다.
+ *   ⚠️ **여기서 *"새 값이 옛 값보다 크다"* 를 세지 않는다** — 그건 5의 주장이고, 함께 세면
+ *      문구 값을 되돌리는 변이에 **5와 이 짝이 같이 죽어** 장치가 눈먼 것인지 값이 틀린
+ *      것인지 못 가른다(AGENT-CHAIN §8 · T-68이 두 번 좁힌 그 모양). */
+const t69OldAt = t69Ran ? t69Fires.map((f) => t69See(t69Gate0, f, t69W)) : [];
+const t69OldGrew = t69Ran
+  ? t69Fires.slice(1).map((f, i) => t69OldAt[i + 1] - t69OldAt[i] >= f - t69Fires[i] - t69Hold)
+  : [];
+ok("5 ★ 5의 장치가 살아 있다 — 옛 규칙(개입 뒤 0)을 넣으면 모순이 잡힌다",
+  t69Ran && t69OldGrew.some((g) => g === false),
+  `옛값=${JSON.stringify(t69OldAt)} 새값=${JSON.stringify(t69MsgAt)}`);
+
+/* 6 ★ **재확인 문구가 그 레벨의 실제 버튼 이름을 말한다.** Level 2의 버튼은 [확인]인데
+ *   문구는 [알겠습니다]라고 못 박고 있었다 — **사용자가 누른 적 없는 이름**이다.
+ *   ★ 이름의 주인이 하나인지까지 본다: `acceptLabel`의 Level 3+ 값이 레이아웃의
+ *     `android:text`와 같아야 하고(갈라지면 화면과 문구가 다른 말을 한다),
+ *     재확인은 **리터럴을 안 든다**. */
+const t69LabelFn = /fun acceptLabel\(level: Int\): String = if \(level < 3\) "([^"]+)" else "([^"]+)"/
+  .exec(t46Bare(t69Raw("GuardAlertActivity.kt")));
+const t69Xml = /android:id="@\+id\/guard_accept"[\s\S]*?android:text="([^"]+)"/
+  .exec(t68Layout)?.[1] ?? null;
+const t69Msg = /GuardNotifications\.fire\(([\s\S]*?)\n {8}\)/.exec(t69Recheck)?.[1] ?? "";
+ok("6 재확인 문구가 그 레벨의 실제 버튼 이름을 말한다",
+  !!t69LabelFn && t69LabelFn[1] !== t69LabelFn[2] && t69LabelFn[2] === t69Xml
+  && /\[\$label\]/.test(t69Msg) && !/알겠습니다|확인\]/.test(t69Msg)
+  && /val label = GuardAlertActivity\.acceptLabel\(level\)/.test(t69Recheck),
+  `L2="${t69LabelFn?.[1]}" L3+="${t69LabelFn?.[2]}" xml="${t69Xml}"`
+  + ` 문구="${t69Msg.trim().replace(/\s+/g, " ").slice(0, 64)}"`);
+
+/* 7 ★ **두 계수가 서로 다른 이름을 갖고, 각 주석이 상대편을 가리킨다** (스캐너).
+ *   ⚠️ 이름이 같거나 뜻이 안 적히면 **다음 사람이 둘을 합친다**(함정 15) — 그리고 합치는
+ *      순간 밤 상한이 재확인까지 세어 **발동이 줄어든다.** 조용한 동작 변경이다.
+ *   ★ *"뜻이 적혔는가"* 를 낱말로 안 센다: **선언 바로 위의 주석이 상대편 계수를 가리키는가**로
+ *     본다. 서로를 가리키면 읽는 사람이 **둘이 있다는 것을 반드시 본다.**
+ *   ⚠️ **문구가 지금 어느 쪽을 읽는지는 안 본다** — 그건 1의 몫이다. 여기가 세는 것은
+ *      *"세는 자리가 둘이고 이름이 다르다"* 하나이고, 그래야 둘을 합치는 변이에 혼자 죽는다. */
+const t69KeyVal = (src, k) => new RegExp(`const val ${k} = "(\\w+)"`).exec(src)?.[1] ?? null;
+const t69MsgK = /putInt\((K_\w+), n \+ 1\)/.exec(t68OwnerSrc)?.[1] ?? null;
+const t69MsgVal = t69MsgK ? t69KeyVal(t69Raw(`${t68Bumper}.kt`), t69MsgK) : null;
+/** 선언 **바로 위**의 주석 덩어리. 멀리서 우연히 걸리지 않게 400자로 끊는다. */
+const t69DocOf = (src, k) => {
+  const i = src.indexOf(`const val ${k} =`);
+  return i < 0 ? "" : src.slice(Math.max(0, i - 400), i);
+};
+const t69CapPointsMsg = !!t69CapK && !!t69MsgVal
+  && new RegExp(`${t68Bumper}|${t69MsgVal}`).test(t69DocOf(t69Raw("GuardWatch.kt"), t69CapK));
+const t69MsgPointsCap = !!t69MsgK && !!t69CapVal
+  && new RegExp(`${t69CapK}|${t69CapVal}`).test(t69DocOf(t69Raw(`${t68Bumper}.kt`), t69MsgK));
+ok("7 ★ 두 계수가 서로 다른 이름을 갖고, 각 주석이 상대편을 가리킨다 (스캐너 · 합치기 방지)",
+  !!t69CapVal && !!t69MsgVal && t69CapVal !== t69MsgVal
+  && t69CapPointsMsg && t69MsgPointsCap,
+  `상한="${t69CapVal}" 문구="${t69MsgVal}"`
+  + ` 상한→문구=${t69CapPointsMsg} 문구→상한=${t69MsgPointsCap}`);
 
 console.log("\n[부팅 · 연결 실패 복구]");
 ok("로드 후 부팅 오버레이 닫힘", !$("#boot").classList.contains("on"));

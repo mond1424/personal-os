@@ -95,6 +95,54 @@ object GuardActivityLog {
         return ((System.currentTimeMillis() - onAt) / 60_000).toInt()
     }
 
+    /**
+     * **취침 창에 들어온 뒤 사용자가 화면을 켜 둔 시간(분)** — 문구의 *"N분"* 이 읽는다 (T-69 ②).
+     *
+     * ⚠️ **발동 조건은 이 값을 안 본다.** 그건 [continuousScreenOnMin]이고, **개입 뒤 0으로
+     *    돌아가는 것이 그 함수의 뜻이다** (*"방금 N분 연속으로 보고 있다"*). 여기서 같은 규칙을
+     *    쓰면 두 번째 개입부터 문구가 늘 *"15분째"* 라고 말한다 — **한 문장 안에서
+     *    *"3번째"* 와 *"15분째"* 가 서로를 반박하던 그 결함이다**(T-69).
+     *
+     * ★ **개입이 이 값을 되돌리지 않는다.** 그래서 밤이 갈수록 **줄지 않는다** — 방해 횟수도
+     *   줄지 않으므로(`GuardNight.count`) **두 수가 같은 방향으로만 움직이고, 서로를 반박할 수 없다.**
+     *   그것이 이 티켓의 유일한 계약이다.
+     *
+     * **Guard 자신이 켠 화면은 빼고 센다** (T-30 · T-31). 개입 화면은 `FLAG_KEEP_SCREEN_ON`으로
+     * 화면을 붙잡으므로, 그 구간을 더하면 **Guard가 자기 개입 시간을 사용자 사용으로 청구한다.**
+     * [snapshot]이 *"더하고 빼지 않는다"* 로 원본에 사실을 남겨 둔 덕에 **읽는 쪽인 여기서 뺀다** —
+     * T-31이 *"읽는 쪽이 빼서 가른다"* 고 적어 둔 그 자리다.
+     *
+     * ⚠️ **버퍼가 [MAX]개를 넘기면 앞이 잘린다** — 창이 그보다 길면 잘린 만큼 덜 센다.
+     *    없는 표본을 지어내지 않으므로 **모자라게 말할 뿐 넘치게 말하지 않는다.**
+     */
+    fun screenOnMinSince(ctx: Context, sinceMs: Long): Int {
+        if (sinceMs <= 0L) return 0
+        val now = System.currentTimeMillis()
+        val arr = read(ctx)
+        var onMs = 0L
+        var guardMs = 0L
+        var onAt = 0L
+        var guardAt = 0L
+        for (i in 0 until arr.length()) {
+            val o = arr.getJSONObject(i)
+            val at = o.optLong("at")
+            when (o.optString("kind")) {
+                // 창보다 앞서 시작한 구간은 **창 시작에서부터** 센다. 창을 말하는 문구이므로
+                // 그 앞을 실으면 *"창에 들어온 뒤"* 가 거짓이 된다.
+                "screen_on" -> if (onAt == 0L) onAt = maxOf(at, sinceMs)
+                "screen_off" -> if (onAt > 0L) { onMs += maxOf(0L, at - onAt); onAt = 0L }
+                "intervene_on" -> if (guardAt == 0L) guardAt = maxOf(at, sinceMs)
+                "intervene_off" -> if (guardAt > 0L) { guardMs += maxOf(0L, at - guardAt); guardAt = 0L }
+            }
+        }
+        if (onAt > 0L) onMs += now - onAt
+        // 아직 안 닫힌 개입은 지금까지가 구간이다 — 발동 시점에 부르므로 실제로 열려 있을 수 있다.
+        if (guardAt > 0L) guardMs += now - guardAt
+        // `intervene_on`이 `screen_on` 표본보다 앞설 수 있다(개입이 화면을 켠다) — 그때
+        // 뺄 몫이 잠깐 더 크다. 음수는 사실이 아니므로 0으로 둔다.
+        return (maxOf(0L, onMs - guardMs) / 60_000L).toInt()
+    }
+
     /** 최근 n분 표본 그대로 — 디버깅·확인용. */
     fun recent(ctx: Context, minutes: Int = 60): JSONArray {
         val since = System.currentTimeMillis() - minutes * 60_000L

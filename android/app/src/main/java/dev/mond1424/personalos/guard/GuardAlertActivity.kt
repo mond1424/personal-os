@@ -54,6 +54,18 @@ class GuardAlertActivity : Activity() {
         private const val WAIT_L4 = 180
 
         /**
+         * **그 Level의 수락 버튼에 실제로 적히는 말** — 여기가 그 말의 주인이다 (T-69 ③).
+         *
+         * ⚠️ 재확인 문구가 *"[알겠습니다]를 선택했지만"* 이라고 **못 박고 있었는데, Level 2의
+         *    버튼은 [확인]이다** — 사용자가 누른 적 없는 버튼 이름을 말했다.
+         *    **틀린 사실은 명령보다 빨리 신뢰를 깎는다**(ADR-047 §정정).
+         * ⚠️ **문구가 이 함수를 부른다.** 자기 문자열을 따로 들면 버튼만 바꿔도 문구가 거짓이
+         *    되고, 그때 아무 검사도 안 잡는다(함정 15). Level 3 이상의 말은 레이아웃의
+         *    `android:text`와 같아야 하므로 **검사가 그 둘을 맞춰 본다**.
+         */
+        fun acceptLabel(level: Int): String = if (level < 3) "확인" else "알겠습니다"
+
+        /**
          * 지금 떠 있는 화면 — Level 4 격상을 받을 대상 (T-04 · ADR-024).
          *
          * 왜 Intent가 아니라 참조인가: 배경 스레드에서 `startActivity`를 부르면
@@ -138,7 +150,7 @@ class GuardAlertActivity : Activity() {
         waitSec = waitSecFor(level)
         if (level < 3) {
             openBtn.visibility = View.GONE
-            accept.text = "확인"
+            accept.text = acceptLabel(level)    // 같은 말, 주인만 옮겼다 (T-69 ③)
             return
         }
 

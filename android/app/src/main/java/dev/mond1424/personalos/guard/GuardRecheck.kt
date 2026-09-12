@@ -64,11 +64,23 @@ object GuardRecheck {
         }
         if (count >= MAX_PER_DAY) return false
 
+        /*
+         * ★ **버튼 이름도 경과도 사실이어야 한다** (T-69 ③).
+         *
+         * 여기 있던 *"5분 전 [알겠습니다]를…"* 은 **두 곳에서 거짓이었다**:
+         *   ① Level 2의 버튼은 [확인]이다 — 사용자가 누른 적 없는 이름을 말했다.
+         *   ② *"5분"* 은 [RECHECK_MS]의 복사본이라, 그 상수를 만지면 문구만 옛말이 된다.
+         * **둘 다 재료에서 뽑는다** — 값이 바뀌면 문구가 따라가고, 따라가지 않으면 그건 결함이다.
+         *
+         * ⚠️ **조건도 상한도 안 건드렸다** — 티켓 ③은 문구 한 줄이다.
+         */
+        val label = GuardAlertActivity.acceptLabel(level)
+        val agoMin = ((System.currentTimeMillis() - armedAt) / 60_000L).coerceAtLeast(1L)
         GuardNotifications.fire(
             ctx,
             level,
             "다시 확인할게요",
-            "5분 전 [알겠습니다]를 선택했지만 아직 화면을 사용 중이에요.",
+            "${agoMin}분 전 [$label]${objectParticle(label)} 선택했지만 아직 화면을 사용 중이에요.",
             eventId = null,
             cause = "recheck:accepted",
         )
@@ -128,6 +140,18 @@ object GuardRecheck {
             c.get(Calendar.MONTH) + 1,
             c.get(Calendar.DAY_OF_MONTH),
         )
+    }
+
+    /**
+     * 목적격 조사 — 받침이 있으면 *"을"*, 없으면 *"를"* (T-69 ③).
+     *
+     * ⚠️ **버튼 이름을 재료에서 뽑는 순간 조사도 재료가 된다.** *"[확인]를"* 은 이름만 맞고
+     *    문장이 틀린 것이고, 그건 고치려던 결함과 같은 부류다. 한글이 아니면 *"를"*.
+     */
+    private fun objectParticle(word: String): String {
+        val last = word.lastOrNull() ?: return "를"
+        if (last !in '가'..'힣') return "를"
+        return if ((last - '가') % 28 == 0) "를" else "을"
     }
 
     private fun screenOn(ctx: Context): Boolean {
