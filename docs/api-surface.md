@@ -76,7 +76,7 @@
 | POST `/api/lm/:section` | `{title, body?, data?}` | `{id, section, title, schema_version}` (201) · **data는 스키마 검증 통과분만** | `lifemodel.create` |
 | PUT `/api/events/:id/protect` | `{protect_from?, protect_level?, protect_sleep_min?, protect_prep_min?}` 또는 `{protect:false}` | `{id, protected, ...}` · **본문 수정과 분리**(마감된 날에도 부착 가능) | `events.setProtect` |
 | GET `/api/guard/events?limit` | — | 발동 이력 rows | `guard.events` |
-| GET `/api/guard/schedule?days` | — | `{d, mode, friction_mult, events:[{event_id, start, deadline, fires[]}], wake:[{date, at, leaveBy, title, source}]}` · **기기가 하루 1회 pull**. `wake` = 하루에 하나, 그 날 **가장 이른 약속**(수업 ∪ 시각 있는 일정 · 지난 것·종일은 제외) — Level 2가 밤마다 다른 말을 할 재료(T-60 · ADR-047). **재료이지 판정이 아니다**. `leaveBy` = `at − (이동+준비)` 기상 시각(T-61) — **접는 것은 시각까지고 "몇 시간"은 기기가 그 자리에서 잰다** | `guard.schedule` |
+| GET `/api/guard/schedule?days` | — | `{d, mode, friction_mult, events:[{event_id, start, deadline, fires[]}], wake:[{date, at, leaveBy?, title, source}]}` · **기기가 하루 1회 pull**. `wake` = 하루에 하나, 그 날 **가장 이른 약속**(수업 ∪ 시각 있는 일정 · 지난 것·종일은 제외) — Level 2가 밤마다 다른 말을 할 재료(T-60 · ADR-047). **재료이지 판정이 아니다**. `leaveBy` = `at − (이동+준비)` 기상 시각(T-61) — **접는 것은 시각까지고 "몇 시간"은 기기가 그 자리에서 잰다**. ★ **갈 곳을 아는 칸에만 실린다**(T-71 — `class` ∪ `protect_from`이 붙은 event). **모르면 키가 없고**, 기기는 그때 약속까지만 말한다 | `guard.schedule` |
 | POST `/api/guard/events` | `{cause, level, client_id?, fired_at?, event_id?, risk_score?, risk_snapshot?, foreground_app?, source?, reaction?, reason?, ai_used?, ai_verdict?, ai_unavailable_reason?, ai_reason?, asked?}` | `{id, on_date, level, mode, duplicate?}` (201) · **upsert** — `client_id`로 재전송 멱등, 반응 후행 채움. `ai_unavailable_reason`(0016)은 `ai_verdict='unavailable'`일 때만 남고 **닫힌 목록 밖이면 조용히 비운다** — 400을 던지면 기기 `flush()`가 발동 행을 버린다. `ai_reason`(0017)은 그 **반대편**이다 — `approve`·`deny`일 때만 남는 자유 문자열(모델이 쓴 문장)이고, 500자를 넘으면 **거부가 아니라 자른다**(같은 이유). **판정만 담아 뒤늦게 보내도 된다**(T-39): `client_id`만으로 기존 행의 `ai_used`·`ai_verdict`·`ai_unavailable_reason`·`ai_reason`을 **`NULL → 값`으로만** 채운다(`ai_used`는 `0 → 1`만). `cause`·`level`이 없어도 400이 아니고, **`level`은 못 바꾼다**(불변성 트리거). **저장되는 `risk_snapshot`은 보낸 것과 다르다**(T-32): 서버가 §6.6 항을 `server` 키 아래 얹고 `risk_score`를 낸다 — 전부 **`fired_at` 기준**이라 오프라인 큐가 늦게 올라와도 그 밤의 값이다. 기기 항은 이름·값 그대로. `risk_snapshot`을 안 보내면 **얹지 않는다**(둘 다 NULL). **`asked`(T-70 · 0023)는 *"반응 버튼이 사용자 앞에 있었는가"*** 이고 *"알림이 떴는가"* 가 아니다 — boolean 만 받고 **키가 없거나 딴 꼴이면 `NULL`(=모른다)이다.** 거짓으로 접으면 옛 APK의 행이 *"자리가 없었다"* 로 **단언**되어 경계 노릇을 못 한다. `client_id`만으로 **뒤늦게 올려도 되고**(FSI·알림 탭은 발동 시점에 알 수 없다) **`0 → 1`만 오른다**(`MAX`) | `guard.record` |
 | POST `/api/guard/verify` | `{client_id, cause, level_candidate:4, event_id?, risk_snapshot?, foreground_app?}` | `{level:3\|4, approved, reason, ai_used, cached, source}` · **어떤 경우에도 200** — 판정 불가는 `level:3`. `source` = `ai\|cache\|cap\|timeout\|error\|off`. `level_candidate≠4`는 400(격상 전용) | `guard.verifyLevel4` |
 | POST `/api/guard/events/:id/react` | `{reaction, reason?, reacted_at?}` | `{id, reaction, reacted_at}` · 두 번째는 409 | `guard.react` |
@@ -231,6 +231,14 @@
   - `wake[]`의 `leaveBy = at − wakeLeadMin(...)` (T-61 · T-62). ★ **`protect_prep_min`과 같은 간격이다** —
     `protectAxis`가 `start − (prep+sleep)`을 취침 데드라인으로 삼으므로 `start − prep`이 곧 기상 시각이다.
     그래서 보호 일정이 걸린 날은 **그 event의 값을 읽는다**(설정으로 덮으면 같은 날의 알람과 문구가 서로 다른 기상을 가리킨다)
+  - ★★ **`leaveBy`는 갈 곳을 아는 칸에만 실린다 — 모르면 그 키가 아예 없다**(T-71).
+    `source: class` 와 **`protect_from`이 붙은 event** 만 싣는다. 그 밖의 event는 **안 싣는다** —
+    23:59 과제 마감에 이동+준비를 빼고 *"21:59 기상"* 이라 말하던 자리다. **마감은 가는 곳이 아니다.**
+    ⚠️ **신호는 `protect_from`이라는 선언이지 `protect_prep_min`이라는 값이 아니다** — 값은 nullable이고,
+    값이 없어도 `protectAxis`는 설정값으로 기상을 전제하고 **울린다.** 문구가 입을 닫는 것은
+    **알람도 안 울릴 때만** 옳다 — 한쪽만 침묵하면 두 기상이 아무도 모르게 공존한다(T-62가 없앤 그것).
+    ⚠️ **제목의 낱말·시각으로 가르지 않는다** — *"기한"*·*"저녁이면"* 은 해석이다(ADR-037 §실측).
+    ⚠️ **`null` 대신 `at`을 넣지 않는다** — 기기가 *"기상 = 약속 시각"* 으로 읽고 폴백 가지를 안 탄다
   ⚠️ **남은 시간은 접지 않는다** — 접으면 새벽 3시의 문구가 저녁 6시 기준으로 굳는다(T-60 ①). 기기가 `leaveBy − now`를 잰다
 - `record(env, t, input)` → `{id, on_date, level, mode, duplicate?}` · **`fired_at`은 기기 시각**이고 귀속일도 그걸로 계산(오프라인 큐가 나중에 올라오므로)
   - **upsert(0011)**: `client_id`가 이미 있으면 그 행을 돌려주고, 반응만 왔으면 그것만 채운다. 셋을 한 엔드포인트로 받는다 — 발동만 / 발동+반응 동시(오프라인) / 반응 후행

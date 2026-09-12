@@ -3155,6 +3155,141 @@ ok("7c ★ 표를 다시 써도 행이 그대로 건너온다 — 모든 칸 전
   t70RowCopy.rows.n === 1 && t70RowCopy.moved.length === 0 && t70RowCopy.asked === null,
   `칸=${t70RowCopy.n} 밀린칸=${t70RowCopy.moved.join(",") || "없음"} asked=${t70RowCopy.asked}`);
 
+// ── 갈 곳을 모르면 기상 시각을 말하지 않는다 (T-71 · ADR-047 §기상 시각을 정하는 순서) ──
+//
+// `wakePoints`가 **모든** 일정을 *"거기 가야 하는 아침 약속"* 으로 읽었다. 23:59 과제 마감에
+// 이동 60분 + 준비 60분을 뺀 *"21:59 기상"* 을 말했고, 저녁 8시 약속엔 *"18시 기상"* 이라 했다.
+// **마감은 가는 곳이 아니다** — 그 뺄셈에 뜻이 없다.
+//
+// ★★ **그런데 *"모른다"* 는 양쪽이 함께 몰라야 한다.** 문구가 입을 닫는 것은 **알람도 안 울릴
+//    때만** 옳다 — `protectAxis`가 기상을 전제하고 울리는 일정에서 `wakePoints`만 침묵하면
+//    **두 기상이 아무도 모르게 공존한다.** T-62가 없앤 바로 그 모양이다.
+//    ★ 그래서 신호는 `protect_from`이라는 **선언**이지 `protect_prep_min`이라는 **값**이 아니다.
+console.log("\n[T-71] 갈 곳을 모르면 기상 시각을 말하지 않는다");
+
+/* 기대값은 **이 절이 넣은 값**에서 만든다 — 구현에서 베끼면 둘이 함께 틀린다(함정 15).
+ * ⚠️ `T71_OWN`은 설정합과 달라야 한다. 같으면 ①(일정값)과 ②(설정)가 안 갈린다. */
+const T71_C = 35, T71_P = 25, T71_OWN = 95;
+await api("PUT", "/api/settings/wake_commute_min", { value: String(T71_C) });
+await api("PUT", "/api/settings/wake_prep_min", { value: String(T71_P) });
+
+/** 그 날 **가장 이른 약속**이어야 wake 칸에 실린다. 시각은 달력에서 **상대로** 잡는다(함정 12). */
+const t71Slot = async (date: string) => {
+  const cal = (await api("GET", `/api/calendar?start=${date}&end=${date}`)).json;
+  const hm = (s: string) => Number(s.slice(0, 2)) * 60 + Number(s.slice(3, 5));
+  const first = Math.min(12 * 60,
+    ...(cal.classes ?? []).map((c: any) => hm(c.start_time)),
+    ...(cal.events ?? []).filter((e: any) => e.time).map((e: any) => hm(e.time)));
+  const at = Math.max(60, first - 60);
+  return `${String(Math.floor(at / 60)).padStart(2, "0")}:${String(at % 60).padStart(2, "0")}`;
+};
+const t71Make = async (date: string, title: string, protect: object | null) => {
+  const id = (await api("POST", "/api/events", { title, date, time: await t71Slot(date) })).json.id as string;
+  if (protect) {
+    await api("PUT", `/api/events/${id}/protect`,
+      { protect_from: "-1d 00:00", protect_level: 4, ...protect });
+  }
+  return id;
+};
+
+/* 셋을 **서로 다른 날**에 둔다 — 한 날의 wake 칸은 하나뿐이라(가장 이른 약속) 섞으면 둘이 사라진다. */
+const T71_OWN_D = addDays(D, 21), T71_DECL_D = addDays(D, 22), T71_PLAIN_D = addDays(D, 23);
+const T71_PLAIN_TITLE = "T-71 그냥 일정 — 갈 곳을 모른다";
+const t71OwnId = await t71Make(T71_OWN_D, "T-71 값이 붙은 보호 일정", { protect_prep_min: T71_OWN });
+const t71DeclId = await t71Make(T71_DECL_D, "T-71 선언만 한 보호 일정", {});
+await t71Make(T71_PLAIN_D, T71_PLAIN_TITLE, null);
+
+const t71Sched = (await api("GET", "/api/guard/schedule")).json;
+const t71Wake = (d: string) => (t71Sched.wake as any[]).find((w) => w.date === d);
+const t71Plan = (id: string) => (t71Sched.events as any[]).find((e) => e.event_id === id);
+/** 약속과 기상 사이(분). **`leaveBy`에서 되짚는다** — 서버가 접어 보낸 '분'을 읽는 게 아니다. */
+const t71Gap = (w: any) => Math.round((Date.parse(w.at) - Date.parse(w.leaveBy)) / 60_000);
+const t71Has = (w: any) => !!w && typeof w.leaveBy === "string" && Date.parse(w.leaveBy) < Date.parse(w.at);
+
+/* 1 ★ **시간표는 학교로 간다** — 이 티켓이 아무것도 안 뺏는 자리다(T-61 회귀). */
+const t71Cls = (t71Sched.wake as any[]).filter((w) => w.source === "class");
+ok("1 ★ 시간표 칸에는 기상 시각이 실린다 — 갈 곳을 안다 (설정만큼 이르다)",
+  t71Cls.length > 0 && t71Cls.every((w) => t71Has(w) && t71Gap(w) === T71_C + T71_P),
+  `수업칸=${t71Cls.length} 간격=${[...new Set(t71Cls.map(t71Gap))]}(기대 ${T71_C + T71_P})`);
+
+/* 2 ★ **ADR-047 ① 회귀.** 일정에 붙은 값이 설정을 이긴다 — 순서는 `wakeLeadMin`이 정한다. */
+const t71W2 = t71Wake(T71_OWN_D);
+ok("2 ★ protect_prep_min 이 붙은 칸에도 실린다 — 그 값만큼 (ADR-047 ① 회귀)",
+  t71Has(t71W2) && t71W2.source === "event" && t71Gap(t71W2) === T71_OWN
+  && T71_OWN !== T71_C + T71_P,
+  `간격=${t71W2 ? t71Gap(t71W2) : "칸없음"}(기대 ${T71_OWN}) 설정합=${T71_C + T71_P}`);
+
+/* 2b ★ **§정정이 연 자리.** `protect_prep_min`은 nullable이다 — **선언이 신호**이지 값이 아니다.
+ *    값이 없으면 ②(설정)로 간다. 여기서 안 실으면 알람만 기상을 전제하고 문구는 침묵한다. */
+const t71W2b = t71Wake(T71_DECL_D);
+ok("2b ★ protect_from 만 붙은 칸에도 실린다 — 설정만큼 (선언이 신호다)",
+  t71Has(t71W2b) && t71W2b.source === "event" && t71Gap(t71W2b) === T71_C + T71_P,
+  `간격=${t71W2b ? t71Gap(t71W2b) : "칸없음"}(기대 ${T71_C + T71_P})`);
+
+/* 3 ★ **본체.** 보호도 시간표도 아닌 칸에 **이동·준비를 뺀 시각**이 없다.
+ *   ⚠️ 여기서 세는 것은 *"약속보다 이른 값이 있는가"* 다 — **3과 5가 서로 다른 쪽을 막고,
+ *      둘을 합쳐야 *"leaveBy 가 없다"* 가 된다**(`at` 미만은 3이, `at` 이상은 5가 문다).
+ *      한 검사로 합치면 변이 둘이 함께 죽어 어느 쪽이 깨졌는지 못 가른다(AGENT-CHAIN §8). */
+const t71W3 = t71Wake(T71_PLAIN_D);
+const t71Invented = (w: any) => !!w && w.leaveBy != null && Date.parse(w.leaveBy) < Date.parse(w.at);
+ok("3 ★ 보호도 시간표도 아닌 칸에는 기상 시각이 없다 — 지어내지 않는다 (본체)",
+  !!t71W3 && t71W3.source === "event" && !t71Invented(t71W3),
+  `칸=${t71W3 ? JSON.stringify(t71W3) : "없음"}`);
+
+/* 4 ★ **3의 짝.** *"모른다"* 가 *"안 말한다"* 로 번지면 약속 자체가 사라진다 —
+ *   기기의 폴백 가지(`leaveBy <= 0`)가 말할 재료가 `at`·`title`이다. */
+ok("4 ★ 그 칸도 약속 자체는 말한다 — date·at·title 이 그대로다 (3의 짝)",
+  !!t71W3 && t71W3.date === T71_PLAIN_D && t71W3.title === T71_PLAIN_TITLE
+  && typeof t71W3.at === "string" && Number.isFinite(Date.parse(t71W3.at)),
+  `date=${t71W3?.date} at=${t71W3?.at} title=${t71W3?.title}`);
+
+/* 5 ★ **조용한 대체 금지.** `null` 대신 `at`을 넣으면 기기는 *"기상 = 약속 시각"* 으로 읽고
+ *   `leaveBy <= 0` 폴백을 **안 탄다** — 없는 것과 전혀 다른 결과다. 값이 있으니 3은 안 문다.
+ *   ★ **전수로 쓴다**: 한 칸이 아니라 응답의 모든 칸에 그런 자리가 없어야 한다. */
+const t71Sub = (t71Sched.wake as any[])
+  .filter((w) => w.leaveBy != null && Date.parse(w.leaveBy) >= Date.parse(w.at));
+ok("5 ★ 기상 시각 자리에 약속 시각을 대신 넣지 않았다 (null 이거나 없다 · 전수)",
+  t71Sub.length === 0, `대체된칸=${t71Sub.map((w) => w.date).join(",") || "없음"}`);
+
+/* 6 **`wakeLeadMin`의 세 갈래가 그대로다** (스캐너). 이 티켓이 바꾼 것은 *"부를 것인가"* 이지
+ *   그 안의 계산이 아니다 — 갈래가 하나라도 빠지면 이 티켓이 범위를 넘은 것이다.
+ *   ⚠️ **`\r`를 먼저 걷는다**(함정 16) · ★ **스캐너가 살아 있는가를 함께 센다**(함정 17). */
+const t71Src = readFileSync(join(here, "../src/services/guard.ts"), "utf8").replace(/\r/g, "");
+const t71LeadOf = (src: string) =>
+  (/function wakeLeadMin\([\s\S]*?\n\}/.exec(src)?.[0] ?? "").replace(/\/\/.*$/gm, "");
+const t71Branches = (body: string) => [
+  /prepMin != null/.test(body) && /return prepMin/.test(body),   // ① 일정의 값
+  /LEAD_COMMUTE_KEY/.test(body) && /LEAD_PREP_KEY/.test(body),   // ② 설정
+  /DEFAULT_COMMUTE_MIN/.test(body) && /DEFAULT_PREP_MIN/.test(body),   // ③ 상수
+];
+const t71Lead = t71LeadOf(t71Src);
+/** 갈래를 **하나씩** 지운 본문을 먹인다 — i번째 변이가 i번째 갈래만 꺼야 스캐너가 눈이 밝은 것이다. */
+const t71Bites = [
+  t71Lead.replace(/if \(prepMin != null\) return prepMin;/, ""),
+  t71Lead.replace(/LEAD_COMMUTE_KEY/g, "X"),
+  t71Lead.replace(/DEFAULT_PREP_MIN/g, "0"),
+].every((m, i) => t71Branches(m)[i] === false);
+ok("6 wakeLeadMin 의 세 갈래가 그대로다 — 스캐너가 살아 있다 (갈래를 지우면 문다)",
+  t71Lead.length > 0 && t71Branches(t71Lead).every(Boolean) && t71Bites,
+  `함수=${t71Lead.length}자 갈래=${t71Branches(t71Lead).join(",")} 뭄=${t71Bites}`);
+
+/* 7 ★★ **이 티켓의 안전핀.** *"모른다"* 는 양쪽이 함께 몰라야 한다 — **예약이 기상을 전제하고
+ *    울리는 일정은 문구도 같은 기상을 말해야** 한다. 이 명제가 이 티켓의 첫 전제를 실제로 잡았다.
+ *    ⚠️ **기대값을 `wake` 쪽에서 만들지 않는다**(T-62 #4와 같은 이유) — `start`·`prep_min`은
+ *       `protectAxis`가, `leaveBy`는 `wakePoints`가 낸 값이다. **두 함수를 각각 부른다.**
+ *    ★ **전수로 쓴다**: 픽스처 둘만이 아니라, 예약이 선 일정이 wake 칸에 있으면 전부 그래야 한다. */
+const t71Agree = (w: any, p: any) => !!w && !!p
+  && Date.parse(w.leaveBy) === Date.parse(p.start) - p.prep_min * 60_000;
+const t71Apart = (t71Sched.events as any[])
+  .map((p) => ({ p, w: (t71Sched.wake as any[]).find((w) => w.date === p.date && w.title === p.title) }))
+  .filter((r) => r.w && !t71Agree(r.w, r.p));
+ok("7 ★ 예약이 전제하는 기상과 문구가 말할 기상이 같다 — 한쪽만 침묵하지 않는다 (전수)",
+  t71Agree(t71Wake(T71_DECL_D), t71Plan(t71DeclId))
+  && t71Agree(t71Wake(T71_OWN_D), t71Plan(t71OwnId)) && t71Apart.length === 0,
+  `선언만=${t71Agree(t71Wake(T71_DECL_D), t71Plan(t71DeclId))}`
+  + ` 값붙음=${t71Agree(t71Wake(T71_OWN_D), t71Plan(t71OwnId))}`
+  + ` 갈린칸=${t71Apart.map((r) => `${r.p.date}/${r.p.title}`).join(",") || "없음"}`);
+
 // ── 결과 ─────────────────────────────────────────────────────
 console.log(`\n${"=".repeat(46)}\n통과 ${passN} · 실패 ${fails.length}`);
 if (fails.length) { console.log("실패:\n  - " + fails.join("\n  - ")); process.exit(1); }

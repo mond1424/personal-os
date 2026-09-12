@@ -356,6 +356,19 @@ function protectAxis(e: db.EventRow, offsetMin: number, s: Record<string, string
  *   남아도 8시엔 일어나야 하면 실제로 잘 수 있는 것은 3시간 30분이다.
  *   **1~2시간을 부풀려 말하는 문구는 사실이 아니라 위안이고, 틀린 사실은 명령보다 빨리
  *   신뢰를 깎는다.** ⚠️ 역산은 **여기 한 곳**이다 — 기기에 이동·준비를 두면 두 벌이 된다.
+ *
+ * ★★ **그런데 갈 곳을 모르면 기상 시각을 말하지 않는다** (T-71).
+ *   T-61은 **모든** 칸에 `leaveBy`를 실었고, 그래서 23:59 과제 마감에 이동 60분 + 준비 60분을
+ *   뺀 *"21:59 기상"* 을 말했다. **마감은 가는 곳이 아니다** — 그 뺄셈에 뜻이 없다.
+ *
+ *   ```
+ *   source: class            ★ 안다. 시간표는 학교로 간다
+ *   protect_from 이 붙었다   ★ 안다. 사용자가 *"이 시각에 있어야 한다"* 고 선언했다
+ *   그 밖의 event            ⚠️ 모른다 — 싣지 않는다
+ *   ```
+ *
+ *   ⚠️ **제목의 낱말로도 시각으로도 가르지 않는다** — *"기한"*·*"저녁이면"* 은 **해석**이고
+ *   ADR-037 §실측이 그것을 금했다. 신호는 **사용자가 남긴 선언** 하나다.
  */
 const WAKE_WINDOW_DAYS = 30;
 
@@ -375,8 +388,9 @@ async function wakePoints(env: Env, t: TimeCtx, days: number) {
   // ★ **순서를 여기서 다시 적지 않는다** (T-62). 수업엔 붙는 값이 없으니 ①은 늘 비고 ②→③만 남는다.
   const lead = wakeLeadMin(null, s);
 
-  const best = new Map<string, { at: string; leaveBy: string; title: string; source: "class" | "event" }>();
-  const put = (date: string, time: string, title: string, source: "class" | "event", leadMin: number) => {
+  const best = new Map<string, { at: string; leaveBy?: string; title: string; source: "class" | "event" }>();
+  /** `leadMin`이 `null`이면 **갈 곳을 모른다** — 그때는 `leaveBy`를 아예 안 싣는다 (T-71). */
+  const put = (date: string, time: string, title: string, source: "class" | "event", leadMin: number | null) => {
     const at = new Date(`${date}T${time}:00${offsetSuffix(t.offsetMin)}`);
     const ms = at.getTime();
     if (!Number.isFinite(ms) || ms <= nowMs) return;
@@ -387,7 +401,9 @@ async function wakePoints(env: Env, t: TimeCtx, days: number) {
     //   기기는 `leaveBy − now`만 잰다. ⚠️ `at`은 그대로 둔다 — 문구가 약속 자체도 말해야 한다.
     best.set(date, {
       at: at.toISOString(),
-      leaveBy: new Date(ms - leadMin * 60_000).toISOString(),
+      // ★ **모르면 안 싣는다** (T-71). 없는 칸은 기기의 폴백 가지로 간다 — *"약속까지"* 를 말한다.
+      //   ⚠️ `at`을 대신 넣지 않는다: 그러면 기기가 **약속 시각을 기상 시각으로** 읽는다.
+      ...(leadMin == null ? {} : { leaveBy: new Date(ms - leadMin * 60_000).toISOString() }),
       title, source,
     });
   };
@@ -395,7 +411,18 @@ async function wakePoints(env: Env, t: TimeCtx, days: number) {
   // ★ **보호 일정은 자기 값을 쓴다** (T-61 ③ · `wakeLeadMin`의 ①). `protect_prep_min`이 재는 것과
   //   여기가 재는 것이 **같은 간격**이라, 설정으로 덮으면 같은 날의 취침 데드라인과 기상 시각이
   //   서로 다른 기상을 가리킨다 — 알람은 07:30을 전제하는데 문구는 "8시 기상"이라 쓰는 밤이 된다.
-  for (const e of evs.results) if (e.time) put(e.date, e.time, e.title, "event", wakeLeadMin(e.protect_prep_min, s));
+  //
+  // ★★ **갈 곳을 아는 것은 `protect_from`이 말한다 — 값이 아니라 선언이 신호다** (T-71).
+  //   보호를 건다는 것은 *"이 시각에 있어야 한다"* 는 뜻이고, **마감에 보호를 거는 사람은 없다.**
+  //   ①과 ②→③의 갈래는 `wakeLeadMin`이 정한다 — 여기서 다시 적지 않는다(T-62).
+  //   ⚠️ **문구가 입을 닫는 것은 알람도 안 울릴 때만 옳다.** `protectAxis`가 기상을 전제하고
+  //   울리는 일정에서 여기만 침묵하면 **두 기상이 아무도 모르게 공존한다** — T-62가 없앤 바로 그것이다.
+  //   `protect_prep_min`은 `protect_from` 없이 설 수 없다(`services/events.ts` — 넷이 함께 쓰이고 함께 지워진다).
+  for (const e of evs.results) {
+    if (!e.time) continue;
+    put(e.date, e.time, e.title, "event",
+      e.protect_from != null ? wakeLeadMin(e.protect_prep_min, s) : null);
+  }
 
   return [...best.entries()]
     .sort((a, b) => a[0].localeCompare(b[0]))

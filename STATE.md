@@ -18,7 +18,31 @@
 
 - repo: https://github.com/mond1424/personal-os
 - branch: main
-- 마지막 코드 변경: **T-69** (2026-09-12 · **마이그레이션 없음 · 서버·프런트 무변경 ·
+- 마지막 코드 변경: **T-71** (2026-09-12 · **마이그레이션 없음 · APK 무관 · 프런트 무변경 ·
+  ★ 배포 필요** — 서버(`src/services/guard.ts` `wakePoints`)+검사. **갈 곳을 모르면 기상 시각을
+  말하지 않는다.** 23:59 과제 마감에 이동 60분 + 준비 60분을 뺀 *"21:59 기상"* 을 말하고 있었다).
+  - ⚠️ **`npm run deploy`만 필요하다. APK는 그대로다** — `android/`·`public/`·`migrations/`를
+    한 줄도 안 열었다. 기기는 T-61이 만들어 둔 폴백 가지를 타므로 **재설치가 필요 없다**
+    (`GuardWatch.kt:259` `if (w.leaveBy <= 0L)` · `GuardSync.kt:94` `optString` → `""` → `0L`).
+    **배포 여부는 이 층이 모른다** — `CLAUDE.md` §사람이 하는 것의 상태의 명령이 말한다.
+  - ★ **기준은 `protect_from`이라는 선언이지 `protect_prep_min`이라는 값이 아니다.**
+    티켓이 처음 적은 *"보호 일정은 `protect_prep_min`이 붙어 있다"* 가 **틀렸고**, 그대로
+    구현했더니 **T-62 검사 4가 죽었다** — 값이 없어도 `protectAxis`는 설정값으로 기상을 전제하고
+    울리므로 **문구만 침묵하면 두 기상이 갈린다.** Cowork가 §정정으로 기준을 바꿨다.
+    ★ **`protect_prep_min`은 `protect_from` 없이 설 수 없어**(`services/events.ts` — 넷이 함께
+    쓰이고 함께 지워진다) 문이 **조건 하나**로 끝난다.
+  - ⚠️ **`wakeLeadMin`·`protectAxis`는 한 글자도 안 고쳤다** — 바뀐 것은 *"그 함수를 부를 것인가"*
+    뿐이고, ①/②→③ 순서는 여전히 `wakeLeadMin` 하나가 갖는다(T-62).
+  - ⚠️ **안 한 것**: 마감에 보호를 걸면 **알람은 여전히 역산해 울린다**(`protectAxis` 그대로).
+    그리고 **마감·저녁 약속에 무엇을 말할지**는 안 정했다 — 기기의 폴백 문구가 그대로 나간다
+    (*"지금 자면 20시간 — 23:59 과제 기한"*). **그건 설계 질문이고 Cowork가 정한다**(티켓 §안 하는 것).
+  - 🌙 **판정은 마감·저녁 약속만 있는 밤이 취침 창에 걸릴 때다** — ★★ *"N시 기상"* 이 안 나오는가.
+    회귀 축은 **수업 있는 날 밤**: *"8시 기상 · 10시 <과목>"* 이 그대로여야 한다.
+  - 확인법(배포 뒤 — 마감 칸에 그 키가 없는 것이 증거다):
+    ```bash
+    curl -s "https://personal-os.mai-pos.workers.dev/api/guard/schedule" | python -c "import sys,json;[print(w['date'],w.get('source'),'leaveBy' in w,w['title']) for w in json.load(sys.stdin)['wake']]"
+    ```
+- 그 앞 코드 변경: **T-69** (2026-09-12 · **마이그레이션 없음 · 서버·프런트 무변경 ·
   ★ APK 필요 · 배포 불필요** — Android(`guard/`)+검사. **한 문장 안의 두 수가 서로를 반박했다.**
   `GuardNight` 신설(밤의 정의 + 방해 계수) · `GuardActivityLog.screenOnMinSince` 신설 ·
   `GuardNotifications.fire()`가 방해를 센다 · 재확인 문구가 그 레벨의 실제 버튼 이름을 말한다).
@@ -39,7 +63,7 @@
     방향이 안전한 쪽이다. 게이트도 같은 버퍼를 쓰므로 새 한계가 아니다).
     ② **진단 발동(`testNotify`)도 방해로 세어진다** — 밤에 시험 발동을 쏘면 문구의 수가 오른다.
     ★ **★★ 판정이 보는 `firedTonight`에는 영향이 없다.**
-- 그 앞 코드 변경: **T-70** (2026-09-11 · **★ 마이그레이션 있음(0023) · ★ APK 필요 · 배포 필요** —
+- 그 앞의 앞: **T-70** (2026-09-11 · **★ 마이그레이션 있음(0023) · ★ APK 필요 · 배포 필요** —
   서버+Android+프런트(라벨 한 줄)+검사. **안 물은 것을 안 했다고 적지 않는다**.
   `guard_events.asked` 신설 · `reaction`에 `'unasked'` · `finalizeIgnored`가 레벨이 아니라
   `asked`로 가른다 · 집계 넷 동시 이동 · `GuardAlertActivity.onCreate`가 `markAsked`를 부른다).
@@ -79,7 +103,7 @@
     ```bash
     curl -s https://personal-os.mai-pos.workers.dev/api/guard/events | grep -c unasked
     ```
-- 그 앞 코드 변경: **T-68** (2026-09-10 · **마이그레이션 없음 · 서버·프런트 무변경 ·
+- 그 앞: **T-68** (2026-09-10 · **마이그레이션 없음 · 서버·프런트 무변경 ·
   ★ APK 필요** — Android(`guard/`)+검사. 밤 개입의 문구가 **오늘 밤 몇 번째인지 말한다**.
   `GuardWatch`에 `TALLY_FMT` 신설 · `GuardSettings.watchTallyFrom`(기본 2 · `coerceIn(2,20)`) ·
   `GuardPlugin.setWatch`가 `tallyFrom`을 받고 `watchStatus`가 돌려준다).
@@ -2151,8 +2175,16 @@ Get-ChildItem migrations\*.sql | Select-Object -Last 1 Name   # 여기서 +1
 - style.css      https://raw.githubusercontent.com/mond1424/personal-os/main/public/style.css
 
 ## 기준선
-typecheck 통과 / **smoke 444** / **front 467** / 실패 0 / verify exit 0
-**2026-09-12 (T-69).** smoke는 **안 움직였다 — 서버를 한 줄도 안 열었다**(마이그레이션 없음).
+typecheck 통과 / **smoke 452** / **front 467** / 실패 0 / verify exit 0
+**2026-09-12 (T-71).** smoke +8은 전부 T-71의 새 검사이고, **front는 안 움직였다 —
+`public/`을 한 줄도 안 열었으므로 움직였으면 범위를 넘은 것이다**(T-70과 같은 모양의 검사).
+★ **변이 일곱 중 다섯이 하나씩만 죽었다**; 겹친 둘(2+7 · 2+6)은 **좁힐 수 없고 증명이 있다** —
+검사가 세는 명제 자체를 변이가 거짓으로 만든다(티켓 §변이).
+★ **그중 하나가 이 티켓의 전제를 실제로 잡았다** — 티켓의 첫 표(`protect_prep_min`이 있는 event만
+"안다")대로 구현하자 **T-62 검사 4가 죽었다.** `protect_prep_min`은 nullable이고, 값이 없어도
+`protectAxis`는 설정값으로 기상을 전제하고 **울린다** — 문구만 침묵하면 두 기상이 갈린다.
+Cowork가 §정정으로 기준을 **`protect_from`이라는 선언**으로 바꿨다.
+그 앞이 같은 날의 T-69: smoke는 **안 움직였다 — 서버를 한 줄도 안 열었다**(마이그레이션 없음).
 front +8은 전부 T-69의 새 검사다. ★ **그중 셋은 스캐너가 아니다** — `GuardActivityLog`의 두 함수를
 **Kotlin 본문 그대로 JS로 옮겨 한 밤을 돌린다**(관계는 정규식으로 못 잰다).
 ★ **변이 여덟 중 일곱이 하나씩만 죽었다**; 못 가른 하나(M7a)는 **필연이고 증명이 있다**(티켓 §변이).
@@ -2185,6 +2217,21 @@ front +8은 전부 T-69의 새 검사다. ★ **그중 셋은 스캐너가 아�
 front가 **257**로 나왔다 — T-26은 `public/`·`front.mjs`를 건드리지도 않았는데. 셋을 stash하고
 다시 재니 256이었다(smoke 279는 같았다). **오염된 트리에서 잰 숫자가 원장에 들어가면 그 줄은
 거짓이고, 다음 티켓의 '앞 숫자'가 어긋난다.** 병렬 발행은 Cowork가 `AGENT-CHAIN.md` §3로 막았다.
+
+(T-71 갈 곳을 모르면 기상 시각을 말하지 않는다: smoke **444 → 452(+8)** ·
+ front **467 → 467(변화 없음)** · **마이그레이션 없음 · APK 무관 · 프런트 무변경 · ★ 배포 필요** ·
+ 서버(`wakePoints`)+검사. 23:59 과제 마감에 이동 60분 + 준비 60분을 빼고 *"21:59 기상"* 이라 말했다 —
+ **마감은 가는 곳이 아니다.** `wakePoints`가 **모든** 일정을 *"거기 가야 하는 아침 약속"* 으로 읽었다.
+ ★ **갈 곳을 아는 칸에만 `leaveBy`를 싣는다**: `source: class` ∪ `protect_from`이 붙은 event.
+ 모르면 **키를 아예 안 싣고**, 기기는 T-61이 만들어 둔 폴백 가지(`leaveBy <= 0L`)를 탄다 —
+ **그래서 APK가 안 든다.**
+ ★★ **신호는 선언이지 값이 아니다** — `protect_prep_min`은 nullable인데 값이 없어도 알람은
+ 설정값으로 기상을 전제하고 울린다. ***"모른다"는 양쪽이 함께 몰라야 한다.***
+ ⚠️ **`wakeLeadMin`·`protectAxis`는 한 글자도 안 고쳤다** — 바뀐 것은 *"그 함수를 부를 것인가"* 뿐이다.
+ ★ **3과 5를 겹치지 않게 갈랐다**(`at`보다 이른 값 / `at` 이상인 값) — 합쳐야 *"없다"* 가 되고,
+ 한 검사로 쓰면 **`at` 대체와 지어내기가 한 빨간불**이 된다.
+ ⚠️ **`android/`는 안 열었다** — 폴백 가지가 있는지만 읽어 확인했다(`GuardWatch.kt:259` ·
+ `GuardSync.kt:94`). `optString`이 없는 키를 `""`로 주므로 **키 없음이 `null`보다 안전하다**.)
 
 (T-69 한 문장 안의 두 수가 서로를 반박한다: smoke **444 → 444(변화 없음)** ·
  front **459 → 467(+8)** · **마이그레이션 없음 · 서버·프런트 무변경 · ★ APK 필요 · 배포 불필요** ·
