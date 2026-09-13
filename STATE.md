@@ -611,18 +611,69 @@ T-53이 *"9월 시간표 전체가 이 한 줄에 달렸다"* 고 적은 자리�
 안 고른 6개 중 `gamjaalmond@gmail.com`·`ijihun4719@gmail.com`·`jihoon6974@gmail.com` 셋은 못 읽는다.
 ★ **uclass도 0건, 폰 캘린더도 0건 — ADR-037의 미확인은 우회되지 않았다.**
 
-> **붙는 법이 바뀌었다(2026-09-04).** 폰이 Android 11+ 무선 디버깅이라 `5555` 스캔이 아니라
-> **`adb mdns services`가 주소를 그대로 준다**(`_adb-tls-connect`). 실측: `172.30.1.100:42477` —
-> ⚠️ **포트가 매번 바뀌므로 적어 두지 않는다.** 그 뒤는 `test/device.mjs`가 포워딩까지 다 한다.
+> ## 폰에 붙는 법 (여기 한 곳에만 둔다 · 2026-09-13 개정)
+>
+> **길이 둘이고, 어느 쪽이 열려 있는지는 폰의 상태다 — 적어 두지 말고 확인한다.**
+>
+> | 길 | 포트 | 페어링 | 사는 기간 |
+> |---|---|---|---|
+> | **무선 디버깅**(Android 11+ 토글) | 매번 바뀌는 랜덤 포트 · TLS | **필요하다** | 토글이 켜진 동안 |
+> | `adb tcpip 5555`(USB로 한 번 건다) | `5555` 고정 · 평문 | 없다 | **재부팅 전까지** (`FIELD-TEST-NIGHT.md` §④) |
+>
+> ⚠️ **둘은 동시에 열려 있을 수 있다.** 2026-09-13 실측: 무선 디버깅이 켜진 채 `5555`도 열려 있었고
+> **`5555`는 페어링 없이 그냥 붙었다** — 예전에 건 `tcpip`이 아직 살아 있었던 것이다.
+> **그러니 `5555`로 붙었다고 페어링이 돼 있다는 뜻이 아니고, 재부팅 한 번이면 그 길만 사라진다.**
+>
+> ```powershell
+> $env:ADB_MDNS_OPENSCREEN='1'   # ★ 이것 없이는 이 PC에서 0건이 나온다
+> adb kill-server; adb start-server
+> adb mdns services              # adb-<시리얼> _adb-tls-connect._tcp <IP>:<포트>
+> ```
+>
+> ⚠️ **주소도 포트도 적어 두지 않는다** — 둘 다 매번 바뀐다.
+> (2026-09-04엔 `172.30.1.100`, 09-13엔 `172.30.1.81`이었다. 포트만 그런 줄 알고 IP를 적어 뒀다가
+> 낡았다 — 기준선을 두 곳에 두지 않는 것과 같은 이유다.)
+>
+> ⚠️ **`0건`은 폰이 꺼졌다는 증거가 아니다.** 기본 백엔드(`adb discovery`)는 이 PC에서 폰을 **못 찾는다** —
+> Wi-Fi Direct 가상 어댑터 둘(`169.254.*`)이 멀티캐스트를 먹는다. `ADB_MDNS_OPENSCREEN=1`로 다시
+> 물어보기 전엔 *"폰이 꺼져 있다"* 로 읽지 않는다. **함정 17이 adb에 앉은 자리다** — 훑기의 0건은
+> 스캐너가 살아 있다는 증거를 먼저 요구한다.
+>
+> **`adb connect`가 거절당하면 원인이 둘로 갈린다 — TCP로 가른다:**
+>
+> ```powershell
+> (Test-NetConnection <IP> -Port <포트>).TcpTestSucceeded
+> ```
+>
+> | TCP | 뜻 | 할 일 |
+> |---|---|---|
+> | `False` | 주소가 낡았거나 폰이 자리에 없다 | mDNS를 다시 본다 |
+> | **`True`** | **폰이 이 PC 키를 잊었다**(페어링 소실) | `adb pair` — 아래 |
+>
+> 페어링 소실은 `~/.android/adb_known_hosts.pb`가 사실상 비는 것으로도 확인된다
+> (`adbkey` 자체는 2023년 그대로다 — **바뀌는 쪽은 늘 폰이다**).
+> ⚠️ **6자리 코드는 폰에만 뜬다 — 이것만은 사람에게 묻는다.**
+> 폰: 설정 → 개발자 옵션 → 무선 디버깅 → **페어링 코드로 기기 페어링**(창을 닫으면 코드가 죽는다).
+> 거기 뜨는 **페어링 포트는 `_adb-tls-connect`의 포트와 다르다** — 화면 값을 그대로 쓴다.
+>
+> ```powershell
+> adb pair <IP>:<페어링포트> <6자리>      # → Successfully paired
+> adb devices -l                          # 페어링되면 mDNS로 자동으로 붙는다
+> ```
+>
+> 그 뒤는 `test/device.mjs`가 포워딩까지 다 한다.
 > 폰 캘린더에 쓰는 것도 사람 손이 필요 없었다 — `adb shell content insert/delete --uri
 > content://com.android.calendar/events`가 shell 권한으로 통했다.
 
 ## 🔬 T-53 실측 진단 (2026-09-01 · 폰 CDP + adb) — **고치지 않았다. 티켓 범위를 정하는 근거다**
 
 > ⚠️ **이 절은 관측이다.** 폰 상태는 §CLAUDE.md의 명령 셋으로 다시 확인한다.
-> 붙는 법: `adb connect <폰IP>:5555` → `adb forward tcp:9333 localabstract:webview_devtools_remote_<pid>`
+> **붙는 법은 위 §폰에 붙는 법 한 곳에 있다** — 여기 적혀 있던 *"서브넷에서 `5555`가 열린 호스트를
+> 찾는다"* 는 **조건부다**: `adb tcpip 5555`가 살아 있을 때만 참이고, 재부팅 한 번이면 거짓이 된다.
+> 붙은 뒤 CDP까지:
+> `adb forward tcp:9333 localabstract:webview_devtools_remote_<pid>`
 > → `http://127.0.0.1:9333/json/list`의 `webSocketDebuggerUrl`에 `Runtime.evaluate`.
-> **폰 IP는 사람에게 묻지 않는다** — 서브넷에서 5555가 열린 호스트를 찾는다(`FIELD-TEST-NIGHT.md` §준비).
+> **폰 주소는 사람에게 묻지 않는다** — `adb mdns services`가 준다. **묻는 것은 페어링 코드뿐이다.**
 
 ### 확인한 사실 (전부 실측)
 
