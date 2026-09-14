@@ -43,7 +43,7 @@ class SpikeActivity : ComponentActivity() {
                             .background(Ink.paper)
                             .safeDrawingPadding()
                     ) {
-                        CalendarScreen()
+                        SpikeApp()
                     }
                 }
             }

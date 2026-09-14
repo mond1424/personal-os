@@ -38,8 +38,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
@@ -63,12 +64,6 @@ fun weeksOf(ym: YearMonth): List<List<LocalDate>> {
 
 private val WKDAYS = listOf("일", "월", "화", "수", "목", "금", "토")
 
-// 글자 크기를 sp 가 아니라 dp 에서 뽑는다.
-// 웹은 WebView 안 CSS px 이라 시스템 글꼴 배율을 안 탄다. Compose 의 sp 는 탄다.
-// 배율이 1이 아닌 폰에서 둘을 비교하면 "제스처가 다른 것"과 "글자가 큰 것"이 화면에서 섞인다.
-@Composable
-private fun dpSp(v: Float) = with(LocalDensity.current) { v.dp.toSp() }
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CalendarScreen() {
@@ -76,6 +71,7 @@ fun CalendarScreen() {
     val pagerState = rememberPagerState(initialPage = Tuning.CENTER) { Tuning.MONTHS }
     val scope = rememberCoroutineScope()
     var sheetDate by remember { mutableStateOf<LocalDate?>(null) }
+    var innerEnabled by remember { mutableStateOf(true) }
     val sheetState = rememberModalBottomSheetState()
 
     val shownMonth by remember {
@@ -119,27 +115,44 @@ fun CalendarScreen() {
             )
         }
 
-        // 진단 한 줄 — 이 폰의 플랫폼 슬롭이 실제로 몇 dp 인지. 웹의 AXIS_LOCK 20 과 비교하는 수다.
-        // (OEM 이 바꿀 수 있는 값이라 기기에서 읽어야 한다. 화면에만 찍고 제스처엔 관여하지 않는다.)
-        val slopDp = with(LocalDensity.current) { LocalViewConfiguration.current.touchSlop.toDp() }
-        Text(
-            "T-73 스파이크 · 플랫폼 touchSlop ${"%.1f".format(slopDp.value)}dp · 웹 AXIS_LOCK 은 20",
-            fontSize = dpSp(10.5f),
-            color = Ink.faint,
-            modifier = Modifier.padding(start = 10.dp, top = 2.dp),
-        )
-
         Spacer(Modifier.height(14.dp))
 
-        HorizontalPager(
-            state = pagerState,
-            pageSpacing = Tuning.PANE_GAP,
-            beyondViewportPageCount = 1,
-            modifier = Modifier
+        // ★★ D1 — 가장자리 손넘김.
+        // 웹은 `blocked(e)` 훅 하나로 "가장자리 20% 에서 시작한 끌기는 바깥 캐러셀 몫"이라고 갈랐다.
+        // Compose 엔 그 훅이 없다. 안쪽 페이저가 가로 끌기를 전부 먹는데, 달은 121장이라
+        // **끝에 닿는 일이 없어** 중첩 스크롤로는 바깥에 영영 안 넘어간다.
+        //
+        // 그래서 Initial 패스에서 누른 자리를 먼저 보고 userScrollEnabled 를 끈다.
+        // ⚠️ 이건 해결이 아니라 우회다 — 훅이 아니라 **상태를 거쳐 재구성 한 번을 돈다.**
+        //    누름과 끌기 사이(슬롭만큼)가 있어 시간은 충분하지만, 계약이 아니라 경합이다.
+        Box(
+            Modifier
                 .fillMaxWidth()
-                .height(cardH),
-        ) { page ->
-            MonthCard(base.plusMonths((page - Tuning.CENTER).toLong())) { sheetDate = it }
+                .height(cardH)
+                .pointerInput(Unit) {
+                    awaitPointerEventScope {
+                        while (true) {
+                            val e = awaitPointerEvent(PointerEventPass.Initial)
+                            val down = e.changes.firstOrNull { it.pressed && !it.previousPressed }
+                            if (down != null) {
+                                val x = down.position.x
+                                val w = size.width
+                                innerEnabled = x > w * Tuning.EDGE_RATIO &&
+                                    x < w * (1f - Tuning.EDGE_RATIO)
+                            }
+                        }
+                    }
+                }
+        ) {
+            HorizontalPager(
+                state = pagerState,
+                pageSpacing = Tuning.PANE_GAP,
+                beyondViewportPageCount = 1,
+                userScrollEnabled = innerEnabled,
+                modifier = Modifier.fillMaxSize(),
+            ) { page ->
+                MonthCard(base.plusMonths((page - Tuning.CENTER).toLong())) { sheetDate = it }
+            }
         }
 
         Spacer(Modifier.height(10.dp))
@@ -189,7 +202,7 @@ private fun MonthCard(ym: YearMonth, onDay: (LocalDate) -> Unit) {
             WKDAYS.forEachIndexed { i, w ->
                 Text(
                     w,
-                    fontSize = dpSp(10.5f),
+                    style = boxedStyle(10.5f, 13f),
                     color = if (i == 0) Ink.sun else Ink.faint,
                     modifier = Modifier
                         .weight(1f)
@@ -270,14 +283,13 @@ private fun Cell(
                         .background(Ink.ink),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Text("${date.dayOfMonth}", fontSize = dpSp(10f), color = Ink.paper)
+                    Text("${date.dayOfMonth}", style = boxedStyle(10f, 12f), color = Ink.paper)
                 }
             } else {
                 Text(
                     "${date.dayOfMonth}",
-                    fontSize = dpSp(10.5f),
+                    style = boxedStyle(Tuning.D_FONT, Tuning.D_LINE),
                     color = if (mut) Ink.faint else Ink.sub,
-                    lineHeight = dpSp(12f),
                 )
             }
             if (data?.diary == true) {
@@ -360,11 +372,12 @@ private fun EvLine(
     dot: Boolean = false,
 ) {
     val alpha = (if (past) 0.55f else 1f) * dim
+    // ★ 행 높이는 유도된 값이다 — 줄 상자(EV_LINE) + 위아래 패딩. 가정한 14dp 가 아니다.
     Row(
         Modifier
             .fillMaxWidth()
-            .padding(top = 2.5.dp)
-            .height(14.dp),
+            .padding(top = Tuning.EV_GAP)
+            .height(Tuning.EV_ROW),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(
@@ -378,9 +391,8 @@ private fun EvLine(
             modifier = Modifier
                 .weight(1f)
                 .padding(start = 4.dp, end = 2.dp),
-            fontSize = dpSp(9f),
+            style = boxedStyle(Tuning.EV_FONT, Tuning.EV_LINE, weight),
             color = ink.copy(alpha = alpha),
-            fontWeight = weight,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             textDecoration = if (strike) TextDecoration.LineThrough else TextDecoration.None,
@@ -397,9 +409,8 @@ private fun EvLine(
         if (suffix != null) {
             Text(
                 suffix,
-                fontSize = dpSp(8.5f),
+                style = boxedStyle(8.5f, Tuning.EV_LINE, FontWeight.Bold),
                 color = Ink.faint.copy(alpha = alpha),
-                fontWeight = FontWeight.Bold,
             )
         }
     }

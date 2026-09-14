@@ -29,6 +29,26 @@ android {
         compose true
     }
 
+    buildTypes {
+        // ★ 왕복 1 ③ — 렉을 판정하려면 디버그 빌드로는 안 된다.
+        // debuggable=true 면 ART 가 최적화를 끄고 JVMTI 훅이 붙는다. 그 상태의 프레임 시간은
+        // "페이저가 느린 것"과 "빌드가 느린 것"을 화면에서 같게 만든다.
+        //
+        // minifyEnabled 는 껐다 — R8 은 주로 크기와 시작 시간에 걸리지, 프레임 시간이 아니다.
+        // 버릴 코드에 R8 을 켜면 얻는 것 없이 런타임 크래시 위험만 는다.
+        // ⚠️ perf 로도 렉이 남으면 그때 켜는 것이 다음 지렛대다(R8 + baseline profile).
+        //
+        // ⚠️ release 는 여전히 없다 — 격리 3겹을 안 흔든다.
+        // 서명은 디버그 키라 릴리스 앱을 덮을 수 없는 것도 그대로다.
+        perf {
+            initWith debug
+            debuggable false
+            minifyEnabled false
+            signingConfig signingConfigs.debug
+            matchingFallbacks = ['release', 'debug']
+        }
+    }
+
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_21
         targetCompatibility JavaVersion.VERSION_21
