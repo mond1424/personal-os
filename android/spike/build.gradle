@@ -1,0 +1,58 @@
+// T-73 Compose 스파이크 — 버릴 코드다. 지금 쓰는 앱(:app)과 한 글자도 안 섞인다.
+//
+// 격리 세 겹:
+//   1. 별도 모듈  :spike
+//   2. 별도 applicationId  dev.mond1424.personalos.spike  (폰에 따로 깔린다)
+//   3. release 변이 자체를 비활성화  → gradlew assembleRelease 가 이 모듈을 아예 안 본다
+plugins {
+    id 'org.jetbrains.kotlin.plugin.compose' version '2.1.0'
+}
+
+apply plugin: 'com.android.application'
+apply plugin: 'org.jetbrains.kotlin.android'
+
+android {
+    namespace = "dev.mond1424.personalos.spike"
+    compileSdk = rootProject.ext.compileSdkVersion
+
+    defaultConfig {
+        applicationId "dev.mond1424.personalos.spike"
+        // :app 은 24. 스파이크는 26 — java.time 을 desugaring 없이 쓰려고 올렸다.
+        // 사용자 폰은 Android 12 이상이므로 측정에 영향이 없다.
+        minSdkVersion 26
+        targetSdkVersion rootProject.ext.targetSdkVersion
+        versionCode 1
+        versionName "T-73"
+    }
+
+    buildFeatures {
+        compose true
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_21
+        targetCompatibility JavaVersion.VERSION_21
+    }
+
+    kotlinOptions {
+        jvmTarget = '21'
+    }
+}
+
+// 릴리스 변이 제거 — 스파이크가 릴리스 빌드에 섞이는 것을 구조적으로 불가능하게 만든다.
+// (티켓 금지: "스파이크를 릴리스 빌드에 넣기")
+androidComponents {
+    beforeVariants(selector().withBuildType("release")) { variantBuilder ->
+        variantBuilder.enable = false
+    }
+}
+
+dependencies {
+    def composeBom = platform('androidx.compose:compose-bom:2025.04.01')
+    implementation composeBom
+    implementation 'androidx.compose.ui:ui'
+    implementation 'androidx.compose.ui:ui-graphics'
+    implementation 'androidx.compose.foundation:foundation'
+    implementation 'androidx.compose.material3:material3'
+    implementation 'androidx.activity:activity-compose:1.10.1'
+}
