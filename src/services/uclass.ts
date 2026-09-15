@@ -1,8 +1,13 @@
 // 학사 일정 수집 (T-41 · ADR-037) — cron이 iCal 토큰 URL을 읽어 `collected_items`에 쌓는다.
 //
-// ★ **해석하지 않는다.** `SUMMARY`·`DESCRIPTION`은 원문 그대로 저장한다.
-//   강좌 구분이 어디 실리는지도, 과제 due의 SUMMARY 형식도 아직 모른다(ADR-037 §실측).
+// ★ **해석하지 않는다.** `SUMMARY`·`DESCRIPTION`·`CATEGORIES`는 원문 그대로 저장한다.
 //   **모르는 것을 지금 정하면 개강 첫날 틀린다** — 원문을 남겨 두면 나중에 다시 뽑을 수 있다.
+//
+// ★★ **강좌 구분은 `CATEGORIES`가 안다**(T-74 · 0024 · 2026-09-15 전수 5/5).
+//   ⚠️ **`SUMMARY`로 과목을 읽으면 안 된다 — 실측으로 틀렸다.**
+//   `벡터대수학 2주차 연습문제 제출 기한`의 과목은 **전자기및연습1**이고,
+//   `중간고사대체과제 기한`엔 과목이 **아예 없다.** 과제 이름은 교수가 짓고
+//   `CATEGORIES`는 강좌에서 자동으로 붙는다 — **뒤에는 사람이 틀릴 자리가 없다.**
 //
 // 화면에 꺼내는 것은 T-42다. 여기까지는 **아무것도 사용자에게 보이지 않는다.**
 import * as db from "../db";
@@ -35,6 +40,8 @@ export interface IcalEvent {
   uid: string;
   summary: string;
   description: string | null;
+  /** 강좌. **원문 그대로** — `전자기및연습1 (2026-20, 45004_01_U)`. 쪼개는 것은 표시하는 쪽 (T-74). */
+  categories: string | null;
   dtstart: string | null;
   dtend: string | null;
   lastModified: string | null;
@@ -75,8 +82,11 @@ export function icalDateToIso(v: string): string | null {
  * 그래서 검사에 고정 날짜를 써도 되고(T-36이 정의한 예외), 오히려 고정이어야
  * 형식을 날짜와 무관하게 검사한다.
  *
- * 라이브러리를 붙이지 않는 이유: 쓰는 필드가 여섯이다(ADR-037 §실측의 여덟 중
+ * 라이브러리를 붙이지 않는 이유: 쓰는 필드가 일곱이다(실측의 아홉 중
  * `CLASS`·`DTSTAMP`는 안 쓴다). **파서가 의존성보다 작다.**
+ *
+ * ⚠️ **아홉이 된 것이 T-74다** — ADR-037 §실측이 센 여덟은 개인 이벤트 하나에서 나왔고,
+ * 코스 이벤트에만 실리는 `CATEGORIES`가 그 표본에 없었다. **표본에 없는 것과 없는 것은 다르다.**
  */
 export function parseIcal(text: string): IcalEvent[] {
   const lines = unfoldIcal(text).split(/\r?\n/);
@@ -91,6 +101,8 @@ export function parseIcal(text: string): IcalEvent[] {
           uid: cur.UID,
           summary: cur.SUMMARY ?? "",
           description: cur.DESCRIPTION || null,
+          // 없으면 `null`. **코스 이벤트에만 실린다** — 개인 일정엔 없는 것이 정상이다 (T-74).
+          categories: cur.CATEGORIES || null,
           dtstart: cur.DTSTART ? icalDateToIso(cur.DTSTART) : null,
           dtend: cur.DTEND ? icalDateToIso(cur.DTEND) : null,
           lastModified: cur["LAST-MODIFIED"] || null,
@@ -161,7 +173,7 @@ export async function collect(
     const startsAt = ev.dtstart ? normalizeIso(ev.dtstart, t.offsetMin) : null;
     const endsAt = ev.dtend ? normalizeIso(ev.dtend, t.offsetMin) : null;
     const row = {
-      uid: ev.uid, summary: ev.summary, description: ev.description,
+      uid: ev.uid, summary: ev.summary, description: ev.description, categories: ev.categories,
       starts_at: startsAt, ends_at: endsAt, last_modified: ev.lastModified, at: t.now,
     };
     const existing = await db.collectedByUid(env, ev.uid);

@@ -18,7 +18,21 @@
 
 - repo: https://github.com/mond1424/personal-os
 - branch: main
-- 마지막 코드 변경: **T-73** (2026-09-14 · **마이그레이션 없음 · 배포 무관 · 지금 쓰는 앱 APK 무관 ·
+- 마지막 코드 변경: **T-74** (2026-09-15 · **`0024_collected_categories.sql` 포함** ·
+  서버 + 프런트 · **APK 무관** — **과목은 제목이 아니라 `CATEGORIES`가 안다.**
+  `collected_items.categories` 신설(원문 그대로 · 쪼개기는 화면이 한다) ·
+  `uclass.parseIcal`이 `CATEGORIES`를 싣는다 · 제안 시트가 과목을 제목 **위에 얹는다**).
+  - ⚠️ **`--local` → `--remote` 마이그레이션 + `deploy`가 둘 다 필요하다. 여부는 이 층이 모른다** —
+    `d1 migrations list --remote`와 `deployments list`로 확인한다.
+  - ★ **판정은 *다음 수집*이다.** 이미 저장된 5건은 지금 `categories`가 비어 있고,
+    `stTouchCollected`가 매 수집마다 갱신하므로 다음 바퀴에 채워진다. **손으로 안 채운다.**
+  - ⚠️ **마이그레이션만 하고 배포를 안 하면 칸만 생기고 아무것도 안 채워진다**(파서가 옛 코드다).
+    **배포만 하고 마이그레이션을 안 하면 수집이 `no such column`으로 죽는다** — 이쪽이 더 나쁘다.
+  - 라이브 확인:
+    ```bash
+    curl -s https://personal-os.mai-pos.workers.dev/app.js | grep -c "courseOf"
+    ```
+- 그 앞 코드 변경: **T-73** (2026-09-14 · **마이그레이션 없음 · 배포 무관 · 지금 쓰는 앱 APK 무관 ·
   `src/`·`public/`·`test/` 무변경** — Compose 스파이크 `android/spike/`. **재는 티켓이라 숫자가 안 움직였다.**
   ★ **버릴 코드다.** 지금 앱과의 격리는 세 겹(별도 모듈 · 별도 applicationId · **release 변이 없음**)이고
   기존 파일 중 건드린 것은 `android/settings.gradle` 한 줄뿐이다.
@@ -2288,8 +2302,16 @@ Get-ChildItem migrations\*.sql | Select-Object -Last 1 Name   # 여기서 +1
 - style.css      https://raw.githubusercontent.com/mond1424/personal-os/main/public/style.css
 
 ## 기준선
-typecheck 통과 / **smoke 452** / **front 467** / 실패 0 / verify exit 0
-**2026-09-14 (T-73 — 두 티켓 연속으로 숫자가 안 움직였다).**
+typecheck 통과 / **smoke 458** / **front 470** / 실패 0 / verify exit 0
+**2026-09-15 (T-74 — smoke 452 → 458 · front 467 → 470).**
+smoke +6 은 `CATEGORIES` 검사 여섯(실림 · 언이스케이프 · 없어도 안 죽음 · 안 쪼갬 · 제목 보존 · 다중값),
+front +3 은 표시 셋(과목이 제목 위에 뜬다 · 괄호 안은 화면에 없다 · 없으면 그 줄이 없다).
+⚠️ **변이 3(파서가 던지게 만들기)은 여전히 요약을 못 낸다** — `collect()`가 *안에서* 부르는 파싱이
+헬퍼를 안 지나고, 그 던짐이 최상위 `await`의 거절로 간다(함정 8). **T-74 범위 밖으로 뒀고
+티켓 §보고에 자리를 적어 뒀다** — 닫으려면 T-41 블록의 `collect()` 호출 전부를 감싸야 한다.
+⚠️ **변이가 초록이면 구현이 아니라 변이를 먼저 의심한다** — T-74에서 변이 6이 아무것도 안 죽였는데
+`indexOf(",")`가 이스케이프된 쉼표를 먼저 집은 것이었고, 그 앞 회차엔 **heredoc이 백슬래시를 삼켰다**(함정 17).
+그 앞이 **2026-09-14 (T-73 — 두 티켓 연속으로 숫자가 안 움직였다).**
 T-73도 **재는 티켓이다.** 새 코드는 전부 `android/spike/` 안에 있고 `src/`·`public/`·`test/`·
 `migrations/`를 한 줄도 안 열었다 — **그래서 움직였으면 범위를 넘은 것이다**(T-70·T-71과 같은 모양).
 ⚠️ **`verify`는 Android를 안 본다**(함정 13) — `gradlew assembleRelease` **BUILD SUCCESSFUL** ·

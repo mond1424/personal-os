@@ -755,14 +755,30 @@ async function loadCollected() {
   }
 }
 
+/**
+ * `전자기및연습1 (2026-20, 45004_01_U)` → `전자기및연습1` (T-74 §③).
+ *
+ * ★ **쪼개기는 표시하는 쪽 것이다.** 저장은 원문 그대로이고(0024), 화면만 과목명까지 보여준다 —
+ * 괄호 안(학기·코드)은 사용자가 쓰지 않는 값이다.
+ * ⚠️ 형식이 어긋나면 **자르지 않고 통째로** 보여준다. 못 알아본 것을 지우는 것보다 낫다.
+ */
+function courseOf(cat) {
+  if (!cat) return "";
+  const i = cat.indexOf(" (");
+  return (i > 0 ? cat.slice(0, i) : cat).trim();
+}
+
 /** 시트 본문 — 하나씩 [추가]/[무시]. 처리하면 그 줄만 빠지고 카드 수가 준다. */
 function renderCollected(rows) {
   const body = $("#coll-list");
   body.innerHTML = rows.map((r) => {
     // `2026-09-03T23:00:00+09:00` → "9/3(수) 23:00". **원문은 그대로 붙인다.**
     const when = r.starts_at ? `${md(r.starts_at.slice(0, 10))} ${r.starts_at.slice(11, 16)}` : "";
+    // ★ **과목은 얹기만 한다.** 제목(`summary`)은 원문 그대로 남는다 —
+    //   교수가 지은 이름이 틀렸어도 **사용자가 uclass 에서 그 제목으로 찾는다**(T-74 §금지).
+    const course = courseOf(r.categories);
     return `<div class="evrow" data-cid="${esc(r.id)}">
-      <span class="en" style="flex:1">${esc(when)} · ${esc(r.summary)}</span>
+      <span class="en" style="flex:1">${course ? `<b class="ec">${esc(course)}</b>` : ""}${esc(when)} · ${esc(r.summary)}</span>
       <button class="go" data-act="add">추가</button>
       <button class="go" data-act="skip" style="color:var(--sub)">무시</button>
     </div>`;

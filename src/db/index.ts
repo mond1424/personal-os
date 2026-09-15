@@ -540,9 +540,12 @@ export const meHistory = (env: Env, limit: number) =>
     .bind(limit).all<{ field: string; old_value: string | null; new_value: string; source: string; changed_at: string }>();
 
 // ── collected_items (0018) — 학사 일정 수집 원장 (T-41 · ADR-037) ──
-// **해석하지 않는다.** summary·description은 원문 그대로다 — 형식을 아직 모르기 때문이다.
+// **해석하지 않는다.** summary·description·categories는 원문 그대로다.
+// ★ `categories`(0024 · T-74)가 **강좌를 아는 유일한 칸**이다 — `summary`는 교수가 짓는 이름이라 틀린다.
+//   쪼개기(과목명 / 학기 / 코드)는 **표시하는 쪽**이 한다. 여기 들어오는 것은 원문이다.
 export interface CollectedItemRow {
   id: string; uid: string; source: string; summary: string; description: string | null;
+  categories: string | null;
   starts_at: string | null; ends_at: string | null; last_modified: string | null;
   first_seen_at: string; last_seen_at: string;
   state: "new" | "accepted" | "dismissed"; event_id: string | null; created_at: string;
@@ -559,13 +562,14 @@ export const stInsertCollected = (
   env: Env,
   c: {
     id: string; uid: string; source: string; summary: string; description: string | null;
+    categories: string | null;
     starts_at: string | null; ends_at: string | null; last_modified: string | null; at: string;
   },
 ) => q(env, `INSERT INTO collected_items
-    (id, uid, source, summary, description, starts_at, ends_at, last_modified,
+    (id, uid, source, summary, description, categories, starts_at, ends_at, last_modified,
      first_seen_at, last_seen_at, state, created_at)
-    VALUES (?,?,?,?,?,?,?,?,?,?,'new',?)`)
-  .bind(c.id, c.uid, c.source, c.summary, c.description, c.starts_at, c.ends_at,
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,'new',?)`)
+  .bind(c.id, c.uid, c.source, c.summary, c.description, c.categories, c.starts_at, c.ends_at,
     c.last_modified, c.at, c.at, c.at);
 
 /**
@@ -577,13 +581,13 @@ export const stInsertCollected = (
 export const stTouchCollected = (
   env: Env,
   c: {
-    uid: string; summary: string; description: string | null;
+    uid: string; summary: string; description: string | null; categories: string | null;
     starts_at: string | null; ends_at: string | null; last_modified: string | null; at: string;
   },
 ) => q(env, `UPDATE collected_items SET
-      summary=?, description=?, starts_at=?, ends_at=?, last_modified=?, last_seen_at=?
+      summary=?, description=?, categories=?, starts_at=?, ends_at=?, last_modified=?, last_seen_at=?
     WHERE uid=?`)
-  .bind(c.summary, c.description, c.starts_at, c.ends_at, c.last_modified, c.at, c.uid);
+  .bind(c.summary, c.description, c.categories, c.starts_at, c.ends_at, c.last_modified, c.at, c.uid);
 
 export const collectedGet = (env: Env, id: string) =>
   q(env, "SELECT * FROM collected_items WHERE id = ?").bind(id).first<CollectedItemRow>();

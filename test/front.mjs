@@ -2127,6 +2127,31 @@ ok("⑥ 조회가 실패해도 Today를 막지 않는다 · state='error'",
  *   **혼자 죽을 수 없는 검사는 아무것도 안 센다**(T-65 · AGENT-CHAIN §8). 그래서 `ok()`에서 뺐다.
  *   위 T-33 자매와 **같은 모양·같은 판정**이다(변이도 같이 돌렸다: err를 flex로 → ⑥과 함께 죽는다).
  *   ⚠️ **되살릴 조건** — ⑤ 또는 ⑥에서 `display` 단언이 빠지면 이 관계를 아무도 안 센다. 그때 되돌린다. */
+// ── T-74 · 과목은 제목이 아니라 CATEGORIES 가 안다 ──────────────
+// 저장은 **원문 그대로**이고(0024), **쪼개기는 여기**다 — 괄호 안(학기·코드)은 사용자가 안 쓴다.
+// ⚠️ `renderCollected`를 직접 부른다 — API 를 갈아끼울 것이 없어 이 검사가 ③만 본다.
+// ★ 아래 제목은 실측이다: 이 과제의 과목은 **벡터대수학이 아니라 전자기및연습1**이다.
+const T74_CAT = "전자기및연습1 (2026-20, 45004_01_U)";
+const T74_TITLE = "벡터대수학 2주차 연습문제 제출 기한";
+await ev(`renderCollected([
+  { id: "t74-a", source: "uclass", summary: ${JSON.stringify(T74_TITLE)},
+    starts_at: null, categories: ${JSON.stringify(T74_CAT)} },
+  { id: "t74-b", source: "uclass", summary: "개인 일정", starts_at: null, categories: null }
+])`);
+const t74A = $("#coll-list [data-cid='t74-a']");
+const t74B = $("#coll-list [data-cid='t74-b']");
+ok("★ 과목이 제목 위에 뜬다 — 제목은 그대로 남는다 (덮지도 지우지도 않는다)",
+  t74A?.querySelector(".ec")?.textContent === "전자기및연습1"
+  && (t74A?.textContent || "").includes(T74_TITLE),
+  `${t74A?.querySelector(".ec")?.textContent} / ${(t74A?.textContent || "").slice(0, 50)}`);
+ok("★ 괄호 안(학기·코드)은 화면에 없다 — 저장은 원문, 표시는 과목명까지",
+  !!t74A && !t74A.textContent.includes("2026-20") && !t74A.textContent.includes("45004_01_U"),
+  (t74A?.textContent || "").slice(0, 60));
+// 짝. 개인 일정엔 CATEGORIES 가 아예 없다(코스 이벤트에만 실린다) — 빈 칸을 만들지 않는다.
+ok("★ 짝 — 과목이 없으면 그 줄이 아예 없다",
+  !t74B?.querySelector(".ec") && (t74B?.textContent || "").includes("개인 일정"),
+  (t74B?.outerHTML || "").slice(0, 90));
+
 await ev(`(async()=>{
   Api.collectedPending = window.__t42.old[0];
   Api.collectedAccept = window.__t42.old[1];

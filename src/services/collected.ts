@@ -33,8 +33,12 @@ export async function pending(env: Env, t: TimeCtx) {
   const to = isoNow(Date.parse(t.now) + WINDOW_DAYS * 86400_000, t.offsetMin);
   const rows = await db.collectedPending(env, t.now, to);
   // 화면이 쓰는 것만 준다. **`description`은 안 보낸다** — 카드가 원문 한 줄만 쓴다.
+  // ★ `categories`는 보낸다(T-74) — **과목을 아는 유일한 칸**이고 카드가 그것을 얹는다.
+  //   ⚠️ **원문 그대로 보낸다.** 괄호 안(학기·코드)을 여기서 떼지 않는다 —
+  //   쪼개기는 해석이고, 해석은 **표시하는 쪽**이 한다(0024 §해석 금지).
   return rows.results.map((r) => ({
     id: r.id, source: r.source, summary: r.summary, starts_at: r.starts_at,
+    categories: r.categories,
   }));
 }
 

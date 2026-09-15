@@ -18,7 +18,7 @@ import type { Env } from "../src/types";
 import { makeD1, rawOf } from "./d1shim";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const schema = ["0001_init.sql", "0002_models.sql", "0003_ai_provider.sql", "0004_events.sql", "0005_delete_scope.sql", "0006_fix_model_high.sql", "0007_defer_reason.sql", "0008_cancel_task.sql", "0009_cancel_reason.sql", "0010_guard.sql", "0011_guard_sync.sql", "0012_life_model.sql", "0013_analysis_backfill.sql", "0014_schema_titles.sql", "0015_me_history_reason.sql", "0016_guard_unavailable_reason.sql", "0017_ai_reason.sql", "0018_collected_items.sql", "0019_guard_ai_immutable.sql", "0020_cal_sync.sql", "0021_timetable.sql", "0022_places.sql", "0023_guard_asked.sql"]
+const schema = ["0001_init.sql", "0002_models.sql", "0003_ai_provider.sql", "0004_events.sql", "0005_delete_scope.sql", "0006_fix_model_high.sql", "0007_defer_reason.sql", "0008_cancel_task.sql", "0009_cancel_reason.sql", "0010_guard.sql", "0011_guard_sync.sql", "0012_life_model.sql", "0013_analysis_backfill.sql", "0014_schema_titles.sql", "0015_me_history_reason.sql", "0016_guard_unavailable_reason.sql", "0017_ai_reason.sql", "0018_collected_items.sql", "0019_guard_ai_immutable.sql", "0020_cal_sync.sql", "0021_timetable.sql", "0022_places.sql", "0023_guard_asked.sql", "0024_collected_categories.sql"]
   .map((f) => readFileSync(join(here, "../migrations/" + f), "utf8")).join("\n");
 const env: Env = { DB: makeD1(schema) };
 const raw = rawOf(env.DB);
@@ -1826,18 +1826,37 @@ const isoOf = (c: string) =>
   `${c.slice(0, 4)}-${c.slice(4, 6)}-${c.slice(6, 8)}T${c.slice(9, 11)}:${c.slice(11, 13)}:${c.slice(13, 15)}Z`;
 
 // **원본 파일을 손대지 않고 그대로** 파싱한다 — 위 조립이 원본과 어긋나면 여기서 갈린다.
-const ip1 = uclass.parseIcal(ICS_RAW);
+// ⚠️ **던짐을 빨간불로 번역한다**(함정 8 · T-74에서 실제로 물렸다).
+//    `parseIcal`이 던지면 **요약도 개수도 안 남는 죽음**이 되고, 그 죽음은
+//    *"어느 검사가 빨간불인가"* 를 못 말한다. 처음 한 곳만 감쌌더니 **다음 곳에서 똑같이 죽었다** —
+//    그래서 **검사가 직접 부르는 파싱은 전부 여기를 지난다.**
+//    ★ 원본 .ics 엔 CATEGORIES 가 없으므로(개인 이벤트다) **없는 것을 필수로 읽는 구현이 여기서 던진다.**
+//
+//    ⚠️⚠️ **여기가 막는 것은 검사가 *직접* 부르는 파싱까지다.** `collect()`가 **안에서** 부르는
+//    파싱은 이 헬퍼를 안 지나고, 그 던짐은 최상위 `await`의 거절로 가 **여전히 요약 없는 죽음**이다
+//    (T-74 변이 3 실측: `Module.collect` → `smoke.ts`의 `await uclass.collect(...)`).
+//    그 자리까지 닫으려면 **이 블록의 `collect()` 호출 전부**를 감싸야 한다 — T-74 범위 밖이라 안 했다.
+//    **이 주석이 "다 막았다"고 읽히면 그게 다음 사고다.**
+let parsedThrew = "";
+const parse = (s: string): uclass.IcalEvent[] => {
+  parsedThrew = "";
+  try { return uclass.parseIcal(s); }
+  catch (e: any) { parsedThrew = String(e?.message ?? e); return []; }
+};
+const threwNote = () => parsedThrew && `parseIcal이 던졌다 — 없는 것을 필수로 읽는다: ${parsedThrew}`;
+
+const ip1 = parse(ICS_RAW);
 ok("원본 .ics 를 그대로 파싱한다 — UID·SUMMARY·DTSTART·LAST-MODIFIED",
   ip1.length === 1 && ip1[0]?.uid === UID_A && ip1[0]?.summary === "test"
   && ip1[0]?.description === null
   && ip1[0]?.dtstart === isoOf(DTSTART_Z) && ip1[0]?.lastModified === LM_1,
-  JSON.stringify(ip1));
+  threwNote() || JSON.stringify(ip1));
 // 조립한 것이 원본과 같은지 — 이게 어긋나면 아래 검사들이 **원본이 아닌 것**을 보고 있는 것이다.
 ok("★ 잘라 붙인 것이 원본 바이트와 같다 (아래 검사들이 원본 위에서 돈다)",
   ics(vevent(UID_A, "SUMMARY:test", LM_1)) === ICS_RAW,
   `${ics(vevent(UID_A, "SUMMARY:test", LM_1)).length} vs ${ICS_RAW.length}`);
 
-const ip2 = uclass.parseIcal(ics(vevent(UID_A, FOLD_1 + CRLF + FOLD_2, LM_1)));
+const ip2 = parse(ics(vevent(UID_A, FOLD_1 + CRLF + FOLD_2, LM_1)));
 ok("줄 접힘(RFC 5545)을 편다 — 긴 SUMMARY가 이어 붙는다",
   ip2[0]?.summary === FOLDED_JOINED, JSON.stringify(ip2[0]?.summary));
 
@@ -1907,6 +1926,72 @@ ok("실패가 조용히 사라지지 않는다 — 사유가 settings에 남고 
   const e = raw.prepare("SELECT value AS v FROM settings WHERE key='uclass_last_error'").get() as any;
   return !!e?.v && String(e.v).includes("uclass down") && !String(e.v).includes("authtoken");
 })());
+globalThis.fetch = realFetchU;
+
+// ── T-74 · 과목은 제목이 아니라 CATEGORIES 가 안다 (0024) ───────
+console.log("\n[T-74] CATEGORIES — 강좌는 자동으로 붙고, 제목은 사람이 짓는다");
+// ⚠️ **원본 .ics 에는 CATEGORIES 가 없다** — 8/17 표본이 사용자가 만든 개인 이벤트였고
+//    Moodle 은 **코스 이벤트에만** 강좌를 싣는다. 그래서 줄을 합성한다.
+//    ★ 합성한 형식은 추측이 아니라 **2026-09-15 전수(5/5)의 실측 그대로**다.
+const withCat = (v: string, cat: string) =>
+  v.replace("END:VEVENT", `CATEGORIES:${cat}` + CRLF + "END:VEVENT");
+
+// 선으로 오는 모양과 복원된 값. **쉼표가 RFC 5545 로 이스케이프돼 온다**(실측).
+const CAT_WIRE = "전자기및연습1 (2026-20\\, 45004_01_U)";
+const CAT_TEXT = "전자기및연습1 (2026-20, 45004_01_U)";
+// ★ **이 제목이 이 티켓의 존재 이유다** — 과제 이름은 교수가 짓고, 이 건의 과목은 전자기및연습1 이다.
+const WRONG_TITLE = "벡터대수학 2주차 연습문제 제출 기한";
+const UID_C = "13032@uclass.uos.ac.kr";
+const catOf = (uid: string) => raw.prepare(
+  "SELECT categories AS ca, summary AS su FROM collected_items WHERE uid=?").get(uid) as any;
+
+// 1 — 실리면 실린다.
+const t74a = parse(ics(withCat(vevent(UID_A, `SUMMARY:${WRONG_TITLE}`, LM_1), CAT_WIRE)));
+ok("★ CATEGORIES 가 있으면 categories 로 실린다 — 원문 그대로",
+  t74a.length === 1 && t74a[0]?.categories === CAT_TEXT, JSON.stringify(t74a[0]?.categories));
+
+// 2 — 복원이지 해석이 아니다. RFC 5545 §3.3.11 이 정한 넷 전부.
+//   ⚠️ **`===` 로 본다.** "쉼표가 있다"만 세면 `\,` 를 `,` 로 **바꾸는** 대신
+//      `,` 를 **덧붙이는** 구현이 통과한다(티켓 §검사 2의 경고).
+const ESC_WIRE = "A\\, B\\; C\\\\ D\\nE";
+const ESC_TEXT = "A, B; C\\ D\nE";
+const t74b = parse(ics(withCat(vevent(UID_A, "SUMMARY:x", LM_1), ESC_WIRE)))[0]?.categories;
+ok("★ 언이스케이프 — \\, \\; \\\\ \\n 넷이 복원된다 · 실측 원문엔 백슬래시가 안 남는다",
+  t74b === ESC_TEXT && !String(t74a[0]?.categories).includes("\\"),
+  `${JSON.stringify(t74b)} vs ${JSON.stringify(ESC_TEXT)}`);
+
+// 3 — 짝. 없는 것이 정상인 자리가 있다(개인 일정). 섞여 와도 각자 자기 값을 갖는다.
+// ⚠️ 여기도 `parse()`를 지난다 — 맨손으로 부르면 던짐이 요약을 지운다(위 §parse).
+const t74c = parse(ics(
+  withCat(vevent(UID_A, "SUMMARY:과제 기한", LM_1), CAT_WIRE),
+  vevent(UID_B, "SUMMARY:개인 일정", LM_1)));
+ok("★ CATEGORIES 가 없는 VEVENT 도 안 죽는다 — null 로 남고 섞여도 안 번진다",
+  t74c.length === 2 && t74c[0]?.categories === CAT_TEXT && t74c[1]?.categories === null,
+  threwNote() || JSON.stringify(t74c.map((e) => e.categories)));
+
+// 4 — **저장까지** 간다. INSERT 경로(새 uid).
+serve(ics(withCat(vevent(UID_C, `SUMMARY:${WRONG_TITLE}`, LM_1), CAT_WIRE)));
+await uclass.collect(envU, t0, true);
+const r4 = catOf(UID_C);
+ok("★ 쪼개지 않았다 — 괄호·학기·코드가 저장값에 그대로 있다",
+  r4?.ca === CAT_TEXT && r4.ca.includes("(") && r4.ca.includes("2026-20")
+  && r4.ca.includes("45004_01_U"), JSON.stringify(r4?.ca));
+
+// 5 — 회귀. **제목을 고치지도 지우지도 않는다** — 사용자가 uclass 에서 그 제목으로 찾는다.
+ok("★ summary 는 원문 그대로다 — categories 가 제목을 덮지 않는다",
+  r4?.su === WRONG_TITLE && r4.su !== r4.ca && !String(r4.su).includes("전자기및연습1"),
+  JSON.stringify(r4?.su));
+
+// 6 — 다중값은 **실측에서 안 왔다**(전수 5건 전부 `\,`). 와도 잃지 않는 것이 한 칸의 값어치다.
+//   ⚠️ 이스케이프 **안 된** 쉼표라야 다중값이다 — 위 CAT_WIRE 의 `\,` 와 다른 글자다.
+const MULTI_WIRE = `${CAT_WIRE},인간과인공지능 (2026-20\\, 01702_01_U)`;
+const MULTI_TEXT = `${CAT_TEXT},인간과인공지능 (2026-20, 01702_01_U)`;
+serve(ics(withCat(vevent(UID_C, `SUMMARY:${WRONG_TITLE}`, LM_1), MULTI_WIRE)));
+await uclass.collect(envU, t0, true);          // 같은 uid — 갱신 경로(stTouchCollected)도 함께 지난다
+const r6 = catOf(UID_C);
+ok("★ 다중값도 통째로 들어간다 — 둘째부터 버리지 않는다",
+  r6?.ca === MULTI_TEXT && r6.ca.includes("전자기및연습1") && r6.ca.includes("인간과인공지능"),
+  JSON.stringify(r6?.ca));
 globalThis.fetch = realFetchU;
 
 // ── T-42 · 수집한 것을 제안으로 꺼낸다 ──────────────────────────

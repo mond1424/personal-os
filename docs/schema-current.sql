@@ -1,6 +1,6 @@
 -- docs/schema-current.sql — 스키마 스냅샷 (자동 생성)
 -- migrations/ 전체를 인메모리 sqlite에 적용한 뒤 sqlite_master를 덤프한 것.
--- 최신 마이그레이션: 0023_guard_asked.sql  ·  갱신 2026-09-11
+-- 최신 마이그레이션: 0024_collected_categories.sql  ·  갱신 2026-09-15
 -- 0013·0014는 DDL을 바꾸지 않는다: 0013 = analyses backfill(트리거를 원문 그대로 복원) ·
 --   0014 = lm_schema.body에 title 얹기(UPDATE만).
 -- 0015 = me_history에 reason TEXT 추가(ADR-027 — 모드 하향 사유). ALTER라 컬럼이 표 끝에 붙는다.
@@ -56,6 +56,12 @@
 --   그 구별이 ignored 의 옛 뜻과 새 뜻을 가르는 **경계다**(날짜가 아니라 칸이다).
 --   'unasked'는 기기가 못 보낸다 — applyReaction 의 입력 목록에 없고 finalizeIgnored 만 쓴다.
 --   ⚠️ 트리거의 asked 절은 ai_used 와 같은 모양이다: NULL→0·NULL→1·0→1은 되고 1→0은 안 된다.
+-- 0024 = collected_items에 categories TEXT 추가(T-74 — 과목은 제목이 아니라 CATEGORIES가 안다).
+--   ALTER라 컬럼이 표 끝에 붙는다. **원문 그대로 저장한다** — `전자기및연습1 (2026-20, 45004_01_U)`.
+--   과목명·학기·코드로 쪼개는 것은 해석이고 **표시하는 쪽**이 한다(summary의 "해석 금지"와 같은 규칙).
+--   언이스케이프(`\,` → `,`)는 해석이 아니라 복원이다 — RFC 5545 §3.3.11.
+--   ⚠️ 0018 머리말의 "CATEGORIES가 없다"는 **표본이 개인 이벤트 하나였기 때문**이다.
+--     Moodle은 코스 이벤트에만 강좌를 싣는다 — 2026-09-15 전수 5/5에 있었다.
 -- 손으로 고치지 않는다 — 마이그레이션을 추가하고 다시 덤프한다 (CLAUDE.md 세션 종료 규칙).
 
 -- ==========================================================
@@ -86,7 +92,7 @@ CREATE TABLE collected_items (
                   CHECK (state IN ('new','accepted','dismissed')),
   event_id      TEXT REFERENCES events(id),       -- accepted일 때 만들어진 일정 (T-42)
   created_at    TEXT NOT NULL
-);
+, categories TEXT);
 
 CREATE TABLE daily (
   date          TEXT PRIMARY KEY,    -- YYYY-MM-DD = id (귀속일)
