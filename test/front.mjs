@@ -4476,6 +4476,92 @@ ok("7 ★ 두 계수가 서로 다른 이름을 갖고, 각 주석이 상대편�
   `상한="${t69CapVal}" 문구="${t69MsgVal}"`
   + ` 상한→문구=${t69CapPointsMsg} 문구→상한=${t69MsgPointsCap}`);
 
+/* ── T-76 · 창의 끝은 문구에 아무 기여도 안 한다 ──────────────────────────────
+ *
+ * *"취침 창(00:30~06:00)에 들어온 뒤 15분 화면을 켜 두셨어요."* — 한 문장에 수가 셋인데
+ * **`~06:00`만 매일 같았다.** 사실(`15분`)을 읽으려면 매일 같은 열 몇 글자를 먼저 지나야 했고,
+ * 더 나쁘게는 사용자가 그 수를 **기상 시각으로 읽고** 같은 화면의 *"8시 기상"* 과 비교했다.
+ * `bedTo`는 *"이 시각 이후엔 감시를 안 한다"* 는 앱 내부 사정이지 사용자의 기상이 아니다.
+ *
+ * ★ **스캐너가 아니라 렌더다.** *"소스에 `s.bedTo`가 없다"* 로 쓰면 **`06:00`을 박아 넣는
+ *   구현이 통과한다** — 티켓이 *"괄호가 없다로 쓰지 마라"* 로 경고한 그 구멍이다. 그래서
+ *   `buildString` 블록을 **Kotlin 본문 그대로 옮겨 돌리고**, 재료마다 **서로 다른 표식**을
+ *   먹여 **완성된 문구에 무엇이 실렸는지**를 본다(T-69의 3·4·5와 같은 방식 · 함정 15).
+ * ⚠️ **옮기기가 실패하면 셋이 함께 빨간불**이다 — 조용히 통과하지 않는다.
+ * ⚠️ **표식에 시계 모양을 안 쓴다** — 검사 1이 *박아 넣은 시각*까지 잡으려면 렌더된 문구에
+ *    시계가 **하나도** 없어야 판정이 선다. `<FROM>`·`<WAKE>` 따위가 그래서 저 모양이다. */
+console.log("\n[T-76] 밤 문구 — 창의 끝이 빠졌는가");
+
+const T76 = {                                    // 재료마다 서로 다른 표식 (시계 모양 금지)
+  FROM: "<FROM>", TO: "<TO>", WIN: "<WIN>", USED: "<USED>", WAKE: "<WAKE>", APP: "<APP>",
+};
+const T76_CLOCK = /\d{1,2}:\d{2}/;               // 박아 넣은 시각 — 보간이 아니어도 잡는다
+
+/** `val body = buildString { … }` 의 알맹이. 못 뽑으면 `null` — 셋이 함께 죽는다. */
+const t76Block = (() => {
+  const i = t68Watch.indexOf("val body = buildString {");
+  if (i < 0) return null;
+  const rest = t68Watch.slice(i);
+  const j = rest.indexOf("\n        }");         // buildString 의 닫는 괄호 — 안쪽은 더 깊다
+  return j < 0 ? null : rest.slice(rest.indexOf("{") + 1, j);
+})();
+
+/* Kotlin → JS. **이 블록이 쓰는 문법만** 옮긴다 — 문구도 조건도 여기 다시 적지 않는다.
+ * ⚠️ `String`·`java`는 **인자로 가린다**. 전역을 건드리면 다른 검사에 샌다. */
+const t76Render = (vars) => {
+  if (t76Block === null) return null;
+  const js = t76Block
+    .replace(/"/g, "`")                          // Kotlin 문자열 → 템플릿 리터럴 (`${}` 는 같은 꼴)
+    .replace(/\$(?!\{)(\w+)/g, "${$1}");         // 맨몸 `$wakeLine` → `${wakeLine}`
+  const fmt = (_loc, f, ...a) => String(f).replace(/%d/g, () => a.shift());
+  const names = ["String", "java", "s", "n", "wakeLine", "app", "level", "windowMin", "usedMin",
+    "TALLY_FMT"];
+  // `append`는 고쳐 쓰지 않고 **함수로 둔다** — 옮기는 자리가 하나 줄면 조용히 어긋날 곳도 준다.
+  const fn = new Function(...names,
+    `let out = ""; const append = (x) => { out += x; };\n${js}\nreturn out;`);
+  return fn({ format: fmt }, { util: { Locale: { US: "US" } } }, ...names.slice(2).map((k) => vars[k]));
+};
+
+const t76Fmt = /private const val TALLY_FMT = "([^"]*)"/.exec(t68Watch)?.[1] ?? null;
+/** 옮기다 막히면 `null`이 되고 **셋이 함께** 죽는다. 이유는 `t76Err`가 detail 로 나른다. */
+let t76Err = null;
+const t76Mk = (level, wakeLine) => {
+  try {
+    return t76Render({
+      s: { bedFrom: T76.FROM, bedTo: T76.TO, watchTallyFrom: 0 },
+      n: 8, wakeLine, app: T76.APP, level, windowMin: T76.WIN, usedMin: T76.USED,
+      TALLY_FMT: t76Fmt,
+    });
+  } catch (e) { t76Err = e.message; return null; }
+};
+// L2 는 아침 한 줄이 붙고 L3 는 안 붙는다(그 블록이 `level == 2` 안이다) — 둘 다 본다.
+const t76L2 = t76Mk(2, T76.WAKE);
+const t76L3 = t76Mk(3, null);
+const t76Both = [t76L2, t76L3];
+const t76Rendered = t76Both.every((r) => typeof r === "string" && r.length > 0);
+const t76Has = (m) => t76Rendered && t76Both.every((r) => r.includes(m));
+const t76Lacks = (m) => t76Rendered && t76Both.every((r) => !r.includes(m));
+const t76Why = `L2="${t76L2}" L3="${t76L3}"` + (t76Err ? ` 옮기다막힘=${t76Err}` : "");
+
+/* 1 ★ **본체 — 창의 끝이 문구에 없다.** 표식으로도(보간) 시계 모양으로도(박아 넣기) 없어야 한다.
+ *   ⚠️ *"괄호가 없다"* 가 아니다 — 괄호만 떼고 `00:30~06:00`을 둔 구현이 그걸로 통과한다. */
+ok("1 ★ 밤 문구에 취침 창의 끝이 없다 — 보간으로도, 박아 넣은 시각으로도 (T-76 본체)",
+  t76Lacks(T76.TO) && t76Rendered && t76Both.every((r) => !T76_CLOCK.test(r)),
+  `${t76Why} 끝표식=${!t76Lacks(T76.TO)} 시계모양=${t76Both.map((r) => T76_CLOCK.test(String(r)))}`);
+
+/* 2 ★ **1의 짝 — 창 얘기를 통째로 지운 것이 아니다.** 시작은 남아야 `N분`이 *무엇 이후의*
+ *   N분인지가 선다. `windowMin`이 재는 것이 정확히 `windowStartMs(bedFrom, bedTo)` 이후다.
+ *   이 검사가 없으면 *"창을 통째로 뺀다"* 가 1을 통과한다. */
+ok("2 ★ 창의 시작은 남아 있다 — N분의 기준이다 (1의 짝 · 다 빼면 안 된다)",
+  t76Has(T76.FROM), `${t76Why} 시작표식=${t76Has(T76.FROM)}`);
+
+/* 3 회귀 — **문구가 싣는 분은 여전히 `windowMin`이다**(T-69 ②). `usedMin`은 게이트의 값이라
+ *   개입 뒤 0으로 돌아가고, 그걸 실으면 *"8번째"* 옆에서 늘 *"15분"* 이라 서로를 반박한다.
+ *   ★ **문구만 고치는 티켓이므로 이 수가 안 바뀐 것이 고쳐진 증거다.** */
+ok("3 문구가 싣는 분이 그대로다 — 창 안의 시간이지 게이트의 연속 시간이 아니다 (T-69 회귀)",
+  t76Has(T76.WIN) && t76Lacks(T76.USED),
+  `${t76Why} 창분=${t76Has(T76.WIN)} 게이트분샜다=${!t76Lacks(T76.USED)}`);
+
 console.log("\n[부팅 · 연결 실패 복구]");
 ok("로드 후 부팅 오버레이 닫힘", !$("#boot").classList.contains("on"));
 
