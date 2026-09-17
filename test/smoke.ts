@@ -18,7 +18,7 @@ import type { Env } from "../src/types";
 import { makeD1, rawOf } from "./d1shim";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const schema = ["0001_init.sql", "0002_models.sql", "0003_ai_provider.sql", "0004_events.sql", "0005_delete_scope.sql", "0006_fix_model_high.sql", "0007_defer_reason.sql", "0008_cancel_task.sql", "0009_cancel_reason.sql", "0010_guard.sql", "0011_guard_sync.sql", "0012_life_model.sql", "0013_analysis_backfill.sql", "0014_schema_titles.sql", "0015_me_history_reason.sql", "0016_guard_unavailable_reason.sql", "0017_ai_reason.sql", "0018_collected_items.sql", "0019_guard_ai_immutable.sql", "0020_cal_sync.sql", "0021_timetable.sql", "0022_places.sql", "0023_guard_asked.sql", "0024_collected_categories.sql"]
+const schema = ["0001_init.sql", "0002_models.sql", "0003_ai_provider.sql", "0004_events.sql", "0005_delete_scope.sql", "0006_fix_model_high.sql", "0007_defer_reason.sql", "0008_cancel_task.sql", "0009_cancel_reason.sql", "0010_guard.sql", "0011_guard_sync.sql", "0012_life_model.sql", "0013_analysis_backfill.sql", "0014_schema_titles.sql", "0015_me_history_reason.sql", "0016_guard_unavailable_reason.sql", "0017_ai_reason.sql", "0018_collected_items.sql", "0019_guard_ai_immutable.sql", "0020_cal_sync.sql", "0021_timetable.sql", "0022_places.sql", "0023_guard_asked.sql", "0024_collected_categories.sql", "0025_collected_task_id.sql"]
   .map((f) => readFileSync(join(here, "../migrations/" + f), "utf8")).join("\n");
 const env: Env = { DB: makeD1(schema) };
 const raw = rawOf(env.DB);
@@ -2041,6 +2041,118 @@ const dId = (await api("GET", "/api/collected/pending")).json.find((r: any) => r
 await api("POST", `/api/collected/${dId}/dismiss`);
 ok("dismiss 뒤에는 pending에 안 나온다",
   !(await api("GET", "/api/collected/pending")).json.some((r: any) => r.id === dId));
+
+/* ── T-78 · 수락한 과제가 달력에만 남고 할 일이 안 된다 ──────────────────────
+ *
+ * 2026-09-17 화면 셋: Calendar 에는 과제가 있는데 **Today TODO 0 · Works 0** 이었다.
+ * `accept` 가 `events` 행 **하나만** 만들었기 때문이다 — 과제는 *"달력에 적힌 날짜"* 로만
+ * 존재하고 *"내가 해야 하는 일"* 로는 존재하지 않았다.
+ *
+ * ★ **둘 다 만든다.** 설계 §1.7이 `events`를 캘린더 전용(완료·이월 없음)으로 두었는데
+ *   과제는 **마감(안 움직인다)이자 할 일(움직인다)** 이다. 합치면 둘 중 하나를 잃는다.
+ * ★★ **새 task 의 예정일은 비운다 — 대기다.** 마감일에 넣으면 *"마감일에 하라"* 는 뜻이 되고
+ *   그건 거짓이고 나쁜 조언이다. 날짜는 사용자가 정한다(설계 1.4).
+ * ⚠️ 위 T-42 fixture(`RAW_TITLE`·`accId`)를 그대로 쓴다 — 같은 수락을 두 블록이 본다. */
+console.log("\n[T-78] 수락 — 달력과 할 일이 함께 생긴다");
+
+const t78Tasks = (title: string) =>
+  (raw.prepare("SELECT COUNT(*) AS n FROM tasks WHERE title=?").get(title) as any).n;
+const t78Entries = (taskId: string) =>
+  (raw.prepare("SELECT COUNT(*) AS n FROM schedule_entries WHERE task_id=?").get(taskId) as any).n;
+const t78Link = (id: string) => raw.prepare(
+  "SELECT event_id AS e, task_id AS k, state AS s FROM collected_items WHERE id=?").get(id) as any;
+
+/* ⚠️⚠️ **아래 여섯은 서로의 명제를 업지 않는다** — `AGENT-CHAIN` §*"변이가 여럿을 죽였을 때"*
+ *    (T-77에서 실제로 났다). 처음엔 2·3·4가 전부 *"그 task 가 존재한다"* 를 표본으로 깔고 있어서
+ *    **`task`를 아예 안 만드는 변이 하나가 검사 넷을 죽였다.** 그러면 표를 못 읽는다 —
+ *    어느 검사가 무엇을 지키는지가 가려진다.
+ *    ★ **그래서 2·3·4는 "task 가 있다면"을 전제하지 않는 꼴로 센다**(전수 조인 · 개수 차).
+ *      task 가 없으면 그 셋은 **참으로 통과하고, 그 사실은 검사 1이 혼자 말한다.** */
+
+/* 1 ★ **본체 — 수락 하나가 둘을 만든다.**
+ *   ⚠️ **제목으로 세지 않는다** — 제목으로 세면 *"제목을 다듬는"* 변이가 이 검사까지 죽인다.
+ *      잇는 칸(`event_id`·`task_id`)이 채워졌는가로 본다. */
+const t78Row = t78Link(accId);
+const t78TaskExists = (id: string | null) =>
+  !!id && (raw.prepare("SELECT COUNT(*) AS n FROM tasks WHERE id=?").get(id) as any).n === 1;
+ok("1 ★ accept가 events 하나와 tasks 하나를 만들고 둘 다 잇는다 (T-78 본체)",
+  !!t78Row?.e && !!t78Row?.k && t78Row.s === "accepted"
+  && t78TaskExists(t78Row.k) && acc1.task_id === t78Row.k,
+  `${JSON.stringify(t78Row)} task실재=${t78TaskExists(t78Row?.k)} 응답=${JSON.stringify(acc1)}`);
+
+/* 2 ★★ **안전핀 — 수락이 만든 task 에 예정일이 없다.** 1만 보면 **마감일에 예정을 박는
+ *   구현이 초록으로 통과한다**(화면에는 할 일이 생기니까). 이 티켓에서 제일 쉬운 잘못이다.
+ *   ⚠️ **`createTask`의 반환값(`waiting`)을 안 믿는다 — 구현이 자기에 대해 하는 말이다.**
+ *      `schedule_entries`를 DB 에서 직접 센다.
+ *   ★ **잇는 칸을 타고 전수로 센다** — *"그 task"* 를 먼저 집으면 1의 명제를 업게 된다.
+ *      수락이 만든 task 가 없으면 조인이 비어 0이고, **그것은 1이 말할 일이다.** */
+const t78DatedFromAccept = () => (raw.prepare(
+  `SELECT COUNT(*) AS n FROM schedule_entries se
+     JOIN collected_items c ON c.task_id = se.task_id`).get() as any).n;
+ok("2 ★★ 수락이 만든 task 에는 예정 항목이 하나도 없다 — 대기다 (마감일에 박는 구현을 막는다 · 안전핀)",
+  t78DatedFromAccept() === 0,
+  `수락이만든task의예정항목=${t78DatedFromAccept()} (0이어야 한다) 마감일=${atPlus(2 * DAY).slice(0, 10)}`);
+
+/* 3 ★ **1의 짝 — 멱등.** `accept`는 이미 멱등이라 **event 쪽은 초록인 채로 task 만 늘어난다.**
+ *   ★ **세 번째 수락을 여기서 한 번 더 걸고 개수 차를 잰다** — 제목에도, task 의 존재에도
+ *      안 매달린다. *"다시 눌러도 아무것도 안 생긴다"* 가 이 검사가 세는 전부다. */
+const t78Total = () => (raw.prepare(
+  "SELECT (SELECT COUNT(*) FROM tasks) AS t, (SELECT COUNT(*) FROM events) AS e").get() as any);
+const b3 = t78Total();
+const acc3 = (await api("POST", `/api/collected/${accId}/accept`)).json;
+const a3 = t78Total();
+ok("3 ★ 다시 accept해도 task도 event도 안 늘어난다 (멱등 · 1의 짝)",
+  acc3.duplicate === true && acc3.task_id === acc1.task_id
+  && a3.t === b3.t && a3.e === b3.e,
+  `tasks ${b3.t}→${a3.t} · events ${b3.e}→${a3.e} 응답=${JSON.stringify(acc3)}`);
+
+/* 3b ★ **T-78 이전에 수락한 행은 다시 눌러도 task 를 안 만든다** (§금지 — 소급 생성).
+ *   원격에 `state='accepted'` + `event_id` 있고 `task_id`가 NULL 인 행이 셋 있다(2026-09-17 실측).
+ *   ⚠️ 이른 반환이 `task_id`까지 요구하면 **그 셋이 문을 지나 오늘 task 를 만들고**,
+ *      그러면 *"수집된 것"* 과 *"내가 넣은 것"* 이 섞인다. 3이 못 잡는다 — 3의 행은 `task_id`가 있다. */
+putCollected("t78-old", "T-78 이전에 수락한 것", atPlus(5 * DAY), "accepted");
+raw.prepare("UPDATE collected_items SET event_id=? WHERE uid=?").run(acc1.event_id, "t78-old");
+const t78OldId = (raw.prepare("SELECT id AS i FROM collected_items WHERE uid=?").get("t78-old") as any).i;
+const t78OldRes = (await api("POST", `/api/collected/${t78OldId}/accept`)).json;
+ok("3b ★ 옛 accepted 행(task_id가 NULL)을 다시 눌러도 task를 안 만든다 (소급 생성 금지)",
+  t78OldRes.duplicate === true && t78Tasks("T-78 이전에 수락한 것") === 0
+  && t78Link(t78OldId)?.k === null,
+  `${JSON.stringify(t78OldRes)} tasks=${t78Tasks("T-78 이전에 수락한 것")} task_id=${t78Link(t78OldId)?.k}`);
+
+/* 4 ★ **제목은 `summary` 원문 그대로다.** 다듬는 순간 그것이 해석이고, 개강 첫날 틀린다
+ *   (T-42 결정 ② · T-74 와 같은 규칙). `RAW_TITLE`에 괄호·물결·날짜가 일부러 들어 있다.
+ *   ★ **잇는 칸을 타고 전수로 센다** — *"그 task 의 제목이 X 다"* 로 쓰면 task 가 없을 때도
+ *      죽어서 1의 명제를 업는다. **원문과 다른 제목을 가진 것이 하나도 없는가**로 본다. */
+const t78Trimmed = () => (raw.prepare(
+  `SELECT COUNT(*) AS n FROM tasks t
+     JOIN collected_items c ON c.task_id = t.id
+    WHERE t.title <> c.summary`).get() as any).n;
+ok("4 ★ task 제목이 summary 원문 그대로다 — 다듬지 않는다 (전수)",
+  t78Trimmed() === 0,
+  `원문과다른제목=${t78Trimmed()} 이번건="${
+    (raw.prepare("SELECT title AS t FROM tasks WHERE id=?").get(t78Row?.k) as any)?.t}"`);
+
+/* 5 회귀 — **event 는 전과 똑같다.** task 를 얹으면서 달력 쪽을 건드리지 않았는가.
+ *   ⚠️ **날짜까지 본다** — 위 T-42 검사는 title·time 만 보고 `date`를 안 본다. */
+const t78Ev = raw.prepare(
+  "SELECT title AS ti, date AS dt, time AS tm FROM events WHERE id=?").get(t78Row?.e) as any;
+ok("5 event는 전과 똑같다 — title·date·time (T-78 회귀)",
+  t78Ev?.ti === RAW_TITLE && t78Ev?.dt === atPlus(2 * DAY).slice(0, 10)
+  && t78Ev?.tm === atPlus(2 * DAY).slice(11, 16),
+  `${JSON.stringify(t78Ev)} 기대일=${atPlus(2 * DAY).slice(0, 10)}`);
+
+/* 6 ★ **경계 — `dismiss`는 아무것도 안 만든다.** 거절은 *"안 묻겠다"* 이지 *"할 일이다"* 가 아니다.
+ *   ★ 개수를 앞뒤로 재서 **이 호출이 만든 것**만 센다(다른 블록이 만든 행에 안 매달린다). */
+putCollected("t78-dis", "T-78 거절할 것", atPlus(6 * DAY));
+const t78DisId = (raw.prepare("SELECT id AS i FROM collected_items WHERE uid=?").get("t78-dis") as any).i;
+const nBefore = (raw.prepare("SELECT (SELECT COUNT(*) FROM tasks) AS t, (SELECT COUNT(*) FROM events) AS e")
+  .get() as any);
+await api("POST", `/api/collected/${t78DisId}/dismiss`);
+const nAfter = (raw.prepare("SELECT (SELECT COUNT(*) FROM tasks) AS t, (SELECT COUNT(*) FROM events) AS e")
+  .get() as any);
+ok("6 ★ dismiss는 task도 event도 안 만든다 (경계)",
+  nAfter.t === nBefore.t && nAfter.e === nBefore.e && t78Link(t78DisId)?.k === null,
+  `tasks ${nBefore.t}→${nAfter.t} · events ${nBefore.e}→${nAfter.e}`);
 
 // **문구에 해석이 없다** — 결정 ②는 화면 문자열로만 확인된다(§확인 절차 4행).
 const cardSrc = readFileSync(join(here, "../public/app.js"), "utf8");

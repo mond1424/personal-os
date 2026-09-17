@@ -7,6 +7,9 @@
 //   그대로 보여주고 그대로 `events.title`에 넣는다. 다듬는 순간 그것이 해석이고, 개강 첫날 틀린다.
 import * as db from "../db";
 import * as events from "./events";
+// ★ **task 생성 로직을 여기 다시 짜지 않는다**(T-78 §금지). `createTask`가 id 발급·
+//   `wait_anchor_at`·대기 판정을 한 곳에서 지고 있고, `deferTask`·`completeTask`가 그 전제 위에 있다.
+import * as tasks from "./tasks";
 import * as uclass from "./uclass";
 import { isoNow } from "../lib/time";
 import { ApiError, type Env, type TimeCtx } from "../types";
@@ -94,10 +97,30 @@ export async function status(env: Env, t: TimeCtx) {
 }
 
 /**
- * 받아들인다 — `events` 행 하나를 만들고 그 id를 잇는다.
+ * 받아들인다 — **`events` 행 하나와 `tasks` 행 하나**를 만들고 둘을 잇는다 (T-78).
  *
- * ⚠️ **멱등이다.** 이미 `accepted`면 **`events`를 또 만들지 않고** 있던 것을 돌려준다.
+ * ★★ **둘 다 만드는 것이 이 함수의 본체다.** 설계 §1.7이 `events`를
+ * *캘린더 전용 · 완료·이월 없음*으로 두었는데 **과제는 둘 다**이기 때문이다:
+ *
+ * ```
+ * event   11/30 23:59 학기과제 기한   ★ 마감. 안 움직인다
+ * task    "학기과제 기한"              ★ 할 일. 언제 할지는 움직인다
+ * ```
+ *
+ * ⚠️ **하나로 합치면 둘 중 하나를 잃는다** — 설계가 *"미루기는 복사가 아니라 같은 일의
+ *    이동"*이라고 한 것이 정확히 이 구분이다. T-78 이전에는 `events`만 만들어서,
+ *    **과제가 달력에 있는데 할 일 목록은 0이었다**(2026-09-17 화면 실측).
+ *
+ * ★★ **새 task 에 예정일을 안 준다 — 대기(미배정)다.**
+ *    마감일에 넣으면 그것은 *"마감일에 하라"*는 뜻이고 **거짓이고 나쁜 조언이다.**
+ *    대기는 *"할 일은 있고 언제 할지 안 정했다"* 이고, 그게 실제 상태 그대로다(설계 1.4).
+ *    **날짜는 사용자가 정한다.**
+ *
+ * ⚠️ **멱등이다.** 이미 `accepted`면 **`events`도 `tasks`도 또 만들지 않고** 있던 것을 돌려준다.
  * 느린 네트워크에서 두 번 눌리는 것이 이 카드의 기본 조건이다(T-42 §할 일 ①).
+ * ★ **가드가 보는 것은 `event_id` 하나 그대로다** — `task_id`를 함께 요구하면
+ *   **T-78 이전에 수락한 행이 그 문을 지나 오늘 task 를 만든다**(소급 생성 · T-78 §금지).
+ *   그 행들의 `task_id`는 NULL로 남는 것이 맞다.
  *
  * **보호 규칙은 붙이지 않는다** — 별개의 결정이고 ADR-030의 나머지 절반이다.
  */
@@ -106,7 +129,10 @@ export async function accept(env: Env, t: TimeCtx, id: string) {
   if (!row) throw new ApiError(404, "해당 항목이 없어요");
 
   if (row.state === "accepted" && row.event_id) {
-    return { id: row.id, event_id: row.event_id, state: "accepted", duplicate: true };
+    return {
+      id: row.id, event_id: row.event_id, task_id: row.task_id,
+      state: "accepted", duplicate: true,
+    };
   }
   if (!row.starts_at) throw new ApiError(400, "시각이 없어 일정으로 만들 수 없어요");
 
@@ -115,8 +141,11 @@ export async function accept(env: Env, t: TimeCtx, id: string) {
   const date = row.starts_at.slice(0, 10);
   const time = row.starts_at.slice(11, 16);
   const ev = await events.create(env, t, { title: row.summary, date, time });
-  await db.stAcceptCollected(env, id, ev.id).run();
-  return { id: row.id, event_id: ev.id, state: "accepted", duplicate: false };
+  // ⚠️ **`date`를 넘기지 않는다.** 넘기면 `createTask`가 `schedule_entries` 행을 만들고
+  //    그 순간 대기가 아니라 *"그날 하기로 한 일"*이 된다 — 위 주석의 그 거짓말이다.
+  const task = await tasks.createTask(env, t, { title: row.summary });
+  await db.stAcceptCollected(env, id, ev.id, task.id).run();
+  return { id: row.id, event_id: ev.id, task_id: task.id, state: "accepted", duplicate: false };
 }
 
 /**

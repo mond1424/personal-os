@@ -1,6 +1,9 @@
 -- docs/schema-current.sql — 스키마 스냅샷 (자동 생성)
 -- migrations/ 전체를 인메모리 sqlite에 적용한 뒤 sqlite_master를 덤프한 것.
--- 최신 마이그레이션: 0024_collected_categories.sql  ·  갱신 2026-09-15
+-- 최신 마이그레이션: 0025_collected_task_id.sql  ·  갱신 2026-09-17
+-- 0025 = collected_items에 task_id TEXT REFERENCES tasks(id) 추가(T-78 — 수락이 만든 할 일).
+--   ALTER라 컬럼이 표 끝에 붙는다. **`event_id`와 같은 꼴이다** — 수락의 산물 둘을 수락한 행이 안다.
+--   ⚠️ T-78 이전에 accepted가 된 행은 NULL로 남는다. **소급해서 task를 만들지 않는다.**
 -- 0013·0014는 DDL을 바꾸지 않는다: 0013 = analyses backfill(트리거를 원문 그대로 복원) ·
 --   0014 = lm_schema.body에 title 얹기(UPDATE만).
 -- 0015 = me_history에 reason TEXT 추가(ADR-027 — 모드 하향 사유). ALTER라 컬럼이 표 끝에 붙는다.
@@ -92,7 +95,7 @@ CREATE TABLE collected_items (
                   CHECK (state IN ('new','accepted','dismissed')),
   event_id      TEXT REFERENCES events(id),       -- accepted일 때 만들어진 일정 (T-42)
   created_at    TEXT NOT NULL
-, categories TEXT);
+, categories TEXT, task_id TEXT REFERENCES tasks(id));
 
 CREATE TABLE daily (
   date          TEXT PRIMARY KEY,    -- YYYY-MM-DD = id (귀속일)

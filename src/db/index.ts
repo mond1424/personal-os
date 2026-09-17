@@ -549,6 +549,8 @@ export interface CollectedItemRow {
   starts_at: string | null; ends_at: string | null; last_modified: string | null;
   first_seen_at: string; last_seen_at: string;
   state: "new" | "accepted" | "dismissed"; event_id: string | null; created_at: string;
+  // T-78 — 수락이 만든 할 일. **T-78 이전에 수락한 행은 NULL이고 그대로 둔다**(소급 생성 금지).
+  task_id: string | null;
 }
 
 export const collectedByUid = (env: Env, uid: string) =>
@@ -607,9 +609,15 @@ export const collectedPending = (env: Env, from: string, to: string) =>
            ORDER BY starts_at, id`).bind(from, to).all<CollectedItemRow>();
 
 /** `AND state <> 'accepted'`가 **두 번째 요청을 조용히 무해하게** 만든다(T-42 §할 일 ①). */
-export const stAcceptCollected = (env: Env, id: string, eventId: string) =>
-  q(env, "UPDATE collected_items SET state='accepted', event_id=? WHERE id=? AND state <> 'accepted'")
-    .bind(eventId, id);
+/**
+ * 수락의 산물 **둘**을 한 문장으로 잇는다 (T-78 · 0025).
+ *
+ * ★ `event_id`와 `task_id`가 **같은 UPDATE**에 있어야 *"둘 중 하나만 이어진 행"*이 안 생긴다.
+ *   `WHERE state <> 'accepted'`가 멱등을 진다 — 두 번째 호출은 0행을 고친다.
+ */
+export const stAcceptCollected = (env: Env, id: string, eventId: string, taskId: string) =>
+  q(env, "UPDATE collected_items SET state='accepted', event_id=?, task_id=? WHERE id=? AND state <> 'accepted'")
+    .bind(eventId, taskId, id);
 
 export const stDismissCollected = (env: Env, id: string) =>
   q(env, "UPDATE collected_items SET state='dismissed' WHERE id=?").bind(id);
