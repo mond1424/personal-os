@@ -2513,12 +2513,48 @@ ok("4 ★ 아침 재료에 없는 종일 시험도 예약 경로에는 선다 (3
   `L3이상=${(t60Plan?.fires ?? []).filter((f: any) => f.level >= 3).length}`
   + ` wake에있음=${t60WakeHas} 알람깨끗=${t60AlarmClean}`);
 
-/* 5 ★ **아침을 보는 것은 Level 2 하나다.** 4의 짝 — 저쪽이 *"알람 경로에 없다"* 를 보고
- *   이쪽이 *"감지 경로 안에서도 L2 가지에만 있다"* 를 본다. 게이트가 `level` 분기 밖으로
- *   나오면 감지 L3까지 함께 조용해진다. */
-const t60GateInL2 = /if\s*\(level\s*==\s*2\)[\s\S]{0,400}?GuardSync\.nextWake/.test(ktWatch);
-ok("5 ★ 아침을 보는 것은 Level 2 가지 하나다 (4의 짝 · 스캐너)",
-  t60GateInL2, `L2가지안=${t60GateInL2}`);
+/* 5 ★ **L2 가지 안에 있는 것은 게이트다.** 4의 짝 — 저쪽이 *"알람 경로에 없다"* 를 보고
+ *   이쪽이 *"감지 경로 안에서 `return false`가 L2 가지에만 있다"* 를 본다.
+ *   게이트가 `level` 분기 밖으로 나오면 **감지 L3까지 함께 조용해진다.**
+ *
+ * ⚠️⚠️ **이 검사는 2026-09-17에 고쳤다 — 옛 동작을 세고 있었다**(T-77 · CLAUDE.md §기준선).
+ *    원래는 `GuardSync.nextWake`가 `if (level == 2)` 안에 있는지를 봤는데,
+ *    그건 **게이트가 아니라 재료**다. 둘이 한 `if`에 묶여 있던 것이 T-77이 고친 결함이고,
+ *    그대로 두면 **이 검사가 결함을 지키는 자물쇠**가 된다.
+ *    ★ 넷 중 **`return false`만** 봐야 한다: ADR-047 ②가 막은 것은 *"L3가 침묵하는 것"*
+ *      하나이고, *"L3가 아침을 말하는 것"* 은 막은 적이 없다.
+ *
+ * ★ 가지의 끝은 **중괄호 균형**으로 찾는다 — 옛 `{0,400}`은 블록이 길어지면 조용히 빗나간다. */
+const t60L2Branch = (() => {
+  const lines = ktWatch.split("\n");
+  const i = lines.findIndex((l) => /if\s*\(level\s*==\s*2\)\s*\{/.test(l));
+  if (i < 0) return null;
+  const out: string[] = [];
+  let depth = 0;
+  for (let j = i; j < lines.length; j++) {
+    const l = lines[j] ?? "";
+    out.push(l);
+    depth += (l.match(/\{/g) ?? []).length - (l.match(/\}/g) ?? []).length;
+    if (j > i && depth === 0) return out.join("\n");
+    if (depth === 0) return null;                 // 여는 줄에서 이미 닫혔다 — 못 뽑은 것이다
+  }
+  return null;
+})();
+const t60GateInL2 = t60L2Branch !== null && /return false/.test(t60L2Branch);
+ok("5 ★ 게이트(return false)가 Level 2 가지 안에 있다 (4의 짝 · 스캐너)",
+  t60GateInL2, `가지뽑음=${t60L2Branch !== null} 게이트가지안=${t60GateInL2}`);
+
+/* 5b ★ **5의 짝 — 재료는 그 가지 밖이다** (T-77 ①). `nextWake`·`wakeSentence`가 가지 안에
+ *   갇히면 **L3가 L2보다 아는 것이 적어진다** — 2026-09-16 사용자 판정 *"의미 없다"* 의 원인이다.
+ *   ⚠️ 5만 있으면 T-77 이전 구현이 그대로 통과한다(그때도 `return false`는 가지 안이었다).
+ *   ★ *행동*은 `front.mjs` [T-77] 1·2가 **돌려서** 센다. 여기는 그 짝의 스캐너다. */
+const t60MatOutL2 = t60L2Branch !== null
+  && !/GuardSync\.nextWake/.test(t60L2Branch) && !/wakeSentence/.test(t60L2Branch)
+  && /GuardSync\.nextWake/.test(ktWatch) && /wakeSentence\(/.test(ktWatch);
+ok("5b ★ 아침 재료는 Level 2 가지 밖이다 — L3도 그것을 쓴다 (5의 짝 · ADR-047 ② §정정)",
+  t60MatOutL2,
+  `가지안에재료=${t60L2Branch !== null && /GuardSync\.nextWake|wakeSentence/.test(t60L2Branch)}`
+  + ` 파일에재료있음=${/GuardSync\.nextWake/.test(ktWatch)}`);
 
 /* 6 ★ **일정이 없는 밤만 침묵한다** (티켓 ②). 재료를 *"못 읽었다"* 와 *"낡았다"* 는 **띄운다** —
  *   막으면 시간표가 깨진 밤이 공강 밤과 같은 모양이 되고, 그건 이 리포가 T-54·T-55·T-57에서

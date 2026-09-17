@@ -107,20 +107,37 @@ object GuardWatch {
         val level = if (!l2done) 2 else 3
         if (l2done && now - last < s.watchRefireMinutes * 60_000L) return false
 
-        // ★ **Level 2만 아침을 본다** (ADR-047 ② · 티켓 ④의 회귀 검사가 겨누는 자리).
-        //   Level 3·4는 데드라인·보호 일정이 근거이므로 여기를 타지 않는다 — 태우면
-        //   **시험 전날 밤에 Guard가 통째로 조용해진다.**
+        /*
+         * ★★★ **게이트는 Level 2만 탄다 — 재료는 레벨과 무관하다** (ADR-047 ② §정정 · T-77 ①).
+         *
+         * ②가 막은 것은 *"아침이 없는 밤에 L3가 통째로 침묵하는 것"* 이다 —
+         * L3·4는 데드라인·보호 일정이 근거이므로 **아침이 없어도 떠야 한다.** 그건 그대로다.
+         * ⚠️ **그러나 그 근거는 *"안 뜨게 하지 마라"* 이지 *"아침을 말하지 마라"* 가 아니었다.**
+         *    게이트(`return false`)와 재료(`wakeLine`)가 **한 `if` 안에 함께 있어서**,
+         *    게이트를 L3에 안 태우려다 **재료까지 함께 버렸다.**
+         *
+         * ⚠️⚠️ **대가: 더 센 개입이 아는 것이 더 적었다.** L2에는 있는
+         *    *"지금 자면 6시간 30분 — 8시 기상 · 10시 양자물리및연습2"* 가 L3에는 아예 없었고,
+         *    그 자리를 매일 같은 말 둘(제목·꼬리)이 감쌌다. 2026-09-16 사용자 판정: *"의미 없다"*.
+         *
+         * ⚠️ **`return false`를 L3로 넓히지 마라** — ②가 막은 바로 그것이다.
+         * ⚠️ **`noteL2Gate`를 L3에서 부르지 마라** — 이름 그대로 **L2 게이트의 관측**이고,
+         *    L3가 함께 쓰면 게이트가 걸린 밤과 안 걸린 밤이 한 표에 섞인다(T-70과 같은 모양).
+         *
+         * ★ `nextWake`가 레벨마다 한 번씩 돈다 — 네트워크는 없고(`GuardSync`의 저장분을 읽는다)
+         *   여기까지는 창·상한·임계·재발동 간격을 전부 지난 **발동 시점**에만 온다.
+         */
         var wakeLine: String? = null
+        val w = GuardSync.nextWake(ctx, now, s.wakeLookaheadHours, s.wakeStaleHours)
         if (level == 2) {
-            val w = GuardSync.nextWake(ctx, now, s.wakeLookaheadHours, s.wakeStaleHours)
             // ★ **재료가 없거나 낡았으면 막지 않고 띄운다.** 막으면 *"시간표가 깨졌다"* 가
             //   *"조용한 밤"* 과 같은 모양이 되고, 그게 이 리포가 세 번 물린 실패다.
             //   말할 것이 진짜로 없는 밤(NONE)만 침묵한다.
             val fire = w.state != GuardSync.WakeState.NONE
             noteL2Gate(ctx, w, now, fire)
             if (!fire) return false
-            if (w.state == GuardSync.WakeState.OK) wakeLine = wakeSentence(now, w)
         }
+        if (w.state == GuardSync.WakeState.OK) wakeLine = wakeSentence(now, w)
 
         val app = UsageProbe.currentApp(ctx)
         val title = if (level == 2) "아직 깨어 있네요" else "지금 자야 합니다"
@@ -190,11 +207,33 @@ object GuardWatch {
              *   창 계산에 쓴다. **문구에서만 뺀다.**
              * ⚠️ **"지금까지 N분"으로 바꾸지 않는다** — `windowMin`은 *창 시작 이후*를 재지
              *   *지금까지*가 아니다. 문구는 값이 실제로 재는 것을 말해야 한다.
+             *
+             * ★★ **`0분`이면 이 조각을 통째로 뺀다** (T-77 ②-b · 2026-09-17 실측).
+             *   창 시작 직후에 뜬 L2가 *"00:30 이후 **0분** 화면을 켜 두셨어요"* 라고 말했다 —
+             *   **값은 정확한데 문장이 발동 이유를 설명하지 않는다.** 발동이 읽는 것은
+             *   `usedMin`(창 밖에서부터 이어진 연속 사용)이고 문구가 말하는 것은 `windowMin`
+             *   (창 시작 이후)이라, 00:30 발동이면 뒤가 0이다.
+             *   ⚠️ **T-69가 그 둘을 *일부러* 갈랐다 — 되돌리지 않는다.** 갈라 놓음은 옳고,
+             *      창 시작 직후는 그 대가가 극단으로 드러나는 자리일 뿐이다.
+             *   ⚠️ **`usedMin`으로 바꾸지 않는다**(T-69의 이유가 그대로 남아 있다).
+             *   ⚠️ **1분 미만을 *"1분"* 으로 올림하지 않는다 — 거짓이고, 0을 숨기는 것이다.**
+             *   ★ **잃는 것이 없다** — 사실은 바로 위 기상 한 줄이 이미 말하고 있다.
+             *
+             * ★ **조각마다 뒤에 한 칸씩 붙이고 끝에서 `trim()` 한다.** 앞에 붙이면
+             *   가운데 조각이 빠진 밤에 **두 칸이 남는다**(위 `0분` 분기가 그 자리를 만들었다).
              */
-            append("${s.bedFrom} 이후 ${windowMin}분 화면을 켜 두셨어요.")
-            if (app != null) append(" 지금 ${app}.")
-            if (level >= 3) append(" 내일이 무너집니다.")
-        }
+            if (windowMin > 0) append("${s.bedFrom} 이후 ${windowMin}분 화면을 켜 두셨어요. ")
+            /*
+             * ★ **꼬리(*" 내일이 무너집니다."*)는 뺐다** (T-77 ② · ADR-047 ①).
+             *   `level >= 3`에 무조건 붙던 줄이고 **매일 같아서 정보가 0**이었다.
+             *   ⚠️ **게다가 예언이다** — 안 무너진 날이 한 번만 와도 다음부터 안 믿는다.
+             *      ①이 *명령을 사실로* 바꾼 이유(*"틀린 사실은 명령보다 빨리 신뢰를 깎는다"*)가
+             *      그대로 걸린다.
+             *   ⚠️ **다른 위협 문장으로 대체하지 않는다 — 같은 결함이다.** 그 자리에는
+             *      위 ①이 되찾아 온 **기상 한 줄**이 들어간다.
+             */
+            if (app != null) append("지금 ${app}. ")
+        }.trim()
 
         GuardNotifications.fire(ctx, level, title, body, eventId = null, cause = "watch:bedtime")
 

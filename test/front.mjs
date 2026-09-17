@@ -4492,8 +4492,15 @@ ok("7 ★ 두 계수가 서로 다른 이름을 갖고, 각 주석이 상대편�
  *    시계가 **하나도** 없어야 판정이 선다. `<FROM>`·`<WAKE>` 따위가 그래서 저 모양이다. */
 console.log("\n[T-76] 밤 문구 — 창의 끝이 빠졌는가");
 
+/* ⚠️ **`WIN`만 수(數)를 겸한다** (T-77 ②-b). 구현이 `windowMin > 0`으로 그 조각을 가르게 됐으므로
+ *    표식이 **비교에서도 살아 있어야** 한다 — 순수 문자열이면 `"<WIN>" > 0`이 `false`라
+ *    **조각이 통째로 빠진 것을 이 파일의 검사 셋이 "회귀"로 읽는다.**
+ *    `valueOf`가 비교를 받고 `toString`이 렌더를 받는다.
+ * ⚠️ **그래도 시계 모양은 안 쓴다** — 검사 1이 *박아 넣은 시각*을 그 모양으로 가른다. */
+const t76Num = (mark, n) => ({ toString: () => mark, valueOf: () => n });
+
 const T76 = {                                    // 재료마다 서로 다른 표식 (시계 모양 금지)
-  FROM: "<FROM>", TO: "<TO>", WIN: "<WIN>", USED: "<USED>", WAKE: "<WAKE>", APP: "<APP>",
+  FROM: "<FROM>", TO: "<TO>", WIN: t76Num("<WIN>", 42), USED: "<USED>", WAKE: "<WAKE>", APP: "<APP>",
 };
 const T76_CLOCK = /\d{1,2}:\d{2}/;               // 박아 넣은 시각 — 보간이 아니어도 잡는다
 
@@ -4525,12 +4532,14 @@ const t76Render = (vars) => {
 const t76Fmt = /private const val TALLY_FMT = "([^"]*)"/.exec(t68Watch)?.[1] ?? null;
 /** 옮기다 막히면 `null`이 되고 **셋이 함께** 죽는다. 이유는 `t76Err`가 detail 로 나른다. */
 let t76Err = null;
-const t76Mk = (level, wakeLine) => {
+const t76Mk = (level, wakeLine, over = {}) => {
   try {
     return t76Render({
       s: { bedFrom: T76.FROM, bedTo: T76.TO, watchTallyFrom: 0 },
       n: 8, wakeLine, app: T76.APP, level, windowMin: T76.WIN, usedMin: T76.USED,
       TALLY_FMT: t76Fmt,
+      // T-77 ②-b — 한 재료만 갈아 끼우고 나머지는 그대로. **파서를 두 벌 만들지 않는다.**
+      ...over,
     });
   } catch (e) { t76Err = e.message; return null; }
 };
@@ -4561,6 +4570,197 @@ ok("2 ★ 창의 시작은 남아 있다 — N분의 기준이다 (1의 짝 · �
 ok("3 문구가 싣는 분이 그대로다 — 창 안의 시간이지 게이트의 연속 시간이 아니다 (T-69 회귀)",
   t76Has(T76.WIN) && t76Lacks(T76.USED),
   `${t76Why} 창분=${t76Has(T76.WIN)} 게이트분샜다=${!t76Lacks(T76.USED)}`);
+
+/* ── T-77 · 더 센 개입이 아는 것이 더 적다 ───────────────────────────────────
+ *
+ * ADR-047 ②는 *"L3·4는 데드라인이 근거이므로 아침이 없는 밤에도 떠야 한다"* 였다.
+ * 그런데 그것이 **게이트(`return false`)와 재료(`wakeLine`)를 한 `if (level == 2)` 안에**
+ * 넣는 것으로 구현돼, 게이트를 L3에 안 태우려다 **재료까지 함께 버렸다** —
+ * L2에는 있는 *"지금 자면 6시간 30분 — 8시 기상 · 10시 …"* 가 L3에는 **아예 없었다.**
+ *
+ * ★ **그래서 이 블록은 문구만이 아니라 *게이트 블록 자체*를 돌린다.**
+ *   T-76이 `buildString`을 옮겨 돌린 것과 같은 방식인데(함정 15 · 스캐너가 아니라 실행),
+ *   여기서 봐야 하는 명제 넷 중 셋(*떴는가* · *안 떴는가* · *관측을 남겼는가*)이
+ *   **문구에 흔적을 안 남기기** 때문에 문구만 봐서는 못 센다.
+ * ⚠️ **옮기다 잘리면 조용히 초록이 된다** — 잘린 조각엔 게이트가 없어서 *"L3도 뜬다"* 가
+ *    **무조건 참**이 되기 때문이다(함정 18: 도구의 *"안 막혔다"* 는 *못 봤다* 와 구별이 안 된다).
+ *    그래서 **합성 조각을 하나 먹여 본다**(검사 0) — 네 결과를 실제로 가르는지 먼저 증명하고
+ *    시작한다. 구현 조각 쪽 안전망은 재료(`wakeSentence`)와 괄호 균형이다.
+ * ⚠️ **게이트(`return false`)는 뽑기 조건에 안 넣는다** — 넣으면 *"게이트를 지웠다"* 라는
+ *    구현 상태가 *"못 뽑았다"* 와 같은 모양이 돼 **검사 아홉이 한꺼번에 죽는다.**
+ *    그건 검사 3 하나가 말해야 하는 사실이다. */
+console.log("\n[T-77] 게이트와 재료 — 더 센 개입이 더 말하는가");
+
+/** 게이트 블록의 Kotlin 원문. **중괄호 균형으로 끝을 찾는다** — 끝나는 줄의 이름을 안 적는다.
+ *
+ *  ⚠️ 빈 줄이나 `val app = …`에서 멈추게 하면 *"그 줄이 거기 있다"* 를 검사가 전제하게 된다.
+ *     대신 **이 명제에 관여하는 이름**(재료·게이트·블록 괄호)만 따라가다 깊이 0에서 처음
+ *     아무것도 안 걸리는 줄을 만나면 거기가 끝이다. */
+const t77Gate = (() => {
+  const lines = t68Watch.split("\n");
+  const i = lines.findIndex((l) => /^\s*var\s+wakeLine\b/.test(l));
+  if (i < 0) return null;
+  const KEEP = /wakeLine|GuardSync|noteL2Gate|wakeSentence|\bfire\b|return\s+false|^\s*\}|\{\s*$/;
+  const out = [];
+  let depth = 0;
+  for (let j = i; j < lines.length; j++) {
+    if (depth === 0 && j > i && !KEEP.test(lines[j])) break;
+    out.push(lines[j]);
+    depth += (lines[j].match(/\{/g) || []).length - (lines[j].match(/\}/g) || []).length;
+  }
+  const src = out.join("\n");
+  // ★ 균형이 안 맞거나 **재료가 안 잡혔으면 못 옮긴 것이다.** 조용히 넘기지 않는다.
+  if (depth !== 0 || !/wakeSentence/.test(src)) return null;
+  return src;
+})();
+
+/** Kotlin → JS. **이 조각이 쓰는 문법만** 옮긴다 — 조건도 레벨도 여기 다시 적지 않는다. */
+let t77Err = t77Gate === null ? "게이트 블록을 못 뽑았다" : null;
+const t77Exec = (src, level, state, notes) => {
+  try {
+    const js = src
+      .replace(/\b(?:val|var)\s+(\w+)\s*:\s*[\w.<>?]+\s*=/g, "let $1 =")   // 타입이 붙은 선언
+      .replace(/\bval\s+/g, "const ").replace(/\bvar\s+/g, "let ");
+    const names = ["ctx", "now", "s", "level", "GuardSync", "noteL2Gate", "wakeSentence"];
+    // `return false`가 그대로 살아 있다 — **안 뜬 밤은 `false`가 돌아온다.**
+    const fn = new Function(...names, `${js}\nreturn { wakeLine };`);
+    const WakeState = { OK: "OK", NONE: "NONE", NO_DATA: "NO_DATA", STALE: "STALE" };
+    const w = { state, at: 0, title: null, leaveBy: 0 };
+    return fn({}, 0, { wakeLookaheadHours: 0, wakeStaleHours: 0 }, level,
+      { WakeState, nextWake: () => w }, (...a) => notes.push(a), () => T76.WAKE);
+  } catch (e) { t77Err = e.message; return null; }
+};
+const t77Run = (level, state, notes) =>
+  t77Gate === null ? null : t77Exec(t77Gate, level, state, notes);
+
+/* 0 ★ **옮기기가 살아 있다 — 합성 조각으로 먼저 가른다** (함정 18 · smoke의 *"스캐너가
+ *   살아 있다"* 와 같은 자리). 아래 1·2·3·6은 전부 *"돌려 보니 이랬다"* 인데,
+ *   **옮기기가 잘리면 넷이 조용히 초록**이 된다 — `return false`가 안 실린 조각은
+ *   무슨 레벨로 돌려도 뜨고, `noteL2Gate`가 안 실린 조각은 무엇도 안 부른다.
+ *   ⚠️ 이 조각은 **검사가 쥔 합성 문자열**이지 구현이 아니다 — 여기 적힌 꼴이 틀려도
+ *      구현은 안 틀리고, 다만 **이 아래 넷의 증거력이 없어졌다**는 말이 된다. */
+const T77_LIVE = [
+  "var wakeLine: String? = null",
+  "val w = GuardSync.nextWake(ctx, now, s.wakeLookaheadHours, s.wakeStaleHours)",
+  "if (level == 2) {",
+  "    val fire = w.state != GuardSync.WakeState.NONE",
+  "    noteL2Gate(ctx, w, now, fire)",
+  "    if (!fire) return false",
+  "}",
+  "if (w.state == GuardSync.WakeState.OK) wakeLine = wakeSentence(now, w)",
+].join("\n");
+const t77Live = (() => {
+  const seen = [];
+  const cut = (src, lv, st) => {
+    const notes = [];
+    const r = t77Exec(src, lv, st, notes);
+    seen.push({ r, n: notes.length });
+    return { r, n: notes.length };
+  };
+  const a = cut(T77_LIVE, 2, "NONE");                       // 게이트가 문다 → false
+  const b = cut(T77_LIVE, 3, "NONE");                       // L3는 안 문다 → 객체
+  const c = cut(T77_LIVE, 3, "OK");                         // 재료가 붙는다
+  const d = cut(T77_LIVE.replace("    if (!fire) return false\n", ""), 2, "NONE"); // 게이트 없음
+  return {
+    okAll: a.r === false && a.n === 1 && b.r !== false && b.n === 0
+      && c.r && c.r.wakeLine === T76.WAKE && d.r !== false,
+    why: JSON.stringify(seen),
+  };
+})();
+ok("0 ★ 옮기기가 네 결과를 실제로 가른다 — 막힘·통과·재료·관측 (합성 조각 · 아래 넷의 전제)",
+  t77Live.okAll, t77Live.why);
+
+/** 한 밤을 통째로 — 게이트를 돌리고, 떴으면 그 재료로 **T-76의 문구 옮기기**를 이어 돌린다. */
+const t77Night = (level, state, over = {}) => {
+  const notes = [];
+  const g = t77Run(level, state, notes);
+  if (g === null) return { ran: false, fired: null, body: null, notes };
+  if (g === false) return { ran: true, fired: false, body: null, notes };
+  return { ran: true, fired: true, body: t76Mk(level, g.wakeLine, over), notes };
+};
+
+const t77L3ok = t77Night(3, "OK");
+const t77L3none = t77Night(3, "NONE");
+const t77L2none = t77Night(2, "NONE");
+const t77L2ok = t77Night(2, "OK");
+const t77Why = (r) => `떴나=${r.fired} 본문="${r.body}" noteL2Gate=${r.notes.length}회`
+  + (t77Err ? ` 옮기다막힘=${t77Err}` : "");
+
+/* 1 ★ **본체 — 아침이 있는 밤이면 L3도 그것을 말한다.** 재료가 게이트에서 풀렸는가.
+ *   ⚠️ 문구만 봐서는 못 센다 — `wakeLine`이 **게이트 블록에서** 정해지기 때문이다. */
+ok("1 ★ 아침이 있는 밤 — L3 본문에도 기상 한 줄이 실린다 (T-77 ① 본체)",
+  t77L3ok.fired === true && typeof t77L3ok.body === "string" && t77L3ok.body.includes(T76.WAKE),
+  t77Why(t77L3ok));
+
+/* 2 ★★ **안전핀 — 아침이 없는 밤에도 L3는 뜬다.** ADR-047 ②가 막은 바로 그것이고,
+ *   1만 있으면 *"게이트를 L3에도 태우는"* 구현이 통과한다. 그 구현은 **시험 전날 밤에
+ *   Guard를 통째로 조용하게 만든다** — 실패 사례 #1이 정확히 그 밤이다. */
+ok("2 ★★ 아침이 없는 밤(NONE)에도 L3는 뜬다 — 게이트를 L3에 안 태웠다 (ADR-047 ② 회귀 · 안전핀)",
+  t77L3none.fired === true, t77Why(t77L3none));
+
+/* 3 ★ **2의 짝 — 게이트를 통째로 지운 것이 아니다.** L2는 말할 것이 진짜로 없는 밤(NONE)에
+ *   침묵해야 한다. 이 검사가 없으면 *"`if (level == 2)` 블록을 다 지운다"* 가 1·2를 통과한다. */
+ok("3 ★ 아침이 없는 밤 L2는 안 뜬다 — 게이트가 L2에 그대로 남아 있다 (2의 짝)",
+  t77L2none.fired === false, t77Why(t77L2none));
+
+/* 4 ★ **꼬리(예언)가 빠졌다.** `level >= 3`에 무조건 붙던 *" 내일이 무너집니다."* —
+ *   매일 같아서 정보가 0이고, **안 무너진 날이 한 번만 와도 다음부터 안 믿는다.** */
+/* ⚠️ **게이트를 안 탄다 — 문구만 그린다**(변이 M1이 가르쳐 준 자리). 처음엔 위 `t77L3none.body`를
+ *   두 번째 표본으로 썼는데, 그러면 *"L3가 NONE 밤에 뜬다"* 는 **검사 2의 명제를 몰래 업고**
+ *   있는 것이라 **게이트를 L3에 태우는 변이 하나가 검사 셋을 죽였다.** 4와 8이 세는 것은
+ *   *문구에 무엇이 실렸나*뿐이므로 표본도 문구 쪽에서만 만든다. */
+const T77_TAIL = /무너집니다/;
+const t77Bodies = [t76Mk(3, T76.WAKE), t76Mk(3, null)];
+ok("4 ★ L3 본문에 예언 꼬리가 없다 (T-77 ②)",
+  t77Bodies.every((b) => typeof b === "string" && b.length > 0 && !T77_TAIL.test(b)),
+  `L3(아침있음)="${t77Bodies[0]}" L3(아침없음)="${t77Bodies[1]}"`);
+
+/* 4b ★ **4의 일반화 — 본문이 레벨에 따라 갈리지 않는다.** 4는 *그 문장*만 세므로
+ *   **다른 위협 문장으로 바꾼 구현**이 통과한다(티켓 §금지가 *"같은 결함"* 이라 부른 것).
+ *   제목은 여전히 레벨을 말하고 화면에도 `LEVEL 3` 배지가 있다 — **본문이 그 일을 겸할 필요가 없다.** */
+const t77SameBody = t76Mk(2, T76.WAKE) !== null && t76Mk(2, T76.WAKE) === t76Mk(3, T76.WAKE);
+ok("4b ★ 같은 재료면 본문이 레벨과 무관하게 같다 — 다른 위협 문장으로 바꿔도 죽는다 (4의 일반화)",
+  t77SameBody, `L2="${t76Mk(2, T76.WAKE)}" L3="${t76Mk(3, T76.WAKE)}"`);
+
+/* 5 회귀 — **L2가 잃은 것이 없다.** 창 시작(`FROM`)·창 안의 분(`WIN`)은 위 T-76 2·3이
+ *   두 레벨 모두에서 이미 센다. 여기서 더 보는 것은 **기상 한 줄**이다 — ①이 대입을
+ *   블록 밖으로 옮기면서 L2에서 떨어뜨릴 수 있는 유일한 조각이다. */
+ok("5 L2 본문에 기상 한 줄이 그대로 있다 (T-77 ① 회귀 — 재료를 옮기다 L2에서 흘리지 않았다)",
+  typeof t77L2ok.body === "string" && t77L2ok.body.includes(T76.WAKE), t77Why(t77L2ok));
+
+/* 6 ★ **관측 오염 방지.** `noteL2Gate`는 이름 그대로 **L2 게이트의 관측**이다.
+ *   L3가 함께 쓰면 **게이트가 걸린 밤과 안 걸린 밤이 한 표에 섞여** 밤 실측이
+ *   *"왜 안 떴나"* 를 못 읽는다(T-70이 `markAsked`에서 겪은 그 모양). */
+ok("6 ★ L3 경로는 noteL2Gate를 안 부른다 — 게이트 관측이 두 모집단으로 안 섞인다",
+  t77L3ok.ran && t77L3none.ran && t77L3ok.notes.length === 0 && t77L3none.notes.length === 0,
+  `OK밤=${t77L3ok.notes.length}회 NONE밤=${t77L3none.notes.length}회` + (t77Err ? ` 막힘=${t77Err}` : ""));
+
+/* 6b ★ **6의 짝 — 관측이 사라진 것이 아니다.** 6만 있으면 *"`noteL2Gate` 호출을 통째로
+ *   지운다"* 가 통과하는데, 그것은 T-53이 물린 자리를 되살린다(*"일정이 없어 안 띄웠다"* 가
+ *   조용해져 **시간표가 깨진 밤이 공강 밤과 똑같이 보인다**). **띄운 밤도 지나야 한다.** */
+ok("6b ★ L2 경로는 띄운 밤도 안 띄운 밤도 noteL2Gate를 지난다 (T-53 회귀 · 6의 짝)",
+  t77L2ok.ran && t77L2none.ran && t77L2ok.notes.length === 1 && t77L2none.notes.length === 1,
+  `OK밤=${t77L2ok.notes.length}회 NONE밤=${t77L2none.notes.length}회` + (t77Err ? ` 막힘=${t77Err}` : ""));
+
+/* 7 ★ **②-b — `0분`은 말하지 않는다** (2026-09-17 실측). 창 시작 직후에 뜬 L2가
+ *   *"00:30 이후 **0분** 화면을 켜 두셨어요"* 라고 말했다. 값은 정확한데 **문장이 발동
+ *   이유를 설명하지 않는다** — 발동은 `usedMin`(창 밖에서부터 이어진 연속)이 읽고
+ *   문구는 `windowMin`(창 시작 이후)을 말하기 때문이다.
+ *   ⚠️ **조각째 뺀다** — `usedMin`으로 바꾸는 것도(T-69가 뺀 이유가 그대로다),
+ *      1분 미만을 *"1분"* 으로 올리는 것도(거짓이다) 아니다.
+ *   ★ 값이 있는 밤에 그 조각이 그대로 있는 것은 위 T-76 2·3이 센다 — 여기는 **0인 밤**만 본다. */
+const t77Zero = t76Mk(2, T76.WAKE, { windowMin: 0 });   // ⚠️ 4와 같은 이유로 게이트를 안 탄다
+ok("7 ★ windowMin이 0이면 창 조각이 통째로 빠진다 — 시작도 분도 (T-77 ②-b)",
+  typeof t77Zero === "string" && t77Zero.length > 0
+  && !t77Zero.includes(T76.FROM) && !t77Zero.includes(T76.WIN) && !t77Zero.includes(T76.USED),
+  `0분밤="${t77Zero}"`);
+
+/* 8 ★ **7이 만든 자리 — 조각이 빠진 밤에 두 칸이 남지 않는다.** 조각마다 공백을 **앞**에
+ *   붙이는 꼴이면 가운데가 빠지는 순간 화면에 두 칸이 보인다. 재료가 조건부가 된 이상
+ *   **공백은 뒤에 붙고 끝에서 걷어내야** 한다. */
+ok("8 ★ 조각이 빠진 밤에도 두 칸 띄기가 남지 않는다 (7의 뒤처리)",
+  [t77Zero, t76Mk(3, null)].every((b) => typeof b === "string" && b.length > 0 && !/ {2}/.test(b)),
+  `0분밤="${t77Zero}" 아침없는밤="${t76Mk(3, null)}"`);
 
 console.log("\n[부팅 · 연결 실패 복구]");
 ok("로드 후 부팅 오버레이 닫힘", !$("#boot").classList.contains("on"));
