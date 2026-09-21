@@ -2076,10 +2076,27 @@ ok("③ '전부 추가' 버튼이 없다",
 //    이 줄을 통과한 뒤에도 **핸들러는 아직 날고 있다.** 그 잔여가 아래 ★ 검사의 스파이에
 //    섞여 `invalidate|render`가 두 벌로 찍혔다(T-54 변이 배터리가 그것을 드러냈다).
 //    `onclick()`은 `run(...)`의 프라미스를 그대로 주므로 **끝난 것을 직접 안다** — 시계가 없다.
+/* T-79 ④ — **토스트를 DOM에서 읽지 않는다.** 위 ★ 검사의 주석이 적어 둔 그대로,
+ * `refreshToday()` 도중에 화면이 바뀌므로 DOM 관측은 남의 것을 자기 것으로 셀 수 있다.
+ * **부르는 자리를 센다** — `toast(...)`가 무엇을 받았는가가 계약이다(함정 14).
+ * ⚠️ **기대 문자열을 구현에서 읽어 오지 않는다**(함정 15) — 여기 적힌 것이 계약이고,
+ *    구현이 그것과 갈라지면 갈라진 쪽이 틀린 것이다. */
+await ev(`(async()=>{
+  window.__t42.toasts = [];
+  window.__t42.oldToast = toast;
+  toast = (msg, kind) => { window.__t42.toasts.push(String(msg)); return window.__t42.oldToast(msg, kind); };
+})()`);
 await $("#coll-list [data-cid='t42-a'] [data-act='add']").onclick();
+const t79Toast = ev(`window.__t42.toasts.join("|")`);
+await ev(`toast = window.__t42.oldToast`);
 ok("④ 하나를 처리하면 남은 수가 준다 — 카드가 1건으로",
   ev(`window.__t42.sent.join("|")`) === "add:t42-a" && txt("#td-coll-text").includes("1건"),
   `${ev(`window.__t42.sent.join("|")`)} / ${txt("#td-coll-text")}`);
+/* ★ T-79 ④ — **[추가]는 둘을 만든다**(`services/collected.ts`: `events.create` + `tasks.createTask`).
+ * *"캘린더에 넣었어요"* 는 **사실의 절반**이었고, 대기에 생긴 할 일을 사용자가 못 찾았다.
+ * ⚠️ **둘 다 센다** — `대기`만 보면 캘린더를 잃은 문구가 통과하고, `캘린더`만 보면 옛 문구가 통과한다. */
+ok("★ [추가] 토스트가 캘린더와 대기를 둘 다 말한다 (T-79 ④ — T-78이 둘 다 만든다)",
+  t79Toast.includes("캘린더") && t79Toast.includes("대기"), t79Toast || "(토스트가 없었다)");
 // ★ **④는 처리 뒤의 캘린더 갱신을 안 본다** — 그래서 이 절은 T-42부터 `renderCal()`(없는
 //    함수)을 부르며 초록이었다. 던진 자리가 `refreshToday()` **뒤**라 건수는 이미 줄어 있고,
 //    ④는 그 앞에서 이미 만족된다.

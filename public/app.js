@@ -788,7 +788,9 @@ function renderCollected(rows) {
     b.onclick = () => run(async () => {
       const row = b.closest("[data-cid]");
       const id = row.dataset.cid;
-      if (b.dataset.act === "add") { await Api.collectedAccept(id); toast("캘린더에 넣었어요"); }
+      // T-79 ④ — **T-78이 둘 다 만든다**(`services/collected.ts`의 `events.create` + `tasks.createTask`).
+      // *"캘린더에 넣었어요"* 는 사실의 절반이었고, 대기에 생긴 할 일을 사용자가 못 찾았다.
+      if (b.dataset.act === "add") { await Api.collectedAccept(id); toast("캘린더와 대기에 넣었어요"); }
       else { await Api.collectedDismiss(id); toast("안 묻을게요"); }
       row.remove();
       if (!body.querySelector("[data-cid]")) closeSheet("sh-coll");
