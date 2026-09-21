@@ -859,8 +859,18 @@ const t56Fire = async (day: string, hm: string, level: number, cid: string) =>
   })).json;
 const t56Pending = async () => (await api("GET", "/api/guard/pending-outcome")).json as any[];
 const t56Row = async (id: string) => (await t56Pending()).find((r) => r.id === id);
+/* ⚠️ **T-79 ②가 이 두 줄의 뜻을 갈랐다 — 검사가 옛 동작을 세고 있었다.**
+ *
+ * 전에는 *"추론이 붙는가"* 를 **묻는 큐**(`t56Row`)에서 읽었다. 이제 묻는 큐는 **추론된 줄을
+ * 안 주므로**(드레인이 없는 큐였다 — `db/index.ts`) 그 자리에서 읽으면 아래 검사 넷이
+ * *"행이 없다"* 로 죽는다. **추론이 사라진 것이 아니라 읽을 자리가 옮겨간 것**이고,
+ * 옮겨간 자리가 나 탭 목록이다(③). **그래서 추론을 세는 검사는 `t56Stored`로 옮긴다.**
+ * ★ **큐에 오는가/안 오는가는 따로 센다** — 아래 T-79 블록이 그 몫이다.
+ *
+ * ⚠️ `limit`을 넉넉히 준다 — 아래 넘침 검사가 수십 건을 만들고, 기본값에 걸리면
+ *    **이 함수가 조용히 `undefined`를 내 검사가 엉뚱한 이유로 죽는다.** */
 const t56Stored = async (id: string) =>
-  ((await api("GET", "/api/guard/events")).json as any[]).find((r) => r.id === id);
+  ((await api("GET", "/api/guard/events?limit=500")).json as any[]).find((r) => r.id === id);
 
 // ── 밤 1 — 뒤따른 발동이 L3
 const t56N1 = addDays(D, 5);
@@ -868,14 +878,14 @@ const t56A1 = await t56Fire(t56N1, "22:10", 3, "t56-a1");
 const t56B1 = await t56Fire(t56N1, "23:40", 3, "t56-b1");
 ok("fixture — 둘이 같은 귀속일이다 (값을 가정하지 않고 응답이 준 것을 본다)",
   t56A1.on_date === t56B1.on_date, `${t56A1.on_date} / ${t56B1.on_date}`);
-const t56P1 = await t56Row(t56A1.id);
+const t56P1 = await t56Stored(t56A1.id);
 ok("1 뒤에 발동이 있으면 추론이 붙는다",
   !!t56P1 && t56P1.later_fires >= 1 && t56P1.outcome_inferred === "failure",
   JSON.stringify(t56P1 && { later: t56P1.later_fires, inf: t56P1.outcome_inferred }));
 
 // ★ 1의 짝 — 마지막 발동은 뒤가 없다. **이 시점에 b1 뒤로는 아무것도 없다**(밤 2~4는 아직
 //   안 만들었다). 그래서 이 검사는 '귀속일 조건'이 아니라 **'뒤따름' 자체**만 센다.
-const t56P1b = await t56Row(t56B1.id);
+const t56P1b = await t56Stored(t56B1.id);
 ok("2 ★ 뒤에 발동이 없으면 안 붙는다 (1의 짝)",
   !!t56P1b && t56P1b.later_fires === 0 && t56P1b.outcome_inferred === null,
   JSON.stringify(t56P1b && { later: t56P1b.later_fires, inf: t56P1b.outcome_inferred }));
@@ -884,7 +894,7 @@ ok("2 ★ 뒤에 발동이 없으면 안 붙는다 (1의 짝)",
 const t56N2 = addDays(D, 7);
 const t56A2 = await t56Fire(t56N2, "22:10", 3, "t56-a2");
 await t56Fire(t56N2, "23:40", 2, "t56-b2");
-const t56P2 = await t56Row(t56A2.id);
+const t56P2 = await t56Stored(t56A2.id);
 // ⚠️ **1과 비교만 한다.** `=== "failure"`나 `later_fires >= 1`을 함께 쓰면
 //    *"추론을 통째로 뺀 변이"*에서 1과 함께 죽어, **레벨 필터를 겨냥한 이 검사가 자기 몫을
 //    못 센다.** L2 뒤와 L3 뒤가 **같은지**가 이 검사의 전부다.
@@ -898,7 +908,7 @@ const t56A3 = await t56Fire(t56N3, "22:10", 3, "t56-a3");
 const t56C3 = await t56Fire(addDays(t56N3, 1), "22:10", 3, "t56-c3");
 ok("fixture — 다음 날 밤은 다른 귀속일이다",
   t56A3.on_date !== t56C3.on_date, `${t56A3.on_date} / ${t56C3.on_date}`);
-const t56P3 = await t56Row(t56A3.id);
+const t56P3 = await t56Stored(t56A3.id);
 // ⚠️ **세는 자리를 직접 본다.** `outcome_inferred === null`을 함께 쓰면 *"항상 추론을 붙이는
 //    변이"*가 2와 함께 이것도 죽여, **귀속일을 겨냥한 이 검사가 자기 몫을 못 센다.**
 //    걸러졌는지는 `later_fires`가 0인 것으로 충분하고, 그게 이 검사가 세는 전부다.
@@ -910,17 +920,17 @@ ok("6 다른 귀속일의 발동은 세지 않는다",
 const t56N4 = addDays(D, 11);
 const t56A4 = await t56Fire(t56N4, "22:10", 3, "t56-a4");
 await t56Fire(t56N4, "23:40", 3, "t56-b4");
-const t56P4 = await t56Row(t56A4.id);
 const t56S4 = await t56Stored(t56A4.id);
 // 4 — **없는 것을 세는 검사.** 추론이 붙은 채로도 저장된 칸은 비어 있어야 한다.
 //     `outcome_at`까지 본다: 값만 안 쓰고 시각을 쓰는 구현도 append-only를 건드린 것이다.
-//     ⚠️ *"pending 전체가 NULL"*로 넓히지 않는다 — `outcome IS NULL` 필터를 지우는 변이가
-//        답이 있는 옛 행을 끌고 들어와 **3을 겨냥한 그 변이가 여기까지 죽인다.**
-//        자동 기입이 내려앉을 자리는 **추론이 붙은 바로 그 행**이고, 그 한 행이면 충분하다.
+//     ⚠️ **T-79: 읽는 자리가 하나가 됐다.** 전에는 pending과 stored 둘을 비교했는데
+//        pending이 이제 이 줄을 안 주므로 **같은 응답을 두 번 읽던 꼴**이 된다. 하나로 줄인다 —
+//        `outcome_inferred`(계산)와 `outcome`/`outcome_at`(저장)이 **한 행 안에서** 갈리는지가
+//        이 검사가 세는 전부이고, 그건 한 번 읽어도 그대로 보인다.
 ok("4 ★ 추론이 붙어도 outcome은 여전히 NULL이다 (없는 것을 세는 검사)",
-  !!t56P4 && t56P4.outcome_inferred === "failure" && t56P4.outcome === null
-  && !!t56S4 && t56S4.outcome === null && t56S4.outcome_at === null,
-  `pending=${t56P4?.outcome} stored=${t56S4?.outcome}/${t56S4?.outcome_at}`);
+  !!t56S4 && t56S4.outcome_inferred === "failure"
+  && t56S4.outcome === null && t56S4.outcome_at === null,
+  `inf=${t56S4?.outcome_inferred} stored=${t56S4?.outcome}/${t56S4?.outcome_at}`);
 
 // 5 — ★ **4의 실물.** 트리거가 막는지는 API를 거쳐야만 알 수 있다.
 //     추론과 **반대되는** 답을 넣는다 — 자동 판정이 선점했다면 여기서 409가 난다.
@@ -929,11 +939,107 @@ ok("5 ★ 추론이 붙은 뒤에도 사용자가 답을 쓸 수 있다 (트리�
   t56Write.status === 200 && t56Write.json.outcome === "success",
   `${t56Write.status} ${JSON.stringify(t56Write.json)}`);
 
-// 3 — 사용자의 답이 이긴다. 그 줄은 물음에서 사라지고, 저장된 값은 추론이 아니라 사람의 것이다.
+/* 3 — 사용자의 답이 이긴다. 저장된 값은 추론이 아니라 사람의 것이다.
+ *
+ * ⚠️ **T-79: *"그 줄은 물음에서 사라진다"* 를 여기서 뺐다 — 세는 것이 없어졌다.**
+ *    이 줄(`a4`)은 뒤따른 발동이 있어 **답을 쓰기 전에 이미** 묻는 큐에 없다(②).
+ *    그대로 두면 `!(await t56Row(...))`가 **답과 무관하게 늘 참**이라,
+ *    *"답해도 큐에서 안 빠지는 구현"* 을 통과시킨다 — **혼자 죽을 수 없는 조각**이다
+ *    (T-65 · `AGENT-CHAIN` §8).
+ * ★ **드레인은 아래 T-79 블록이 *큐에 있던 줄*로 센다** — 거기서만 그 말이 뜻을 갖는다.
+ * ★ 여기 남는 것은 **추론이 사람의 답을 안 덮는가** 하나다(ADR-044 ②). */
 const t56S4After = await t56Stored(t56A4.id);
 ok("3 ★ 사용자 답이 있으면 추론이 그것을 덮지 않는다",
-  !!t56S4After && t56S4After.outcome === "success" && !(await t56Row(t56A4.id)),
-  `stored=${t56S4After?.outcome} 물음에 남았나=${!!(await t56Row(t56A4.id))}`);
+  !!t56S4After && t56S4After.outcome === "success" && t56S4After.outcome_inferred === "failure",
+  `stored=${t56S4After?.outcome} inf=${t56S4After?.outcome_inferred}`);
+
+/* ─────────────────────────────────────────────────────────────
+ * [9.4d] T-79 ② — 묻는 큐와 고치는 목록이 갈린다
+ *
+ * 큐는 `outcome IS NULL`로 열리고 답이 **저장돼야** 닫힌다. 추론은 원칙 1 때문에
+ * 저장될 수 없으므로 **추론된 줄은 구조적으로 큐를 못 떠난다** — 드레인이 없다.
+ * 그래서 큐에서 걷어내고, 고치는 자리를 나 탭으로 옮겼다(③).
+ * ────────────────────────────────────────────────────────────── */
+console.log("\n[9.4d] 묻는 큐는 추론된 줄을 안 준다 (T-79 ②)");
+
+// 1 — 본체. **같은 행**이 목록엔 있고 큐엔 없다. 두 쪽을 함께 봐야 *"사라졌다"* 와
+//     *"애초에 없다"* 가 갈린다(`AGENT-CHAIN` §5 — 화면에서 같은 둘).
+ok("1 ★ 추론된 줄은 묻는 큐에 안 온다 (목록엔 그대로 있다)",
+  (await t56Stored(t56A1.id))?.outcome_inferred === "failure" && !(await t56Row(t56A1.id)),
+  `목록=${(await t56Stored(t56A1.id))?.outcome_inferred} 큐에있나=${!!(await t56Row(t56A1.id))}`);
+
+// 3 — 회귀. 추론이 없는 줄은 전과 똑같이 온다. ⚠️ 1의 반대편이라 **둘이 짝**이다:
+//     이것이 없으면 *"큐를 통째로 비우는 구현"* 이 1만 보면 초록이다.
+ok("3 추론이 없는 줄은 전과 똑같이 묻는 큐에 온다 (회귀)",
+  !!(await t56Row(t56B1.id)) && (await t56Stored(t56B1.id))?.outcome_inferred === null,
+  `큐에있나=${!!(await t56Row(t56B1.id))}`);
+
+/* 2 — ★★ **이 티켓에서 제일 중요한 검사다.**
+ *
+ * `LIMIT` **안쪽**에서 거르는 구현은 적은 표본에서 1·3과 똑같이 초록이다. 갈리는 것은
+ * **추론된 줄이 상한을 통째로 먹는 날** 하나뿐이고, 그날 진짜 물음이 소리 없이 사라진다.
+ * 실측이 그 날이 멀지 않다고 말했다(14/15가 추론 · 한 밤에 4~9건).
+ *
+ * ⚠️ **상한 값을 여기 적지 않는다**(함정 15 — 검사와 구현이 같은 값을 공유하면 함께 틀린다).
+ *    *"넉넉히 넘긴다"* 만 정하고, 그 수가 상한보다 큰지는 **이 검사가 죽는 것으로** 드러난다.
+ * ★ **진짜 물음을 *더 오래된* 밤에 둔다** — 큐가 `fired_at DESC`라, 새 쪽에 두면
+ *   상한 안에 저절로 들어와 **어떤 구현으로도 통과한다.** 밀려나야 세는 것이 생긴다. */
+const T79_FLOOD = 30;          // 상한보다 넉넉히 많다 — 정확한 상한은 검사의 앎이 아니다
+const t79Old = addDays(D, 13); // 진짜 물음이 사는 밤 (오래된 쪽)
+const t79New = addDays(D, 15); // 추론이 상한을 먹는 밤 (새 쪽)
+const t79Ask = await t56Fire(t79Old, "21:00", 3, "t79-ask");
+for (let i = 0; i < T79_FLOOD; i++) {
+  await t56Fire(t79New, `20:${String(i).padStart(2, "0")}`, 3, `t79-flood-${i}`);
+}
+/* fixture — **홍수가 실제로 추론으로 찍혔는가.** ⚠️ 먼저 확인한다:
+ * 안 찍혔으면 아래 2는 *"상한을 넘겼는데도 왔다"* 가 아니라 *"애초에 안 넘쳤다"* 이고,
+ * **둘은 초록에서 구별되지 않는다**(`AGENT-CHAIN` §8 — 스캐너가 살아 있다는 증거를 먼저).
+ * 밤의 마지막 하나만 뒤가 없으므로 추론은 `T79_FLOOD - 1`이 되어야 한다. */
+const t79All = (await api("GET", "/api/guard/events?limit=500")).json as any[];
+const t79FloodInf = t79All
+  .filter((r) => String(r.client_id ?? "").startsWith("t79-flood-"))
+  .filter((r) => r.outcome_inferred === "failure").length;
+ok(`fixture — 홍수 ${T79_FLOOD}건 중 ${T79_FLOOD - 1}건에 추론이 붙었다 (상한을 실제로 넘긴다)`,
+  t79FloodInf === T79_FLOOD - 1, `추론 ${t79FloodInf} / 넣은 것 ${T79_FLOOD}`);
+ok("2 ★★ 추론이 상한을 넘게 쌓여도 더 오래된 진짜 물음이 온다 (LIMIT 바깥에서 거른다)",
+  !!(await t56Row(t79Ask.id)),
+  `큐 길이=${(await t56Pending()).length} · ask가 큐에=${!!(await t56Row(t79Ask.id))}`);
+
+/* 9 — ★ 드레인이 돈다. **큐에 있던 줄**에 답하면 큐에서 빠진다.
+ *
+ * ⚠️⚠️ **홍수가 아니라 *가장 새로운* 밤에 잰다 — 처음엔 위 `t79Ask`로 쟀다가 물렸다.**
+ *    `t79Ask`는 오래된 쪽이라 **필터가 없으면 홍수에 밀려 큐에 없고**, 그러면 이 검사가
+ *    *"드레인이 안 돈다"* 가 아니라 *"애초에 큐에 없었다"* 로 죽는다 — 변이 M1이 1과 함께
+ *    이것까지 죽였다(`AGENT-CHAIN` §8 §가르는 시험: **필연이 아니라 표본 탓**이었다).
+ * ★ 가장 새로운 줄은 **어떤 구현에서도 큐에 들어오므로**, 여기서 갈리는 것은 *답했는가* 하나다.
+ * ⚠️ 그래도 `전=true`를 단언한다 — 전에 없었으면 이 검사는 아무것도 안 센다. */
+const t79Drain = await t56Fire(addDays(D, 19), "21:00", 3, "t79-drain");
+const t79Before = !!(await t56Row(t79Drain.id));
+await api("POST", `/api/guard/events/${t79Drain.id}/outcome`, { outcome: "failure" });
+ok("9 ★ 답하면 그 줄이 묻는 큐에서 빠진다 (드레인이 돈다 · 8의 짝)",
+  t79Before && !(await t56Row(t79Drain.id)),
+  `전=${t79Before} 후=${!!(await t56Row(t79Drain.id))}`);
+
+/* 5 — ★★ **저장 금지.** 답할 때 추론을 함께 보내도 그것이 칸에 안 앉는다.
+ *     `outcome_inferred`는 조회 시 계산이므로, 보낸 값이 아니라 **뒤따른 발동**이 정해야 한다.
+ *     ⚠️ 여기 쓰는 줄은 뒤따른 발동이 **없는** 것이라 계산값이 `null`이다 —
+ *        보낸 `"failure"`가 그대로 나오면 그 순간 저장된 것이다. */
+const t79Poison = await t56Fire(addDays(D, 17), "21:00", 3, "t79-poison");
+await api("POST", `/api/guard/events/${t79Poison.id}/outcome`,
+  { outcome: "success", outcome_inferred: "failure", later_fires: 99 });
+const t79PoisonRow = await t56Stored(t79Poison.id);
+ok("5 ★★ 답에 추론을 실어 보내도 저장되지 않는다 (계산이 이긴다)",
+  !!t79PoisonRow && t79PoisonRow.outcome === "success"
+  && t79PoisonRow.outcome_inferred === null && t79PoisonRow.later_fires === 0,
+  JSON.stringify(t79PoisonRow && {
+    o: t79PoisonRow.outcome, inf: t79PoisonRow.outcome_inferred, lf: t79PoisonRow.later_fires,
+  }));
+
+// ③의 서버 절반 — 나 탭 목록이 그 칸을 싣는가. 이게 없으면 화면이 "실패(추정)"을 못 쓴다.
+ok("★ 나 탭 목록(`/api/guard/events`)이 outcome_inferred 를 싣는다 (③)",
+  ((await api("GET", "/api/guard/events?limit=500")).json as any[])
+    .every((r) => "outcome_inferred" in r),
+  JSON.stringify(Object.keys((await t56Stored(t56A1.id)) ?? {}).filter((k) => k.startsWith("outcome"))));
 
 // (8) 감시 목록 — PC 확장 자리 (ADR-022)
 ok("watch app 추가 201",

@@ -635,6 +635,69 @@ ok("reaction null과 outcome null은 다르게 표시", nullReaction === "아직
 ok("Override 사유와 분류 표시", [...$("#guard-memory").querySelectorAll(".gmem-reaction-value")][2]?.textContent.includes("조금만 더")
   && [...$("#guard-memory").querySelectorAll(".gmem-reaction-value")][2]?.textContent.includes("회피"));
 
+/* ── T-79 ③ — 나 탭이 추론을 읽고, **그 자리에서 고친다** ──────────────
+ *
+ * Today가 추론된 줄을 더는 안 묻는다(②). **그래서 입력이 여기로 왔다** — 이것이 없으면
+ * ②는 고칠 길을 없앤 것이고, 그게 §보고가 멈춘 자리다.
+ * ⚠️ **고정 날짜를 안 쓴다**(함정 12) — `S.today.date`에서 상대로 잡는다.
+ */
+console.log("\n[T-79] 나 탭이 추론을 읽고 그 자리에서 고친다");
+const t79Day = ev(`S.today.date`);
+const t79Row = (id, outcome, inferred) => ({
+  id, on_date: t79Day, fired_at: `${t79Day}T0${id.length % 5 + 1}:00:00+09:00`,
+  level: 3, cause: "watch:bedtime", reaction: "accepted",
+  outcome, outcome_inferred: inferred,
+});
+await ev(`(async()=>{
+  window.__t79 = { sent: [], old: Api.guardOutcome };
+  Api.guardOutcome = async (id, outcome) => { window.__t79.sent.push(id + ":" + outcome); return {}; };
+})()`);
+await renderMeFixture([], [
+  t79Row("t79-done", "failure", "failure"),   // 사람이 답한 줄
+  t79Row("t79-inf", null, "failure"),         // 앱이 민 판정
+  t79Row("t79-open", null, null),             // 아무도 모르는 줄
+]);
+$("#guard-memory .gday-summary")?.click();     // 아코디언을 열고 실제 경로로 누른다
+const t79Labels = [...$("#guard-memory").querySelectorAll(".gmem-outcome-value")]
+  .map((el) => el.textContent.trim());
+ok("6 ★ 나 탭이 NULL+추론 failure 를 '실패(추정)' 로 쓴다",
+  t79Labels[1] === "실패(추정)", t79Labels.join(" | "));
+/* 7 — ★ **6의 짝.** 앱이 민 판정과 사람이 쓴 답이 **글자로** 갈려야 한다.
+ *   ⚠️ 이게 없으면 6은 `"실패"`만 써도 통과한다(`includes`가 아니라 `===`인 것도 그래서다). */
+ok("7 ★ '실패' 와 '실패(추정)' 이 다른 문자열이다 (6의 짝)",
+  t79Labels[0] === "실패" && t79Labels[1] !== t79Labels[0] && t79Labels[2] === "결과 미정",
+  t79Labels.join(" | "));
+
+/* 8 — ★★★ **③의 본체.** 답이 없는 줄엔 두 버튼이 다 있고, 답이 있는 줄엔 없다.
+ *   ★ **둘 다 단다** — 추론이 `failure`라고 `[성공]`만 주면 그건 여전히 앱이 답을 정하는 것이다. */
+const t79Fix = (gid) => $(`#guard-memory .gmem-fix[data-gid='${gid}']`);
+ok("8 ★★ 답이 없는 줄에서 성공·실패 둘 다 누를 수 있다 (답이 있는 줄엔 버튼이 없다)",
+  !!t79Fix("t79-inf")?.querySelector("[data-outcome='success']")
+  && !!t79Fix("t79-inf")?.querySelector("[data-outcome='failure']")
+  && !!t79Fix("t79-open") && !t79Fix("t79-done"),
+  `inf=${!!t79Fix("t79-inf")} open=${!!t79Fix("t79-open")} done=${!!t79Fix("t79-done")}`);
+
+/* 9 — ★ **8의 짝. 드레인이 돈다.** 눌렀을 때 **실제로 보내는가.**
+ *   ⚠️ 화면만 바꾸고 안 보내는 구현은 8을 그대로 통과한다 — 버튼은 눌리고 글자도 바뀐다.
+ *      그러면 그 줄은 큐에서 영영 안 빠지고, **그것이 이 재발행이 고치려는 바로 그것이다.**
+ *   ★ `onclick()`이 `run(...)`의 프라미스를 주므로 **끝난 것을 계약으로 안다**(함정 14).
+ *   ★ 큐에서 실제로 빠지는 것은 서버가 진다 — smoke [9.4d] 9가 그 절반을 센다. */
+/* ⚠️ **버튼이 없어도 던지지 않는다.** 처음엔 그냥 `.querySelector(...).onclick()` 이었는데,
+ *    입력을 span으로 되돌리는 변이(M7)에서 **러너가 통째로 죽어** *"8·9가 함께 죽는다"* 가
+ *    아니라 *"통과 64"* 가 나왔다 — 배터리의 답이 못 읽히는 것이 된다(함정 8 · T-67).
+ *    **검사는 빨간불로 죽어야 하고, 죽는 방식이 결과를 가려서는 안 된다.** */
+const t79Btn = t79Fix("t79-inf")?.querySelector("[data-outcome='success']");
+if (t79Btn) await t79Btn.onclick();
+const t79Sent = ev(`window.__t79.sent.join("|")`);
+ok("9 ★ 누르면 그 답이 실제로 서버로 간다 (8의 짝 · 화면만 바꾸지 않는다)",
+  t79Sent === "t79-inf:success", t79Sent || "(아무것도 안 보냈다)");
+// 9의 뒤처리 — 답이 생겼으니 그 자리에서 글자가 바뀌고 버튼이 사라진다(더는 못 고친다).
+ok("★ 답한 줄은 그 자리에서 '성공'이 되고 버튼이 사라진다",
+  $("#guard-memory .gmem-row:nth-child(2) .gmem-outcome-value")?.textContent.trim() === "성공"
+  && !t79Fix("t79-inf"),
+  `${$("#guard-memory .gmem-row:nth-child(2) .gmem-outcome-value")?.textContent} / 버튼=${!!t79Fix("t79-inf")}`);
+await ev(`(async()=>{ Api.guardOutcome = window.__t79.old; })()`);
+
 const guardDays9 = Array.from({ length: 9 }, (_, i) => {
   const day = String(14 - i).padStart(2, "0");
   return {

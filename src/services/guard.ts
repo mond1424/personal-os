@@ -200,8 +200,21 @@ const askedOf = (input: any): 0 | 1 | null =>
 
 // ── 조회 ──────────────────────────────────────────────────────
 
+/**
+ * 나 탭 Guard 메모리.
+ *
+ * ★ **`outcome_inferred`를 함께 싣는다** (T-79 ③). 묻는 큐는 추론된 줄을 안 주므로
+ *   (`db.guardEventsPendingOutcome`) **그 줄을 보고 고치는 자리가 여기**이고,
+ *   *"실패(추정)"* 와 *"실패"* 를 화면에서 가르려면 이 칸이 있어야 한다.
+ * ★ **뜻은 `outcomeInferred` 하나가 진다** — `pendingOutcome`과 같은 함수를 쓴다.
+ *   ⚠️ 여기서 `later_fires > 0`을 다시 쓰면 **판정 규칙이 두 벌이 되고**, 그러면
+ *   한쪽만 고쳤을 때 *"묻지도 않는데 추정도 안 붙는 줄"* 이 조용히 생긴다.
+ */
 export const events = async (env: Env, limit = 100) =>
-  (await db.guardEventsList(env, limit)).results;
+  (await db.guardEventsList(env, limit)).results.map((r) => ({
+    ...r,
+    outcome_inferred: outcomeInferred(r.later_fires ?? 0),
+  }));
 
 /** 시간 맥락은 **받는다** — 요청당 한 번이고 그 자리는 미들웨어다(`TimeCtx` 주석 1.2). */
 export async function modes(env: Env, t: TimeCtx) {

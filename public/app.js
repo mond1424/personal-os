@@ -2735,9 +2735,20 @@ function guardReactionLabel(row) {
   return ["Override", row.override_reason ? `“${row.override_reason}”` : "", klass || ""].filter(Boolean).join(" · ");
 }
 
-function guardOutcomeLabel(outcome) {
-  if (outcome == null) return "결과 미정";
-  return { success: "성공", failure: "실패" }[outcome] || String(outcome);
+/**
+ * 결과 한 칸 (T-79 ③).
+ *
+ * ★★★ **`"실패(추정)"` 는 `"실패"` 와 글자로 갈린다.** 앞은 앱이 민 판정이고 뒤는 사람이 쓴
+ *   답이다. 같아 보이면 **무엇이 사람의 답인지 화면에서 사라지고**, 그건 이 리포가
+ *   기준선·배포 상태·하루 경계에서 세 번 물린 모양이다.
+ * ⚠️ **`row`를 통째로 받는다** — `outcome` 하나만 받으면 추론을 볼 수 없어 이 함수가
+ *    *"결과 미정"* 밖에 못 쓴다. 그게 T-79 ①이 멈춘 자리의 화면 쪽 절반이다.
+ * ⚠️ **저장된 값이 늘 이긴다** — `outcome`이 있으면 추론은 안 본다(ADR-044 ②).
+ */
+function guardOutcomeLabel(row) {
+  const outcome = row?.outcome ?? null;
+  if (outcome != null) return { success: "성공", failure: "실패" }[outcome] || String(outcome);
+  return row?.outcome_inferred === "failure" ? "실패(추정)" : "결과 미정";
 }
 
 function guardFiredLabel(firedAt) {
@@ -2746,13 +2757,33 @@ function guardFiredLabel(firedAt) {
   return raw.length >= 16 && raw[10] === "T" ? `${raw.slice(0, 10)} ${raw.slice(11, 16)}` : raw || "—";
 }
 
+/*
+ * ★★★ **결과가 아직 없는 줄은 여기서 고친다** (T-79 ③ · 재발행).
+ *
+ * Today는 이제 추론된 줄을 안 묻는다(②). **그래서 입력이 여기로 온다** —
+ * 이것이 없으면 ②는 *"자리를 옮기는 티켓이 자리를 없애는"* 것이 된다(§보고가 멈춘 자리).
+ *
+ * ⚠️ **새 API를 만들지 않는다** — Today와 **같은** `Api.guardOutcome(id, outcome)`을 쓴다.
+ *    두 벌이 되면 한쪽만 고쳐질 때 답의 뜻이 갈린다.
+ * ⚠️ **추론은 안 보낸다.** 보내는 것은 사람이 누른 `success`·`failure` 뿐이고,
+ *    `outcome_inferred`는 조회 시 계산이라 **저장될 것이 아예 없다**(원칙 1).
+ * ★ **둘 다 단다.** 추론이 `failure`라고 해서 `[성공]`만 주면 그건 여전히 앱이 답을 정하는 것이다.
+ */
 function guardMemoryRow(row) {
+  // 답이 있으면 끝난 줄이다 — append-only라 다시 못 고친다(트리거가 막는다). 버튼을 안 단다.
+  const fix = row.outcome == null
+    ? `<span class="gmem-fix" data-gid="${esc(row.id)}">
+         <button type="button" class="go gmem-fix-ok" data-outcome="success">성공</button>
+         <button type="button" class="go gmem-fix-no" data-outcome="failure" style="color:var(--sub)">실패</button>
+       </span>`
+    : "";
   return `<div class="gmem-row">
       <span class="gmem-time mono">${esc(guardFiredLabel(row.fired_at))}</span>
       <span class="gmem-level">Level ${esc(row.level)}</span>
       <span class="gmem-cause"><b>원인</b> <span class="gmem-cause-value">${esc(guardCauseLabel(row.cause))}</span></span>
       <span class="gmem-reaction"><b>반응</b> <span class="gmem-reaction-value">${esc(guardReactionLabel(row))}</span></span>
-      <span class="gmem-outcome"><b>결과</b> <span class="gmem-outcome-value">${esc(guardOutcomeLabel(row.outcome))}</span></span>
+      <span class="gmem-outcome"><b>결과</b> <span class="gmem-outcome-value">${esc(guardOutcomeLabel(row))}</span></span>
+      ${fix}
     </div>`;
 }
 
@@ -2807,6 +2838,28 @@ function renderGuardMemory(events) {
   box.querySelector(".gday-more")?.addEventListener("click", (event) => {
     box.querySelectorAll(".gday-section[hidden]").forEach((section) => { section.hidden = false; });
     event.currentTarget.remove();
+  });
+
+  /* ★★★ 결과를 그 자리에서 고친다 (T-79 ③).
+   *
+   * ⚠️ **`onclick`으로 단다** — `addEventListener`는 프라미스를 돌려줄 자리가 없어
+   *    **부르는 쪽이 끝난 것을 관측으로 알게 된다**(함정 14가 네 번 물린 자리).
+   *    `onclick()`은 `run(...)`의 프라미스를 그대로 주므로 검사가 계약으로 안다.
+   * ★ **화면은 서버가 받은 *뒤에만* 바뀐다.** 먼저 지우면 실패한 답이 성공처럼 보이고,
+   *   그건 이 티켓이 없애려는 *"앱이 정해 놓고 사람에게 승인받는"* 모양의 거울이다.
+   * ★ 라벨은 `guardOutcomeLabel`이 만든다 — 여기에 *"성공"* 을 다시 적으면 두 벌이 된다.
+   * ⚠️ **아코디언을 다시 그리지 않는다** — 버튼이 그 안에 있어서 통째로 다시 그리면
+   *    누른 직후 접힌다. 고친 줄만 제자리에서 바꾼다. 다음 `renderMe()`가 원본을 다시 읽는다. */
+  box.querySelectorAll(".gmem-fix button").forEach((button) => {
+    button.onclick = () => run(async () => {
+      const wrap = button.closest(".gmem-fix");
+      const outcome = button.dataset.outcome;
+      await Api.guardOutcome(wrap.dataset.gid, outcome);
+      wrap.closest(".gmem-row").querySelector(".gmem-outcome-value").textContent =
+        guardOutcomeLabel({ outcome });
+      wrap.remove();   // 답이 생겼으니 더는 못 고친다 — 트리거가 막는다
+      toast("기록했어요 — 다음 판단에 쓰여요");
+    });
   });
 }
 

@@ -731,9 +731,21 @@ export interface GuardEventRow {
   asked: 0 | 1 | null;
 }
 
+/**
+ * 나 탭 Guard 메모리가 읽는 목록.
+ *
+ * ★ **`later_fires`를 함께 준다** (T-79 ③). 묻는 큐에서 걷어낸 줄이 **여기서는 보여야 하고**,
+ *   *"실패(추정)"* 라고 쓰려면 그 사실이 있어야 한다. **뜻은 여기서 안 정한다** —
+ *   `services/guard.ts`의 `outcomeInferred` 하나가 그 판단을 진다(`guardEventsPendingOutcome`과 같은 경계).
+ * ⚠️ **거르지 않는다.** 이 목록은 이력이라 추론이 붙든 안 붙든 전부 온다 —
+ *    거르는 것은 묻는 큐 쪽의 일이고, 여기서 또 거르면 **고칠 자리가 다시 사라진다.**
+ */
 export const guardEventsList = (env: Env, limit = 100) =>
-  q(env, "SELECT * FROM guard_events ORDER BY fired_at DESC LIMIT ?")
-    .bind(limit).all<GuardEventRow>();
+  q(env, `SELECT g.*,
+                 (SELECT COUNT(*) FROM guard_events l
+                   WHERE l.on_date = g.on_date AND l.fired_at > g.fired_at) AS later_fires
+          FROM guard_events g ORDER BY g.fired_at DESC LIMIT ?`)
+    .bind(limit).all<GuardEventRow & { later_fires: number }>();
 
 export const guardEventGet = (env: Env, id: string) =>
   q(env, "SELECT * FROM guard_events WHERE id = ?").bind(id).first<GuardEventRow>();
@@ -849,12 +861,33 @@ export const guardEventsUnreacted = (env: Env, before: string) =>
  *    NULL을 빼는 이유(아직 반응이 안 왔다)와 **다른 이유로** `unasked`를 뺀다 —
  *    이쪽은 *"영영 안 올 것을 안다"* 이고, 그래서 조건이 둘이다.
  */
+/*
+ * ★★★★ **뒤따른 발동이 있는 줄은 여기 안 온다** (T-79 ② · 재발행).
+ *
+ * 이 큐는 `outcome IS NULL`로 열리고 **답이 저장돼야 닫힌다.** 그런데 추론은 원칙 1 때문에
+ * **저장될 수 없으므로**, 추론된 줄은 *구조적으로* 큐를 못 떠난다 — **드레인이 없다.**
+ * ⚠️ **`LIMIT`을 늘리는 것은 고치는 것이 아니다.** 안 빠지는 것이 머리에 쌓이므로 언젠가 찬다.
+ *    실측이 그것을 말했다(2026-09-21: 15건 중 14가 추론 · 한 밤에 4~9건씩 들어온다).
+ *
+ * ★★★ **`WHERE`에 넣는다 — `LIMIT` *바깥*이다.** 스무 칸을 먼저 뜬 뒤 거르면
+ * **추론된 줄이 그 스무 칸을 다 먹는 날** 진짜 물음이 한 건도 안 실린다. 그리고 그 실패는
+ * 화면에서 *"물어볼 게 없다"* 와 같고, **적은 표본에서는 두 구현이 똑같이 초록이다.**
+ * ⚠️ 그래서 검사가 상한을 **넘겨서** 센다(함정 15 — 상한을 하드코딩하면 함께 틀린다).
+ *
+ * ⚠️ **저장은 여전히 안 한다.** 조회 시 계산되는 사실이 **필터에 들어갈 뿐**이고
+ *    `outcome` 칸은 NULL로 남는다. 고치는 자리는 나 탭이다(③).
+ * ★ **여기서 말하는 것은 사실이다** — *"뒤따른 발동이 없다"*. *"그래서 실패로 보인다"* 는
+ *   여전히 `services/guard.ts`의 `outcomeInferred` 하나가 진다(위 문단의 경계 그대로).
+ *   ⚠️ **그 함수의 임계가 바뀌면 이 조건도 함께 움직여야 한다** — 둘은 같은 것을 가른다.
+ */
 export const guardEventsPendingOutcome = (env: Env) =>
   q(env, `SELECT g.*, e.title AS event_title, e.date AS event_date,
                  (SELECT COUNT(*) FROM guard_events l
                    WHERE l.on_date = g.on_date AND l.fired_at > g.fired_at) AS later_fires
           FROM guard_events g LEFT JOIN events e ON e.id = g.event_id
           WHERE g.outcome IS NULL AND g.reaction IS NOT NULL AND g.reaction != 'unasked'
+            AND NOT EXISTS (SELECT 1 FROM guard_events l
+                             WHERE l.on_date = g.on_date AND l.fired_at > g.fired_at)
           ORDER BY g.fired_at DESC LIMIT 20`)
     .all<GuardEventRow & {
       event_title: string | null; event_date: string | null; later_fires: number;
