@@ -127,6 +127,14 @@ details.fold[open] summary::before{transform:rotate(90deg)}
 .gmem-time{color:var(--faint);font-size:11.5px}
 .gmem-level{font-weight:700}
 .gmem-row b{color:var(--faint);font-size:10.5px;margin-right:2px}
+/* 가서 보는 길의 입구 (T-75 ③) — 대기 목록 바로 위 한 줄.
+   ★ 보이고 안 보이고는 스크립트가 정한다(0건이면 없다) — `#td-coll`과 **같은 방식**이다
+     (`style.display`를 `flex`/`none`으로). 여기 있는 `display:flex`는 **보일 때의 배치**다.
+   색은 변수만 쓴다(함정 5). */
+.collentry{margin-top:14px;width:100%;display:flex;align-items:center;justify-content:space-between;
+  gap:10px;padding:11px 14px;font-size:13px;color:var(--ink);cursor:pointer}
+.collentry .collentry-go{color:var(--brick);font-weight:700;flex:none}
+
 /* 결과를 그 자리에서 고치는 짝 (T-79 ③) — Today 카드의 두 버튼과 같은 색 짝이다.
    색은 변수만 쓴다(함정 5) — `--brick`·`--sub`는 이미 다크 짝이 있다. */
 .gmem-fix{margin-left:auto;display:flex;gap:10px;flex:none}

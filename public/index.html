@@ -192,6 +192,13 @@
 
   <div class="wview" id="w-inbox">
     <div id="inbox-lock" class="lockbar" style="display:none">21일이 지났어요 — 일정을 정하거나 연장해야 나갈 수 있어요.</div>
+    <!-- 가서 보는 길의 입구 (T-75 ③ · ADR-048) — 밀어 주는 카드(7일 창)는 Today 에 그대로 있다.
+         ★ 자리가 여기인 근거는 T-78 이다: 수락하면 **대기에 들어간다.**
+           들어오는 것과 들어온 것이 같은 칸의 앞뒤여야 흐름이 한 줄로 읽힌다.
+         ⚠️ **0건이면 이 줄이 아예 없다** — "들어온 것 0개"는 매일 자리를 차지하면서
+            아무것도 말하지 않는다(T-79 가 방금 걷어낸 모양).
+         ⚠️ 새 목록을 만들지 않는다 — 누르면 **기존 시트(`sh-coll`)** 가 열린다. -->
+    <button type="button" class="card collentry" id="coll-entry" style="display:none"></button>
     <div class="card" style="padding:2px 14px;margin-top:14px" id="wait-list"></div>
     <p class="cap" style="margin-top:10px">대기 최대 3주(21일). 다가갈수록 일수 표시가 붉어지고(원색 아님 — 탁한 계열), 넘기면 앱 실행 시 결정 팝업이 떠요. 연장하면 21일이 다시 시작.</p>
   </div>

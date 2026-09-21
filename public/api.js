@@ -152,6 +152,9 @@ const Api = {
   guardL2NagAck: () => _req("POST", "/guard/l2-nag/ack"),
   // 수집한 학사 일정 — 제안까지가 상한이다. 자동으로 events에 넣지 않는다 (T-42 · ADR-030)
   collectedPending: () => _req("GET", "/collected/pending"),
+  // 가서 보는 길 (T-75) — 창 없이 new 전부. **pending과 경로가 다르다**:
+  // 두 뜻이 한 이름을 쓰면 어느 쪽을 검사했는지가 흐려진다(함정 15).
+  collectedList: () => _req("GET", "/collected/list"),
   collectedAccept: (id) => _req("POST", `/collected/${id}/accept`),
   collectedDismiss: (id) => _req("POST", `/collected/${id}/dismiss`),
   // 수집이 돌았는가 (T-43) — pending의 빈 배열이 '안 돌았다'인지 '창이 비었다'인지 가른다

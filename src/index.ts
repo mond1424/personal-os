@@ -310,6 +310,14 @@ app.post("/api/guard/l2-nag/ack", async (c) => c.json(await guard.ackL2Nag(c.env
 // **자동으로 events에 넣지 않는다** — 오수집이 캘린더를 오염시킨다. 제안까지가 상한이다.
 app.get("/api/collected/pending", async (c) => c.json(await collected.pending(c.env, c.get("t"))));
 /**
+ * **가서 보는 길** (T-75) — 창 없이 `new` 전부. `pending`은 **밀어 주는 길**이고 그대로다.
+ *
+ * ⚠️ **`pending`에 파라미터를 붙여 겸하지 않은 이유**: 두 뜻이 한 이름을 쓰면 **어느 쪽을
+ *    검사했는지가 흐려진다**(함정 15). 경로가 둘이라 검사도 둘이고, 한쪽 회귀가 다른 쪽에 안 숨는다.
+ * ⚠️ **`t`를 안 넘긴다** — 창이 없다는 것이 이 길의 뜻이라 시계가 필요 없다.
+ */
+app.get("/api/collected/list", async (c) => c.json(await collected.list(c.env)));
+/**
  * 수집이 돌았는지 (T-43). **`pending`과 가른다** — 7일 창의 0과 원장 전체의 0은 다른 말이다.
  * ⚠️ URL·토큰은 안 나간다. `configured`가 있다/없다만 말한다.
  */

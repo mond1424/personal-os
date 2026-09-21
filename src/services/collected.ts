@@ -46,6 +46,27 @@ export async function pending(env: Env, t: TimeCtx) {
 }
 
 /**
+ * **가서 보는 길** (T-75 ②) — 창 없이 `new` 전부.
+ *
+ * ★★★ **밀어 주는 것(`pending`)과 갈라진 *길*이지 넓힌 창이 아니다.**
+ *   창을 넓히면 11월 과제가 9월부터 매일 뜬다 — ADR-047의 *"항상 뜨는 것은 정보가 0"*.
+ *   7일 창의 판단은 맞고, 없던 것은 **사용자가 보러 갈 자리**다(ADR-048 —
+ *   *"볼 자리가 없는 것은 없는 것이다"*).
+ *
+ * ⚠️ **`t`를 안 받는다.** 시계가 필요 없다는 것이 이 함수의 뜻이다 — 인자로 두면
+ *    다음 사람이 거기에 창을 건다. **`pending`만 시계를 받는다.**
+ * ★ **응답 모양은 `pending`과 같다** — 화면이 **같은 시트**를 쓰기 때문이다(③).
+ *   ⚠️ 여기서 모양이 갈리면 시트가 두 벌이 되고, 그건 이 티켓 §금지의 세 번째다.
+ */
+export async function list(env: Env) {
+  const rows = await db.collectedNewAll(env);
+  return rows.results.map((r) => ({
+    id: r.id, source: r.source, summary: r.summary, starts_at: r.starts_at,
+    categories: r.categories,
+  }));
+}
+
+/**
  * 수집이 돌았는지 사람이 볼 수 있게 한다 (T-43).
  *
  * ★ **T-33의 §금지와 충돌하지 않는다 — 구별이 여기 있다.**

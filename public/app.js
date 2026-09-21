@@ -755,6 +755,40 @@ async function loadCollected() {
   }
 }
 
+/* 가서 보는 길의 입구 (T-75 ③ · ADR-048) ────────────────────
+ *
+ * **위 `loadCollected()`는 밀어 주는 길이다** — 7일 창 · Today · 스스로 뜬다. 그대로 둔다.
+ * 여기는 **가서 보는 길**이다: 창이 없고, Works 대기 칸 위에 있고, **사용자가 눌러야 열린다.**
+ *
+ * ★★★ **새 목록을 만들지 않는다.** `renderCollected` + `openSheet("sh-coll")` —
+ *   밀어 주는 길이 쓰는 **바로 그 시트**다. 복제하면 화면은 같아 보이고 한쪽만 고쳐진다
+ *   (함정 15의 `#cal-list`가 정확히 그 모양이었다).
+ *
+ * ⚠️ **0건이면 줄이 아예 없다.** *"들어온 것 0개"* 는 매일 자리를 차지하면서 아무것도
+ *    말하지 않는다 — T-79가 방금 Today에서 걷어낸 그것이다.
+ * ⚠️ **조회가 실패해도 Works를 막지 않는다** — 입구가 없는 것과 같은 화면이 된다.
+ *    ★ 그 둘을 화면에서 못 가르므로 **`data-state`가 기록으로 가른다**(T-33과 같은 자리).
+ */
+async function loadCollectedEntry() {
+  const bar = $("#coll-entry");
+  const set = (state, n = 0) => {
+    bar.dataset.state = state;
+    bar.style.display = state === "ask" ? "flex" : "none";
+    bar.dataset.count = String(n);
+  };
+  try {
+    const rows = await Api.collectedList();
+    if (!rows?.length) return void set("none");
+    // ★ **수가 보이는 것이 ADR-048의 요구다** — "들어온 것"만으로는 존재를 모른다.
+    bar.innerHTML = `<span>들어온 것 <b>${rows.length}</b>개</span>`
+      + `<span class="collentry-go">보기</span>`;
+    bar.onclick = () => { renderCollected(rows); openSheet("sh-coll"); };
+    set("ask", rows.length);
+  } catch {
+    set("error");
+  }
+}
+
 /**
  * `전자기및연습1 (2026-20, 45004_01_U)` → `전자기및연습1` (T-74 §③).
  *
@@ -798,6 +832,12 @@ function renderCollected(rows) {
       // 추가된 일정이 캘린더에 보이게. **캐시를 먼저 버린다** — 달 세그먼트가 캐시돼 있어
       // 그냥 다시 그리면 방금 만든 event가 안 실린다(`calSyncNow`와 같은 짝).
       if (S.cal) { invalidateCalendarCache(); await renderCalendar(); }
+      /* ★ Works에서 열렸으면 그 화면도 다시 그린다 (T-75 ③).
+       * **수락은 대기에 task를 만든다**(T-78) — 그런데 이 시트는 Works를 안 건드리고 있었다.
+       * 그러면 **방금 만든 할 일이 바로 뒤의 대기 목록에 안 보이고**, 입구의 수도 안 준다.
+       * ⚠️ **`await` 한다** — 안 그러면 부르는 쪽엔 기다릴 것이 없어 검사가 관측으로 돌아간다
+       *    (함정 14). 탭을 보고 거는 것은 위 `refreshToday` 짝들과 같은 꼴이다. */
+      if ($("#phone").dataset.tab === "works") await renderWorks();
     });
   });
 }
@@ -2365,6 +2405,7 @@ async function renderWorks() {
 
   // 대기
   $("#inbox-lock").style.display = waiting.some((w) => w.age > 21) ? "" : "none";
+  await loadCollectedEntry();
   $("#wait-list").innerHTML = waiting.map((w) =>
     `<div class="trow" onclick="openTask('${w.id}')" style="cursor:pointer"><span class="tk"></span>
       <span class="tbody"><span class="tt">${esc(w.title)}</span>

@@ -608,6 +608,31 @@ export const collectedPending = (env: Env, from: string, to: string) =>
            WHERE state = 'new' AND starts_at IS NOT NULL AND starts_at >= ? AND starts_at <= ?
            ORDER BY starts_at, id`).bind(from, to).all<CollectedItemRow>();
 
+/**
+ * **가서 보는 길** — 아직 안 물은 것 **전부**. 창이 없다 (T-75 ②).
+ *
+ * ★★★ **`collectedPending`과 이름을 나눈 것이 이 질의의 전부다.** 둘은 뜻이 다르다:
+ *   `pending`은 *"지금 결정할 값이 있는가"*(7일 창 · 밀어 주는 길)이고
+ *   여기는 *"무엇이 들어와 있는가"*(원장 · 가서 보는 길)다.
+ *   ⚠️ **한 질의에 파라미터로 겸하지 않는다** — 두 뜻이 한 이름을 쓰면 **어느 쪽을 검사했는지가
+ *   흐려지고**, 한쪽이 틀렸을 때 다른 쪽이 그것을 덮는다(함정 15의 `#cal-list`와 같은 자리).
+ *
+ * ⚠️ **`starts_at IS NULL`은 여기서도 뺀다** — `pending`과 **같은 이유**다: 날짜가 없으면
+ *    `accept`가 `events` 행을 못 만들고 400으로 죽는다(`services/collected.ts`).
+ *    **누를 수 없는 것을 보여주는 것은 보여주는 것이 아니다.**
+ *    ★ 그래서 이 목록의 수와 `state='new'` 전체 수가 갈릴 수 있다. 갈리면 그 차이가
+ *      *"날짜가 없어 아직 아무 길로도 못 가는 것"* 이고, **그건 이 티켓 밖이다.**
+ *
+ * ⚠️ **정렬은 `starts_at` 오름차순** — 가까운 마감이 위다. `id`가 동점을 가른다(`pending`과 같다). *
+ * ⚠️ **이름이 `collectedList`가 아니다.** 그 이름은 위에 이미 있고 **원장 전체 덤프**다
+ *    (모든 state · `limit`). 같은 이름을 쓰면 이 티켓이 방금 세운 원칙을 **이 줄이 깨는다** —
+ *    뜻이 다르면 이름도 다르다. 라우트 이름은 `/api/collected/list`가 맞다(밖에서 보는 뜻).
+ */
+export const collectedNewAll = (env: Env) =>
+  q(env, `SELECT * FROM collected_items
+           WHERE state = 'new' AND starts_at IS NOT NULL
+           ORDER BY starts_at, id`).all<CollectedItemRow>();
+
 /** `AND state <> 'accepted'`가 **두 번째 요청을 조용히 무해하게** 만든다(T-42 §할 일 ①). */
 /**
  * 수락의 산물 **둘**을 한 문장으로 잇는다 (T-78 · 0025).

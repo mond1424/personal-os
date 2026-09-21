@@ -2239,6 +2239,77 @@ await ev(`(async()=>{
   closeAll();
 })()`);
 
+/* ── T-75 ③ · 가서 보는 길의 입구 (Works · 대기 위) ────────────────────
+ *
+ * 위 카드는 **밀어 주는 길**이다(7일 창 · Today · 스스로 뜬다). 여기는 **가서 보는 길**:
+ * 창이 없고, 사용자가 눌러야 열리고, **같은 시트**를 연다.
+ * ⚠️ **고정 날짜를 안 쓴다**(함정 12) — `S.today.date`에서 상대로 잡는다.
+ */
+console.log("\n[T-75] 가서 보는 길의 입구 — Works · 대기 위");
+const t75Day = ev(`S.today.date`);
+const t75Plus = (d) => ev(`addDaysStr(${JSON.stringify(t75Day)}, ${d})`);
+const t75Rows = [
+  { id: "t75-a", source: "uclass", summary: "중간고사대체과제 기한",
+    starts_at: `${await t75Plus(70)}T23:59:00+09:00`, categories: null },
+  { id: "t75-b", source: "uclass", summary: "학기과제 기한",
+    starts_at: `${await t75Plus(70)}T23:59:00+09:00`, categories: null },
+];
+const t75Entry = $("#coll-entry");
+const t75Load = async (rows) => {
+  await ev(`(async()=>{
+    window.__t75 = window.__t75 || { old: Api.collectedList };
+    Api.collectedList = async () => ${JSON.stringify(rows)};
+    await renderWorks();
+  })()`);
+};
+await ev(`switchTab("works")`);
+await t75Load(t75Rows);
+// 5 — ★ **수가 보이는 것이 ADR-048의 요구다.** "들어온 것"만으로는 존재를 모른다.
+ok("5 ★ Works 입구가 N 을 말한다 (대기 위 · N>0)",
+  t75Entry.dataset.state === "ask" && t75Entry.style.display === "flex"
+  && txt("#coll-entry").includes("2"),
+  `${t75Entry.dataset.state} / ${t75Entry.style.display} / ${txt("#coll-entry")}`);
+
+/* 7 — ★ 누르면 **기존 시트**가 열린다. ⚠️ *"새 DOM 을 안 만든다"* 까지 센다 —
+ *   시트를 복제한 구현은 화면이 같아 보이고, 그 다음에 한쪽만 고쳐진다.
+ *   ★ **중복 id 로 센다** — 함정 15의 `#cal-list`가 정확히 그 모양이었다. */
+/* ⚠️⚠️ **이 검사는 처음에 헛돌았다 — 변이 N7(입구가 시트를 안 연다)이 *아무것도 안 죽였다*.**
+ *   두 조각이 **둘 다 저절로 참**이었다:
+ *   ① `|| $("#sh-coll").style.display !== "none"` — 인라인 `display`가 빈 문자열이라 **늘 참**.
+ *      **계약은 `classList.contains("on")` 하나다**(`openSheet`가 그것만 한다).
+ *      ★ *"열렸나"* 를 **구현이 실제로 하는 일**로 물어야 한다. 넉넉하게 물으면 안 물은 것이다.
+ *   ② 개수만 셌는데 `#coll-list`엔 **앞 블록(T-74)이 남긴 줄 둘**이 그대로 있었다 —
+ *      **남의 렌더 결과가 내 검사를 통과시켰다.** 그래서 **내 id 로** 묻는다.
+ *   ⚠️ 먼저 닫는다 — 이미 열려 있으면 *"열었다"* 가 아무 뜻이 없다. */
+await ev(`closeAll()`);
+t75Entry.onclick();
+const t75SheetOpen = $("#sh-coll").classList.contains("on");
+const t75Dup = {
+  sheet: w.document.querySelectorAll("#sh-coll").length,
+  list: w.document.querySelectorAll("#coll-list").length,
+};
+const t75Mine = ["t75-a", "t75-b"].every((id) => !!$(`#coll-list [data-cid='${id}']`));
+ok("7 ★ 입구를 누르면 기존 시트가 열린다 — 새 DOM 을 안 만든다 (중복 id 0)",
+  t75SheetOpen && t75Dup.sheet === 1 && t75Dup.list === 1 && t75Mine
+  && $("#coll-list").querySelectorAll("[data-cid]").length === 2,
+  `열림=${t75SheetOpen} ${JSON.stringify(t75Dup)} 내줄=${t75Mine} 줄=${$("#coll-list").querySelectorAll("[data-cid]").length}`);
+await ev(`closeAll()`);
+
+/* 6 — ★ 5의 짝. **0건이면 줄이 아예 없다.**
+ *   ⚠️ 이게 없으면 5가 *"항상 띄운다"* 로도 통과한다 — T-79가 Today에서 방금 걷어낸 모양이다. */
+await t75Load([]);
+ok("6 ★ N=0 이면 그 줄이 없다 (5의 짝)",
+  t75Entry.dataset.state === "none" && t75Entry.style.display === "none",
+  `${t75Entry.dataset.state} / ${t75Entry.style.display}`);
+
+// ★ 짝의 뒤쪽 — 조회가 실패해도 Works를 막지 않는다. 화면은 0건과 같고 **기록만 다르다**(T-33).
+await ev(`(async()=>{ Api.collectedList = async () => { throw new Error("t75 boom"); }; await renderWorks(); })()`);
+ok("★ 입구 조회가 실패해도 Works 를 막지 않는다 · state='error' (0건과 화면은 같다)",
+  t75Entry.dataset.state === "error" && t75Entry.style.display === "none"
+  && $("#wait-list").innerHTML.length > 0,
+  `${t75Entry.dataset.state} / 대기목록=${$("#wait-list").innerHTML.length}`);
+await ev(`(async()=>{ Api.collectedList = window.__t75.old; await renderWorks(); })()`);
+
 console.log("\n[수집 상태 한 줄 — 실패는 숨지 않는다]");
 // ★ **위 두 카드와 반대다.** T-33·T-42는 none과 error가 화면에서 **같아야** 했다 —
 //   사용자가 할 수 있는 일이 없으니 잔소리가 되기 때문이다. 여기는 할 일이 있다(토큰 재입력).

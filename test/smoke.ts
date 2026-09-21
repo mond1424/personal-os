@@ -2148,6 +2148,70 @@ await api("POST", `/api/collected/${dId}/dismiss`);
 ok("dismiss 뒤에는 pending에 안 나온다",
   !(await api("GET", "/api/collected/pending")).json.some((r: any) => r.id === dId));
 
+/* ── T-75 · 밀어 주는 길과 가서 보는 길 ─────────────────────────────────
+ *
+ * 7일 창은 *"지금 결정할 값이 있는가"* 를 재고 그 판단은 맞다. 없던 것은 **보러 갈 자리**다 —
+ * 그래서 창을 넓히는 것이 아니라 **길을 가른다**(ADR-048 · *"볼 자리가 없는 것은 없는 것이다"*).
+ *
+ * 이 시점의 원장(위 fixture가 만든 것):
+ * ```
+ * t42-past  -2일   new         ★ 과거 — pending 의 아래 끝이 가린다
+ * t42-in    +2일   accepted    (위에서 수락했다)
+ * t42-dis   +3일   dismissed
+ * t42-d2    +4일   dismissed   (위에서 거절했다)
+ * t42-far   +9일   new         ★ 7일 밖 — pending 의 위 끝이 가린다
+ * ```
+ * ★ **가려지는 것이 위아래 둘 다**라는 것이 실측에서 드러났다(2026-09-21 원격:
+ *   `new` 4건 중 창 밖 2 · **과거 2** · `pending` 0). 티켓은 창 밖만 말했다.
+ */
+console.log("\n[T-75] 밀어 주는 길(7일 창)과 가서 보는 길(창 없음)을 가른다");
+const t75List = async () => (await api("GET", "/api/collected/list")).json as any[];
+const t75Has = (rows: any[], s: string) => rows.some((r) => r.summary === s);
+
+const l1 = await t75List();
+// 1 — 본체. 창 **밖**과 창 **앞**을 둘 다 준다. 창이 없다는 것이 이 길의 뜻이다.
+ok("1 ★ list 가 7일 창 밖(+9일)과 과거(-2일)의 new 를 준다 (창이 없다)",
+  t75Has(l1, "먼 것") && t75Has(l1, "지난 것"),
+  JSON.stringify(l1.map((r) => r.summary)));
+
+/* 2 — ★ 1의 짝이자 §금지의 첫 줄. **창을 없앤 구현**은 1을 통과한다.
+ *   ⚠️ 같은 줄(`먼 것`)로 묻는 것이 요점이다 — 다른 줄로 물으면 두 길이 같은 것을
+ *      보고 있는지 아무도 안 센다.
+ *   ⚠️ 위 *"pending이 7일 밖·과거·dismissed를 안 준다"* 도 같은 변이에 함께 죽는다.
+ *      **그건 중복이 아니라 같은 계약의 두 각도다** — 저쪽은 *셋을 다 거른다*,
+ *      여기는 *list 가 주는 바로 그 줄을 안 준다*. 그래도 함께 죽는 것은 사실이라 적어 둔다. */
+const t75Pend = (await api("GET", "/api/collected/pending")).json as any[];
+ok("2 ★ pending 은 여전히 창 밖을 안 준다 (1의 짝 · 창을 넓히지 않았다)",
+  !t75Has(t75Pend, "먼 것") && !t75Has(t75Pend, "지난 것"),
+  JSON.stringify(t75Pend.map((r) => r.summary)));
+
+// 3 — 경계. 물어본 것(accepted)과 거절한 것(dismissed)은 **다시 안 나온다.**
+ok("3 ★ list 가 accepted·dismissed 를 안 준다",
+  !t75Has(l1, RAW_TITLE) && !t75Has(l1, "거절한 것") && !t75Has(l1, "거절할 것"),
+  JSON.stringify(l1.map((r) => `${r.summary}`)));
+
+/* 4 — 가까운 마감이 위다.
+ * ⚠️ **`l1[0]`을 고정하지 않는다.** 처음엔 `l1[0] === "지난 것"`으로 썼다가 죽었다 —
+ *    이 원장엔 **앞선 fixture가 남긴 `new` 행이 더 있다**(8/18짜리 둘). 정렬은 맞았고
+ *    **내 고정이 틀렸다.** 남의 fixture 수에 매달린 단언은 그 fixture가 늘면 또 죽는다.
+ * ⚠️⚠️ **특정 줄의 자리도 고정하지 않는다.** `지난 것`·`먼 것`의 상대 순서로 쓰자
+ *    **창을 거는 변이(N1)가 1과 함께 이것까지 죽였다** — `먼 것`이 사라지니 순서를 못 본다.
+ *    그건 이 검사가 *정렬*이 아니라 *그 줄의 존재*를 센 것이고, 그건 검사 1의 몫이다.
+ * ★ **전수 오름차순 하나면 뒤집기를 문다**(이 원장은 네 줄이다). 그리고 **그것만 문다.** */
+ok("4 ★ list 가 starts_at 오름차순이다 (가까운 마감이 위)",
+  l1.length >= 2 && l1.every((r, i) => i === 0 || l1[i - 1].starts_at <= r.starts_at),
+  JSON.stringify(l1.map((r) => `${r.summary}@${r.starts_at?.slice(0, 10)}`)));
+
+/* ★ 담당이 정한 것 하나 — **`starts_at`이 없으면 이 목록에도 안 넣는다.**
+ * `pending`과 **같은 이유**다: `accept`가 `events` 행을 못 만들고 400으로 죽는다.
+ * ⚠️ **누를 수 없는 것을 보여주는 것은 보여주는 것이 아니다.** 티켓은 이 경우를 안 말했고,
+ *    실측 원장에도 없다(`no_date` 0). 그래도 규칙이므로 검사가 진다. */
+putCollected("t75-nodate", "날짜 없는 것", null as any);
+ok("★ starts_at 이 없으면 list 에도 안 나온다 (accept 가 400 으로 죽는 줄이다)",
+  !t75Has(await t75List(), "날짜 없는 것")
+  && (await api("POST", "/api/collected/2026-t42-t75-nodate/accept")).status === 400,
+  JSON.stringify((await t75List()).map((r) => r.summary)));
+
 /* ── T-78 · 수락한 과제가 달력에만 남고 할 일이 안 된다 ──────────────────────
  *
  * 2026-09-17 화면 셋: Calendar 에는 과제가 있는데 **Today TODO 0 · Works 0** 이었다.
