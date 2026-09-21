@@ -330,6 +330,17 @@
 
 **뷰(스키마)**: `v_task_stats`(**state**=상태의 유일한 진실 `not_finished`/`finished`/`cancelled` · cancelled_at·cancelled_on·cancel_reason·cancelled_by(0009, append-only) · entry_count·defer_count·latest_date·current_rate·is_waiting) · `v_period_achievement`(달성률=current_rate 평균, **취소 제외**). 상태 판정은 언제나 `state`(status는 원시 컬럼).
 
+⚠️ **아직 이 표에 안 실린 export 13개 (2026-09-21 전수 대조)** — 이름만 적어 둔다.
+**설명을 지어내지 않는다**(안 읽고 쓴 설명은 틀린 문서이고, 그게 이 지도가 없애려는 것이다):
+`stCancelTask` · `stUncancelTask` · `eventByExt` · `stInsertExtEvent` · `stUpdateExtEvent` ·
+`closedDaysIn` · `guardCountByEvent` · `stDeleteOpenEntries` · `guardEventByClient` ·
+`stAmendGuardAi` · `guardDayTally` · `periodsWithDday` · `lmSchemaSections`.
+★ **이번 세션이 만든 것이 아니다** — T-75·T-79·T-80이 더한 것(`collectedNewAll` 등)은 위에 있다.
+★ **대조법**(라우트 82 · db export 146을 문서와 맞춰 본다. **훑기에 정답을 먼저 먹인다** — 함정 17):
+```bash
+python -c "import io,re;S=io.open('src/db/index.ts',encoding='utf-8').read();D=io.open('docs/api-surface.md',encoding='utf-8').read();print([f for f in re.findall(r'^export const (\w+)',S,re.M) if f not in D])"
+```
+
 ---
 
 ## 부록. lib/ (유틸)
