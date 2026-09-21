@@ -145,7 +145,10 @@ export async function status(env: Env, t: TimeCtx) {
  *
  * **보호 규칙은 붙이지 않는다** — 별개의 결정이고 ADR-030의 나머지 절반이다.
  */
-export async function accept(env: Env, t: TimeCtx, id: string) {
+export const PAST_CHOICES = ["done", "todo", "skip"] as const;
+export type PastChoice = (typeof PAST_CHOICES)[number];
+
+export async function accept(env: Env, t: TimeCtx, id: string, choice?: string) {
   const row = await db.collectedGet(env, id);
   if (!row) throw new ApiError(404, "해당 항목이 없어요");
 
@@ -161,12 +164,77 @@ export async function accept(env: Env, t: TimeCtx, id: string) {
   // **원문을 다듬지 않는다** — `title`은 `summary` 그대로다(결정 ②).
   const date = row.starts_at.slice(0, 10);
   const time = row.starts_at.slice(11, 16);
+
+  /*
+   * ★★★ **마감이 지났으면 묻는다** (T-80 ③ · 2026-09-21 사용자).
+   *
+   * ⚠️ **미래엔 안 묻는다** — 사용자가 고른 것이 *"자동으로"* 다. 묻는 것은 과거뿐이다.
+   * ★ **아무것도 만들지 않고 돌아간다.** 물어 놓고 만들면 *"묻는다"* 가 장식이 된다.
+   *   `state`는 그대로 `new`라 다음 호출이 세 갈래 중 하나를 들고 다시 온다.
+   */
+  const past = date < t.d;
+  if (past && !choice) {
+    return {
+      id: row.id, state: row.state, needs_choice: true,
+      summary: row.summary, starts_at: row.starts_at,
+    };
+  }
+  if (choice && !PAST_CHOICES.includes(choice as PastChoice)) {
+    throw new ApiError(400, "choice는 done·todo·skip");
+  }
+  // ⚠️ **미래에 온 `choice`는 무시한다** — 물은 적이 없으므로 답도 없다.
+  const pick: PastChoice | null = past ? ((choice as PastChoice) ?? null) : null;
+
+  if (pick === "skip") {
+    // ★ event 도 task 도 안 만든다. **거절은 거절이다.**
+    await db.stDismissCollected(env, id).run();
+    return { id: row.id, state: "dismissed", event_id: null, task_id: null, duplicate: false };
+  }
+
   const ev = await events.create(env, t, { title: row.summary, date, time });
-  // ⚠️ **`date`를 넘기지 않는다.** 넘기면 `createTask`가 `schedule_entries` 행을 만들고
-  //    그 순간 대기가 아니라 *"그날 하기로 한 일"*이 된다 — 위 주석의 그 거짓말이다.
-  const task = await tasks.createTask(env, t, { title: row.summary });
+
+  /*
+   * ★★ **"이미 했어요"는 task 를 안 만든다** — *하지 않은 것을 기록하지 않는다.*
+   *   언제 얼마나 했는지 모르는 채 완료 task 를 만들면 원장이 거짓이 되고 분석이 그 위에 선다.
+   * ⚠️ **`event`는 만든다** — *"그 마감이 있었다"* 는 사실이고 달력은 사실의 기록이다.
+   * ★ 그 구분은 `collected_items.task_id`가 NULL 로 남아 **이미 진다**(T-78). 마이그레이션 없다.
+   */
+  if (pick === "done") {
+    await db.stAcceptCollected(env, id, ev.id, null).run();
+    return { id: row.id, event_id: ev.id, task_id: null, state: "accepted", duplicate: false };
+  }
+
+  /*
+   * ★★★★ **예정일을 정한다 — T-78 §금지의 그 줄을 뒤집는다** (T-80 ② · 2026-09-21 사용자).
+   *
+   * T-78은 *"앱이 마감일을 고르면 그것은 앱의 해석"* 이라 비웠다. 지금은 **사용자가 고른
+   * 기본값**이라 해석이 아니라 설정이다(티켓 §근거 ③).
+   * ⚠️ **T-78의 ①은 안 풀렸다** — *"마감일에 하라"* 로 읽히는 위험은 남고, 화면이
+   *   **먼 것을 약하게** 그려 그것을 누른다(④). 재검토 트리거는 티켓에 있다.
+   *
+   * ⚠️ **시각은 안 넘긴다.** 마감 시각은 `events`가 갖는다 — **예정은 날짜다.**
+   *
+   * ★★ **과거 마감의 "아직 해야 해요"는 *오늘*이다.** 마감이 지났으면 지금이 제일 빠른 날이고,
+   *   과거 날짜는 `assertSchedulable`이 400으로, 그 뒤 트리거가 409로 막는다(함정 6).
+   * ⚠️⚠️ **그런데 오늘이 이미 마감된 날이면 오늘도 막힌다** — 트리거가 보는 것은
+   *   *"지났는가"* 가 아니라 `daily.status='closed'` 하나다(`0001` `trg_entries_frozen_ins`).
+   *   ★ 그때는 **대기로 떨어뜨리고 응답이 그 사실을 말한다** — 추측해서 409를 맞는 대신.
+   */
+  const when = past ? t.d : date;
+  /* ⚠️ **보는 것은 *넣는 날*이지 *오늘*이 아니다.** 트리거가 보는 것이 `NEW.date`의 `daily.status`라
+   *    (`0001` `trg_entries_frozen_ins`) 여기서도 같은 날을 봐야 판정이 트리거와 같아진다.
+   * ★★ **처음엔 `t.d`를 봤고, 그래서 변이 P5(예정일을 지난 마감일로 넣는다)가 아무 검사도
+   *    안 죽였다** — `when`을 안 읽으니 바꿔도 결과가 같았다. **읽지 않는 값은 지킬 수 없다.** */
+  const closed = past && (await db.getDaily(env, when))?.status === "closed";
+  const task = await tasks.createTask(
+    env, t, closed ? { title: row.summary } : { title: row.summary, date: when },
+  );
   await db.stAcceptCollected(env, id, ev.id, task.id).run();
-  return { id: row.id, event_id: ev.id, task_id: task.id, state: "accepted", duplicate: false };
+  return {
+    id: row.id, event_id: ev.id, task_id: task.id, state: "accepted", duplicate: false,
+    // 화면이 토스트를 고르는 재료. **추측하지 않게 서버가 말한다.**
+    scheduled_for: closed ? null : when, waiting: !!task.waiting,
+  };
 }
 
 /**

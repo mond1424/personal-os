@@ -155,7 +155,9 @@ const Api = {
   // 가서 보는 길 (T-75) — 창 없이 new 전부. **pending과 경로가 다르다**:
   // 두 뜻이 한 이름을 쓰면 어느 쪽을 검사했는지가 흐려진다(함정 15).
   collectedList: () => _req("GET", "/collected/list"),
-  collectedAccept: (id) => _req("POST", `/collected/${id}/accept`),
+  // choice 는 **과거 마감일 때만 뜻이 있다**(T-80 ③) — done·todo·skip.
+  // 없이 부르면 과거는 `{needs_choice:true}` 를 돌려주고 **아무것도 안 만든다.**
+  collectedAccept: (id, choice) => _req("POST", `/collected/${id}/accept`, choice ? { choice } : undefined),
   collectedDismiss: (id) => _req("POST", `/collected/${id}/dismiss`),
   // 수집이 돌았는가 (T-43) — pending의 빈 배열이 '안 돌았다'인지 '창이 비었다'인지 가른다
   collectedStatus: () => _req("GET", "/collected/status"),

@@ -324,7 +324,13 @@ app.get("/api/collected/list", async (c) => c.json(await collected.list(c.env)))
 app.get("/api/collected/status", async (c) => c.json(await collected.status(c.env, c.get("t"))));
 /** 멱등 — 두 번 눌러도 `events`는 하나다. */
 app.post("/api/collected/:id/accept", async (c) =>
-  c.json(await collected.accept(c.env, c.get("t"), c.req.param("id"))));
+  // ★ `choice`는 **과거 마감일 때만 뜻이 있다**(T-80 ③) — done·todo·skip.
+  //   없으면 서버가 `needs_choice: true` 를 돌려주고 **아무것도 안 만든다.**
+  //   ⚠️ 미래 마감은 그대로 들어간다 — 사용자가 고른 것이 *"자동으로"* 다.
+  c.json(await collected.accept(
+    c.env, c.get("t"), c.req.param("id"),
+    (await bodyOpt<{ choice: string }>(c)).choice,
+  )));
 app.post("/api/collected/:id/dismiss", async (c) =>
   c.json(await collected.dismiss(c.env, c.req.param("id"))));
 

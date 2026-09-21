@@ -640,7 +640,7 @@ export const collectedNewAll = (env: Env) =>
  * ★ `event_id`와 `task_id`가 **같은 UPDATE**에 있어야 *"둘 중 하나만 이어진 행"*이 안 생긴다.
  *   `WHERE state <> 'accepted'`가 멱등을 진다 — 두 번째 호출은 0행을 고친다.
  */
-export const stAcceptCollected = (env: Env, id: string, eventId: string, taskId: string) =>
+export const stAcceptCollected = (env: Env, id: string, eventId: string, taskId: string | null) =>
   q(env, "UPDATE collected_items SET state='accepted', event_id=?, task_id=? WHERE id=? AND state <> 'accepted'")
     .bind(eventId, taskId, id);
 

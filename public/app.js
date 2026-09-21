@@ -811,35 +811,80 @@ function renderCollected(rows) {
     // ★ **과목은 얹기만 한다.** 제목(`summary`)은 원문 그대로 남는다 —
     //   교수가 지은 이름이 틀렸어도 **사용자가 uclass 에서 그 제목으로 찾는다**(T-74 §금지).
     const course = courseOf(r.categories);
+    // ★ 버튼 둘을 `.ev-act`로 감싼다 (T-80 ③) — 과거 시각이 지난 것이면 **그 칸만** 세 갈래로 바뀐다.
+    //   ⚠️ 줄 전체를 다시 그리지 않는다: 제목·과목은 그대로 두고 물음만 그 자리에 선다.
     return `<div class="evrow" data-cid="${esc(r.id)}">
       <span class="en" style="flex:1">${course ? `<b class="ec">${esc(course)}</b>` : ""}${esc(when)} · ${esc(r.summary)}</span>
-      <button class="go" data-act="add">추가</button>
-      <button class="go" data-act="skip" style="color:var(--sub)">무시</button>
+      <span class="ev-act">
+        <button class="go" data-act="add">추가</button>
+        <button class="go" data-act="skip" style="color:var(--sub)">무시</button>
+      </span>
     </div>`;
   }).join("");
+
+  /* 처리 뒤 한 벌 — **세 갈래가 같은 뒤처리를 쓴다**(T-80 ③).
+   * ⚠️ 복사해서 넷을 만들면 한쪽만 고쳐지고, 그때 화면은 같아 보인다. */
+  const afterCollected = (row, msg) => run(async () => {
+    toast(msg);
+    row.remove();
+    if (!body.querySelector("[data-cid]")) closeSheet("sh-coll");
+    await refreshToday();       // 카드 수가 줄고, 없으면 카드가 사라진다
+    // 추가된 일정이 캘린더에 보이게. **캐시를 먼저 버린다** — 달 세그먼트가 캐시돼 있어
+    // 그냥 다시 그리면 방금 만든 event가 안 실린다(`calSyncNow`와 같은 짝).
+    if (S.cal) { invalidateCalendarCache(); await renderCalendar(); }
+    /* ★ Works에서 열렸으면 그 화면도 다시 그린다 (T-75 ③).
+     * **수락은 대기에 task를 만든다**(T-78) — 그런데 이 시트는 Works를 안 건드리고 있었다.
+     * 그러면 **방금 만든 할 일이 바로 뒤의 대기 목록에 안 보이고**, 입구의 수도 안 준다.
+     * ⚠️ **`await` 한다** — 안 그러면 부르는 쪽엔 기다릴 것이 없어 검사가 관측으로 돌아간다
+     *    (함정 14). 탭을 보고 거는 것은 위 `refreshToday` 짝들과 같은 꼴이다. */
+    if ($("#phone").dataset.tab === "works") await renderWorks();
+  });
+
+  /* ★★★ 시각이 이미 지난 것을 [추가]했을 때 (T-80 ③ · 2026-09-21 사용자).
+   *
+   * **그 줄 자리에서 묻는다** — 새 시트도, 새 목록도 만들지 않는다. 시트는 이미 열려 있다.
+   * ⚠️ **서버가 이미 `needs_choice`로 말했고 아무것도 안 만들었다** — 화면이 추측하지 않는다.
+   * ★ 세 갈래가 하는 일은 서버가 정한다. 여기서는 **누른 것을 그대로 보낸다.** */
+  const askPast = (row, id) => {
+    const ctl = row.querySelector(".ev-act");
+    ctl.innerHTML = `<span class="past-ask">이미 지난 일정이에요</span>`
+      + `<button class="go" data-past="done">이미 했어요</button>`
+      + `<button class="go" data-past="todo">아직 해야 해요</button>`
+      + `<button class="go" data-past="skip" style="color:var(--sub)">안 할래요</button>`;
+    ctl.querySelectorAll("[data-past]").forEach((pb) => {
+      pb.onclick = () => run(async () => {
+        const pick = pb.dataset.past;
+        const res = await Api.collectedAccept(id, pick);
+        return afterCollected(row, pastToast(pick, res));
+      });
+    });
+  };
 
   body.querySelectorAll("button").forEach((b) => {
     b.onclick = () => run(async () => {
       const row = b.closest("[data-cid]");
       const id = row.dataset.cid;
-      // T-79 ④ — **T-78이 둘 다 만든다**(`services/collected.ts`의 `events.create` + `tasks.createTask`).
+      if (b.dataset.act !== "add") {
+        await Api.collectedDismiss(id);
+        return afterCollected(row, "안 묻을게요");
+      }
+      const res = await Api.collectedAccept(id);
+      // ★ **과거면 여기서 멈춘다** — 줄이 안 사라지고 그 자리에서 세 갈래가 뜬다.
+      if (res?.needs_choice) return void askPast(row, id);
+      // T-79 ④ — **T-78이 둘 다 만든다**(`events.create` + `tasks.createTask`).
       // *"캘린더에 넣었어요"* 는 사실의 절반이었고, 대기에 생긴 할 일을 사용자가 못 찾았다.
-      if (b.dataset.act === "add") { await Api.collectedAccept(id); toast("캘린더와 대기에 넣었어요"); }
-      else { await Api.collectedDismiss(id); toast("안 묻을게요"); }
-      row.remove();
-      if (!body.querySelector("[data-cid]")) closeSheet("sh-coll");
-      await refreshToday();       // 카드 수가 줄고, 없으면 카드가 사라진다
-      // 추가된 일정이 캘린더에 보이게. **캐시를 먼저 버린다** — 달 세그먼트가 캐시돼 있어
-      // 그냥 다시 그리면 방금 만든 event가 안 실린다(`calSyncNow`와 같은 짝).
-      if (S.cal) { invalidateCalendarCache(); await renderCalendar(); }
-      /* ★ Works에서 열렸으면 그 화면도 다시 그린다 (T-75 ③).
-       * **수락은 대기에 task를 만든다**(T-78) — 그런데 이 시트는 Works를 안 건드리고 있었다.
-       * 그러면 **방금 만든 할 일이 바로 뒤의 대기 목록에 안 보이고**, 입구의 수도 안 준다.
-       * ⚠️ **`await` 한다** — 안 그러면 부르는 쪽엔 기다릴 것이 없어 검사가 관측으로 돌아간다
-       *    (함정 14). 탭을 보고 거는 것은 위 `refreshToday` 짝들과 같은 꼴이다. */
-      if ($("#phone").dataset.tab === "works") await renderWorks();
+      return afterCollected(row, "캘린더와 대기에 넣었어요");
     });
   });
+}
+
+/** 지난 일정 세 갈래의 토스트 — **서버가 준 사실만 말한다**(T-80 ③). */
+function pastToast(pick, res) {
+  if (pick === "skip") return "안 묻을게요";
+  // ⚠️ 달력에만 넣었다 — 할 일은 안 만들었다. 그 차이를 문구가 말해야 화면과 원장이 맞는다.
+  if (pick === "done") return "달력에만 넣었어요 — 할 일은 안 만들었어요";
+  // ★ 오늘이 이미 닫힌 날이면 서버가 대기로 떨어뜨린다(함정 6). **추측하지 않고 응답을 읽는다.**
+  return res?.scheduled_for ? "오늘 할 일로 넣었어요" : "대기에 넣었어요 — 오늘은 이미 닫힌 날이에요";
 }
 
 /* 폰 캘린더 미러 (T-53 · ADR-029) ────────────────────────────
@@ -2368,6 +2413,18 @@ function pickReassign(id) {
 
 /* ── Works ─────────────────────────────────────────────── */
 let works = null;
+/**
+ * **한 달 이상 남은 예정은 약하게 보인다** (T-80 ④ · 2026-09-21 사용자).
+ *
+ * ★★ **경계는 여기 한 곳이다.** 파생이므로 **조회 시 계산**이고 저장하지 않는다(원칙 1).
+ * ⚠️ **설정으로 만들지 않는다**(티켓 §안 하는 것) — 아프면 그때 연다.
+ * ★ **맨 아래는 이미 자동이다** — `worksScheduled`가 `ORDER BY e.date`이고 그룹이
+ *   *오늘 → 이번 주 → 이후* 순이라, 먼 것은 그것만으로 마지막 그룹의 끝에 앉는다.
+ *   그래서 ④가 하는 일은 **회색 하나**다(①의 첫째 확인 결과).
+ * ⚠️ **끄는 것이 아니다** — 사용자 명시(*"실제로 비활성화는 아님"*). 눌리고, 열리고, 완료된다.
+ */
+const FAR_DAYS = 30;
+
 async function renderWorks() {
   const [sched, waiting, deferring, byPeriod, done] = await Promise.all([
     Api.works("scheduled"), Api.works("waiting"), Api.works("deferring"),
@@ -2395,7 +2452,8 @@ async function renderWorks() {
     if (!rows.length) return "";
     return `<div class="glab">${label}</div><div class="card" style="padding:2px 14px">` +
       rows.map((r) =>
-        `<div class="trow">
+        // ★ 먼 것은 **약하게 보인다** (T-80 ④) — 끄는 것이 아니다. 아래 `.trow.far` 참조.
+        `<div class="trow${r.date > addDaysStr(D, FAR_DAYS) ? " far" : ""}">
           <button class="tk" onclick="completeRow('${r.id}')" title="완료"></button>
           <button class="tbody" style="text-align:left" onclick="openTask('${r.id}')">
             <span class="tt">${esc(r.title)}${r.defer_count > 0 ? '<span class="warn">!</span>' : ""}</span>

@@ -2310,6 +2310,139 @@ ok("★ 입구 조회가 실패해도 Works 를 막지 않는다 · state='error
   `${t75Entry.dataset.state} / 대기목록=${$("#wait-list").innerHTML.length}`);
 await ev(`(async()=>{ Api.collectedList = window.__t75.old; await renderWorks(); })()`);
 
+/* ── T-80 · 마감일이 예정이 된다 · 지난 것은 묻는다 · 먼 것은 약하게 ──────────
+ *
+ * ★ **실 API 를 그대로 쓴다** — 이 러너의 오늘은 **열려 있다**(front 는 `daily/close` 를 안 부른다).
+ *   그래서 smoke 가 못 재는 **정상 가지**(예정일 = 오늘)를 여기가 잰다.
+ * ⚠️ **고정 날짜를 안 쓴다**(함정 12) — 전부 `S.today.date` 기준 상대.
+ */
+console.log("\n[T-80] 마감일이 예정이 된다 — 지난 것은 묻고, 먼 것은 약하게");
+const t80Day = ev(`S.today.date`);
+const t80At = (d) => ev(`addDaysStr(${JSON.stringify(t80Day)}, ${d})`);
+/* ★ **여기가 세는 것은 화면 계약이다** — *"서버가 `needs_choice` 라고 하면 그 자리에서 묻고,
+ *   누른 것을 그대로 보내고, 토스트는 서버가 준 사실만 말한다."*
+ *   **서버 계약(무엇을 만드는가)은 smoke [T-80]이 진다** — 층을 나눠야 변이가 어디를 죽였는지 읽힌다.
+ * ⚠️ 그래서 `Api.collectedAccept`를 갈아끼운다. 수집 원장에 넣는 왕복은 이 층의 것이 아니다. */
+const t80Rows = (startsAt) => [{ id: "t80-x", source: "uclass", summary: "T-80 과제", starts_at: startsAt, categories: null }];
+await ev(`(async()=>{
+  window.__t80 = { sent: [], old: [Api.collectedAccept, Api.collectedDismiss], reply: {} };
+  Api.collectedAccept = async (id, choice) => {
+    window.__t80.sent.push(id + ":" + (choice || "-"));
+    return window.__t80.reply[choice || "-"] || {};
+  };
+  Api.collectedDismiss = async (id) => { window.__t80.sent.push("dismiss:" + id); return {}; };
+})()`);
+const t80Toast = () => txt("#toast");
+const t80Reset = async (reply) => ev(`(async()=>{
+  window.__t80.sent = []; window.__t80.reply = ${JSON.stringify(reply)};
+  renderCollected(${JSON.stringify(t80Rows(`${t80Day}T23:59:00+09:00`))}); openSheet("sh-coll");
+})()`);
+
+/* 3 — ★★ 서버가 `needs_choice` 라고 하면 **그 자리에서 묻는다.**
+ *   ⚠️ 줄이 사라지면 안 된다 — 사라지면 물음이 장식이고 사용자는 답할 자리를 잃는다. */
+await t80Reset({ "-": { needs_choice: true } });
+await $("#coll-list [data-cid='t80-x'] [data-act='add']").onclick();
+const t80AskRow = $("#coll-list [data-cid='t80-x']");
+ok("3 ★★ 지난 마감을 [추가]하면 그 자리에서 묻는다 (줄이 안 사라진다 · 세 갈래가 다 있다)",
+  // ⚠️ 문구는 *"마감"* 이라고 안 한다 — `DTSTART`가 무엇인지 모른다(ADR-037 · 아래 §보고).
+  !!t80AskRow && /이미 지난 일정/.test(t80AskRow.textContent)
+  && ["done", "todo", "skip"].every((k) => !!t80AskRow.querySelector(`[data-past='${k}']`)),
+  `${!!t80AskRow} / ${t80AskRow?.textContent?.slice(0, 60)}`);
+
+/* 2 — ★ 미래엔 안 묻는다. ⚠️ 이게 없으면 *"항상 묻는"* 구현이 3만 보면 초록이다. */
+await t80Reset({ "-": { event_id: "ev1", task_id: "tk1" } });
+await $("#coll-list [data-cid='t80-x'] [data-act='add']").onclick();
+ok("2 ★ 미래 마감은 안 묻고 바로 들어간다 — 줄이 사라지고 토스트가 둘을 말한다",
+  !$("#coll-list [data-cid='t80-x']")
+  && t80Toast().includes("캘린더") && t80Toast().includes("대기"),
+  `줄남음=${!!$("#coll-list [data-cid='t80-x']")} 토스트=${t80Toast()}`);
+
+/* 4·5b·6 — 세 갈래가 **누른 것을 그대로 보내고**, 토스트가 **서버가 준 사실**을 말한다.
+ * ★ 5b 는 smoke 가 못 재는 가지다: `scheduled_for` 가 오면 *"오늘 할 일"*, 없으면 *"대기"*. */
+const t80Pick = async (pick, reply) => {
+  await t80Reset({ "-": { needs_choice: true }, [pick]: reply });
+  await $("#coll-list [data-cid='t80-x'] [data-act='add']").onclick();
+  await $(`#coll-list [data-cid='t80-x'] [data-past='${pick}']`).onclick();
+  return ev(`window.__t80.sent.join("|")`);
+};
+const t80Done = await t80Pick("done", { event_id: "ev1", task_id: null });
+ok("4 ★ '이미 했어요' → done 을 보내고, 토스트가 '할 일은 안 만들었다'고 말한다",
+  t80Done === "t80-x:-|t80-x:done" && /달력에만/.test(t80Toast()) && /안 만들/.test(t80Toast()),
+  `${t80Done} / ${t80Toast()}`);
+
+const t80Todo = await t80Pick("todo", { event_id: "ev1", task_id: "tk1", scheduled_for: t80Day });
+ok("5b ★★ '아직 해야 해요' → 예정이 잡히면 토스트가 '오늘 할 일'이라고 말한다",
+  t80Todo === "t80-x:-|t80-x:todo" && /오늘 할 일/.test(t80Toast()),
+  `${t80Todo} / ${t80Toast()}`);
+
+/* ★ 5b 의 짝 — **오늘이 마감된 날이면 대기로 떨어지고 문구가 그 사실을 말한다**(함정 6).
+ *   ⚠️ 화면이 추측하지 않는다 — `scheduled_for` 가 `null` 인 것을 읽고 말한다. */
+const t80Wait = await t80Pick("todo", { event_id: "ev1", task_id: "tk1", scheduled_for: null });
+ok("★ 5b의 짝 — 예정이 안 잡히면 '대기'라고 말한다 (마감된 날 · 화면이 추측하지 않는다)",
+  t80Wait === "t80-x:-|t80-x:todo" && /대기/.test(t80Toast()) && !/오늘 할 일/.test(t80Toast()),
+  `${t80Wait} / ${t80Toast()}`);
+
+const t80Skip = await t80Pick("skip", { state: "dismissed" });
+ok("6 ★ '안 할래요' → skip 을 보낸다 (dismiss 경로가 아니다 — 서버가 한 곳에서 정한다)",
+  t80Skip === "t80-x:-|t80-x:skip" && !$("#coll-list [data-cid='t80-x']"),
+  `${t80Skip} / 줄남음=${!!$("#coll-list [data-cid='t80-x']")}`);
+await ev(`(async()=>{
+  Api.collectedAccept = window.__t80.old[0]; Api.collectedDismiss = window.__t80.old[1]; closeAll();
+})()`);
+
+/* 9·10·11 — ④ 먼 예정은 약하게. **①의 첫째 확인 결과대로 회색 하나로 끝난다** —
+ * 맨 아래는 `ORDER BY e.date` + 그룹 순서가 이미 한다.
+ * ⚠️ **경계 상수를 검사가 하드코딩하지 않는다**(함정 15) — 넉넉히 넘기고 넉넉히 안쪽이다. */
+/* ⚠️⚠️ **`switchTab("works")`를 여기서 부르지 않는다 — 한 번 간헐로 물렸다.**
+ *   `switchTab` → `loadTab` → **`run(renderWorks)`** 이고 그 프라미스를 **버린다**(`app.js:4031`).
+ *   그래서 `await switchTab(...)`은 **기다릴 것이 없고**, 실 API 렌더가 내 스텁 렌더 *뒤에*
+ *   내려앉아 `#w-sched`를 덮는다 — 9·10·11이 한 판 죽었다가 **고친 것 없이 다음 판에 통과했다.**
+ *   ★★ **고치지 않고 통과하는 빨간불은 회귀가 아니라 경합이다**(함정 14).
+ *   ⚠️ **대기를 넣어 미루지 않는다.** 탭은 위 T-75 블록이 이미 `works`로 두었고,
+ *      여기서는 **스텁을 먼저 걸고 그 뒤 렌더를 `await`** 한다 — 기다릴 것이 실제로 생긴다. */
+const t80Sched = async (rows) => ev(`(async()=>{
+  window.__t80w = window.__t80w || { old: Api.works };
+  Api.works = async (seg) => seg === "scheduled" ? ${JSON.stringify(rows)} : window.__t80w.old(seg);
+  await renderWorks();
+})()`);
+await t80Sched([
+  { id: "t80-near", title: "가까운 것", date: await t80At(3), defer_count: 0, color: null, rate: 0 },
+  { id: "t80-far", title: "먼 것", date: await t80At(200), defer_count: 0, color: null, rate: 0 },
+]);
+const t80Far = [...$("#w-sched").querySelectorAll(".trow")]
+  .find((el) => el.textContent.includes("먼 것"));
+const t80Near = [...$("#w-sched").querySelectorAll(".trow")]
+  .find((el) => el.textContent.includes("가까운 것"));
+ok("9 ★★ 한 달 이상 남은 예정이 약한 표시를 받는다",
+  !!t80Far && t80Far.classList.contains("far"),
+  `far=${!!t80Far} cls=${t80Far?.className} trow수=${$("#w-sched").querySelectorAll(".trow").length} 본문=${txt("#w-sched").slice(0, 100)}`);
+/* 10 — ★ 9의 짝. **끄는 것이 아니다.** ⚠️ 이게 없으면 9가 *"숨긴다"* 로도 통과한다 —
+ *   화면에서 **약한 것과 없는 것**이 갈려야 한다(사용자 명시: *"실제로 비활성화는 아님"*).
+ *
+ * ⚠️⚠️ **처음엔 `getComputedStyle(...).pointerEvents !== "none"` 으로 썼다가 물렸다.**
+ *    **jsdom 은 외부 `style.css` 를 안 먹는다** — 그 값이 늘 `""` 라 **저절로 참**이었고,
+ *    변이 P10(`.trow.far{pointer-events:none}` 추가)이 **아무것도 안 죽였다**
+ *    (`AGENT-CHAIN` §8 §저절로 참이 되는 길 ② — 조건이 관대하면 안 물은 것이다).
+ * ★ **그래서 둘로 나눠 센다**: DOM 이 볼 수 있는 것(껐는가·숨겼는가·핸들러가 있는가)과
+ *   **스타일시트 원문**(`.trow.far` 규칙이 끄는 속성을 쓰는가). 뒤쪽이 P10 을 문다.
+ * ⚠️ 훑기가 살아 있다는 증거를 먼저 요구한다(함정 17) — 합성 규칙을 먹여 본다. */
+const t80Css = readFileSync(join(here, "../public/style.css"), "utf8");
+const t80Disabling = (css) => (css.match(/\.trow\.far[^{}]*\{[^}]*\}/g) ?? [])
+  .some((rule) => /pointer-events\s*:\s*none|display\s*:\s*none|visibility\s*:\s*hidden/i.test(rule));
+ok("★ 스캐너가 살아 있다 — 끄는 규칙을 실제로 잡는다",
+  t80Disabling(".trow.far{pointer-events:none}") && !t80Disabling(".trow.far .tt{color:var(--faint)}"),
+  "self-test");
+ok("10 ★ 그런데 여전히 눌리고 열린다 — 숨기지도 끄지도 않는다 (9의 짝)",
+  !!t80Far && !t80Far.hidden && !t80Far.querySelector("[disabled]")
+  && !/pointer-events/i.test(t80Far.getAttribute("style") ?? "")
+  && typeof t80Far.querySelector(".tbody")?.getAttribute("onclick") === "string"
+  && !t80Disabling(t80Css),
+  `hidden=${t80Far?.hidden} disabled=${!!t80Far?.querySelector("[disabled]")} css끄기=${t80Disabling(t80Css)}`);
+// 11 — 회귀. 한 달 안쪽은 전과 똑같다. ⚠️ 경계를 0으로 만드는 변이는 9·11을 함께 죽인다(필연).
+ok("11 ★ 한 달 안쪽 예정은 전과 똑같다 (약한 표시가 안 붙는다)",
+  !!t80Near && !t80Near.classList.contains("far"), `${!!t80Near} / ${t80Near?.className}`);
+await ev(`(async()=>{ Api.works = window.__t80w.old; await renderWorks(); })()`);
+
 console.log("\n[수집 상태 한 줄 — 실패는 숨지 않는다]");
 // ★ **위 두 카드와 반대다.** T-33·T-42는 none과 error가 화면에서 **같아야** 했다 —
 //   사용자가 할 수 있는 일이 없으니 잔소리가 되기 때문이다. 여기는 할 일이 있다(토큰 재입력).

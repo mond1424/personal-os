@@ -2129,7 +2129,10 @@ ok("pending이 7일 밖·과거·dismissed를 안 준다 — 창 안 하나만",
 //    아는 원문으로 집으면 각 검사가 자기 것만 본다.
 const accId = pend1.find((r: any) => r.summary === RAW_TITLE)?.id;
 const acc1 = (await api("POST", `/api/collected/${accId}/accept`)).json;
-const evRow = raw.prepare("SELECT title AS ti, date AS dt, time AS tm FROM events WHERE id=?").get(acc1.event_id) as any;
+// ⚠️ **`?? ""` 는 관대함이 아니라 가드다** — `event_id` 가 없는 응답(예: 묻기로 돌아선 변이)에서
+//    `.get(null)` 이 **던져서 러너를 죽이면** 그 판은 아무것도 안 잰 것이 된다(함정 16 · T-79 M7).
+//    아래 단언은 그대로 `evRow?.ti === RAW_TITLE` 을 요구하므로 **무르게 하지 않는다.**
+const evRow = raw.prepare("SELECT title AS ti, date AS dt, time AS tm FROM events WHERE id=?").get(acc1.event_id ?? null) as any;
 ok("accept가 events를 만들고 state·event_id를 잇는다 · title은 원문 그대로",
   !!acc1.event_id && evRow?.ti === RAW_TITLE && evRow?.tm === atPlus(2 * DAY).slice(11, 16)
   && (raw.prepare("SELECT state AS s, event_id AS e FROM collected_items WHERE id=?").get(accId) as any)?.s === "accepted",
@@ -2250,18 +2253,43 @@ ok("1 ★ accept가 events 하나와 tasks 하나를 만들고 둘 다 잇는다
   && t78TaskExists(t78Row.k) && acc1.task_id === t78Row.k,
   `${JSON.stringify(t78Row)} task실재=${t78TaskExists(t78Row?.k)} 응답=${JSON.stringify(acc1)}`);
 
-/* 2 ★★ **안전핀 — 수락이 만든 task 에 예정일이 없다.** 1만 보면 **마감일에 예정을 박는
- *   구현이 초록으로 통과한다**(화면에는 할 일이 생기니까). 이 티켓에서 제일 쉬운 잘못이다.
- *   ⚠️ **`createTask`의 반환값(`waiting`)을 안 믿는다 — 구현이 자기에 대해 하는 말이다.**
- *      `schedule_entries`를 DB 에서 직접 센다.
- *   ★ **잇는 칸을 타고 전수로 센다** — *"그 task"* 를 먼저 집으면 1의 명제를 업게 된다.
- *      수락이 만든 task 가 없으면 조인이 비어 0이고, **그것은 1이 말할 일이다.** */
-const t78DatedFromAccept = () => (raw.prepare(
-  `SELECT COUNT(*) AS n FROM schedule_entries se
-     JOIN collected_items c ON c.task_id = se.task_id`).get() as any).n;
-ok("2 ★★ 수락이 만든 task 에는 예정 항목이 하나도 없다 — 대기다 (마감일에 박는 구현을 막는다 · 안전핀)",
-  t78DatedFromAccept() === 0,
-  `수락이만든task의예정항목=${t78DatedFromAccept()} (0이어야 한다) 마감일=${atPlus(2 * DAY).slice(0, 10)}`);
+/* 2 ⚠️⚠️ **이 검사는 T-80 이 명제를 뒤집었다. 지우지 않고 다시 세웠다.**
+ *
+ * **옛 명제**: *"수락이 만든 task 에는 예정 항목이 **하나도 없다** — 대기다."*
+ *   T-78의 근거는 *"앱이 마감일을 고르면 그것은 앱의 해석"* 이었다.
+ * **새 명제**: *"미래 마감을 수락하면 **예정일 = 그 마감일**이다."*
+ *   2026-09-21 사용자가 *"자동으로 마감일에 넣자"* 를 골랐다 — **해석이 아니라 설정이다.**
+ *   ★ 그대로 뒀으면 **검사가 옛 동작을 지키는 자물쇠**가 된다(`CLAUDE.md` §기준선).
+ *
+ * ⚠️ **구조가 하나 바뀐다 — 이제 *있다*를 단언해야 한다.**
+ *    옛 꼴은 *"0이면 참"* 이라 **`date`를 안 넘기는 구현에서도 초록**이 된다. 그건 정확히
+ *    T-80이 없애려는 결함이므로, **개수 0을 참으로 두면 이 검사가 아무것도 안 센다.**
+ *    ★ 그래서 *"그 줄이 있고, 그 날짜다"* 로 센다. task 자체가 안 생기는 변이와 함께 죽는 것은
+ *      **명제가 그렇게 바뀐 결과**이고, 그 자리는 위 1이 여전히 혼자 지킨다.
+ * ⚠️ **`createTask`의 반환값(`waiting`)은 여전히 안 믿는다** — 구현이 자기에 대해 하는 말이다.
+ *    `schedule_entries`를 DB 에서 직접 센다.
+ * ⚠️ **기대 날짜를 구현에서 읽어 오지 않는다**(함정 15) — fixture 가 만든 `atPlus(2*DAY)`가 계약이다. */
+const t78Deadline = atPlus(2 * DAY).slice(0, 10);
+const t78EntryDates = (taskId: string | null) => (taskId ? (raw.prepare(
+  "SELECT date FROM schedule_entries WHERE task_id=? ORDER BY date").all(taskId) as any[]) : [])
+  .map((r) => r.date);
+ok("2 ★★ 미래 마감을 수락하면 예정일 = 그 마감일이다 (T-80 이 T-78 의 명제를 뒤집었다)",
+  JSON.stringify(t78EntryDates(t78Row?.k)) === JSON.stringify([t78Deadline]),
+  `예정=${JSON.stringify(t78EntryDates(t78Row?.k))} 마감일=${t78Deadline}`);
+
+/* ★ 2의 짝 — **시각은 안 들어간다.** 마감 시각은 `events`가 갖는다(설계 §1.7).
+ *
+ * ⚠️⚠️ **이것은 *동작*이 아니라 *스키마*가 지는 계약이다 — 그 사실을 적어 둔다.**
+ *    티켓의 변이 *"예정에 time 을 함께 넘긴다"* 를 실제로 돌려 봤더니 **아무 검사도 안 죽었다**:
+ *    `schedule_entries`에 시각 칸이 **아예 없어** `createTask`에 `time`을 얹어도 버려진다.
+ *    ★ **그러므로 이 검사가 세는 것은 *스키마가 그대로인가* 다** — 누가 그 칸을 만드는 날
+ *    규칙이 위태로워지고, 그때 여기가 먼저 운다. **동작 변이로는 못 죽인다.**
+ *    (`AGENT-CHAIN` §8 — 못 죽는 검사는 무엇을 세는지 스스로 밝혀야 한다.) */
+ok("8 ★ 예정은 날짜뿐 — 시각 칸이 스키마에 없고 시각은 event 가 갖는다 (구조가 지는 계약)",
+  !("time" in (raw.prepare("SELECT * FROM schedule_entries WHERE task_id=?").get(t78Row?.k) as any ?? {}))
+  && (raw.prepare("SELECT time AS tm FROM events WHERE id=?").get(t78Row?.e) as any)?.tm
+     === atPlus(2 * DAY).slice(11, 16),
+  `event시각=${(raw.prepare("SELECT time AS tm FROM events WHERE id=?").get(t78Row?.e) as any)?.tm}`);
 
 /* 3 ★ **1의 짝 — 멱등.** `accept`는 이미 멱등이라 **event 쪽은 초록인 채로 task 만 늘어난다.**
  *   ★ **세 번째 수락을 여기서 한 번 더 걸고 개수 차를 잰다** — 제목에도, task 의 존재에도
@@ -2281,7 +2309,7 @@ ok("3 ★ 다시 accept해도 task도 event도 안 늘어난다 (멱등 · 1의 
  *   ⚠️ 이른 반환이 `task_id`까지 요구하면 **그 셋이 문을 지나 오늘 task 를 만들고**,
  *      그러면 *"수집된 것"* 과 *"내가 넣은 것"* 이 섞인다. 3이 못 잡는다 — 3의 행은 `task_id`가 있다. */
 putCollected("t78-old", "T-78 이전에 수락한 것", atPlus(5 * DAY), "accepted");
-raw.prepare("UPDATE collected_items SET event_id=? WHERE uid=?").run(acc1.event_id, "t78-old");
+raw.prepare("UPDATE collected_items SET event_id=? WHERE uid=?").run(acc1.event_id ?? null, "t78-old");   // 가드 — 위 2132 와 같은 이유
 const t78OldId = (raw.prepare("SELECT id AS i FROM collected_items WHERE uid=?").get("t78-old") as any).i;
 const t78OldRes = (await api("POST", `/api/collected/${t78OldId}/accept`)).json;
 ok("3b ★ 옛 accepted 행(task_id가 NULL)을 다시 눌러도 task를 안 만든다 (소급 생성 금지)",
@@ -2323,6 +2351,105 @@ const nAfter = (raw.prepare("SELECT (SELECT COUNT(*) FROM tasks) AS t, (SELECT C
 ok("6 ★ dismiss는 task도 event도 안 만든다 (경계)",
   nAfter.t === nBefore.t && nAfter.e === nBefore.e && t78Link(t78DisId)?.k === null,
   `tasks ${nBefore.t}→${nAfter.t} · events ${nBefore.e}→${nAfter.e}`);
+
+/* ── T-80 · 마감이 지났으면 묻는다 ────────────────────────────────────
+ *
+ * ★ **미래는 안 묻는다** — 사용자가 고른 것이 *"자동으로"* 다(②). 묻는 것은 과거뿐(③).
+ * ⚠️ **픽스처는 `now` 기준 상대다**(함정 12). 과거는 `atPlus(음수)`.
+ * ★ **T-80 검사 12(event 회귀)는 위 T-78 검사 5가 이미 진다** — 다시 안 센다.
+ */
+console.log("\n[T-80] 마감이 지났으면 묻는다 — 미래는 자동으로 들어간다");
+const t80Count = () => (raw.prepare(
+  "SELECT (SELECT COUNT(*) FROM tasks) AS t, (SELECT COUNT(*) FROM events) AS e").get() as any);
+const t80Accept = (id: string, choice?: string) =>
+  api("POST", `/api/collected/${id}/accept`, choice ? { choice } : undefined);
+const t80Id = (uid: string) =>
+  (raw.prepare("SELECT id AS i FROM collected_items WHERE uid=?").get(uid) as any).i;
+const t80Entries = (taskId: string | null) => (taskId ? (raw.prepare(
+  "SELECT date FROM schedule_entries WHERE task_id=?").all(taskId) as any[]) : []).map((r) => r.date);
+
+// 2 — ★ 미래엔 묻지 않는다. **바로 들어간다.** ⚠️ 이게 없으면 *"항상 묻는"* 구현이 통과한다.
+putCollected("t80-fut", "T-80 미래 마감", atPlus(20 * DAY));
+const t80Fut = (await t80Accept(t80Id("t80-fut"))).json;
+ok("2 ★ 미래 마감은 안 묻고 바로 들어간다 (사용자가 고른 것이 '자동으로'다)",
+  !t80Fut.needs_choice && t80Fut.state === "accepted" && !!t80Fut.event_id && !!t80Fut.task_id
+  && JSON.stringify(t80Entries(t80Fut.task_id)) === JSON.stringify([atPlus(20 * DAY).slice(0, 10)]),
+  `${JSON.stringify(t80Fut)} 예정=${JSON.stringify(t80Entries(t80Fut.task_id))}`);
+
+/* 3 — ★★ 과거는 묻는다. **그리고 아무것도 안 만든다** — 물어 놓고 만들면 묻는 것이 장식이다.
+ *   ★ 개수를 앞뒤로 재서 **이 호출이 만든 것**만 센다. */
+putCollected("t80-past", "T-80 지난 마감", atPlus(-3 * DAY));
+const t80B = t80Count();
+const t80Ask = (await t80Accept(t80Id("t80-past"))).json;
+const t80A = t80Count();
+ok("3 ★★ 과거 마감은 묻는다 — 그리고 아무것도 안 만든다",
+  t80Ask.needs_choice === true && t80Ask.state === "new"
+  && t80A.t === t80B.t && t80A.e === t80B.e,
+  `${JSON.stringify(t80Ask)} tasks ${t80B.t}→${t80A.t} · events ${t80B.e}→${t80A.e}`);
+
+/* 4 — ★ "이미 했어요" → event 1 · task 0. **하지 않은 것을 기록하지 않는다.**
+ *   ⚠️ `event`는 만든다 — *"그 마감이 있었다"* 는 사실이고 달력은 사실의 기록이다. */
+const t80D = t80Count();
+const t80Done = (await t80Accept(t80Id("t80-past"), "done")).json;
+const t80D2 = t80Count();
+ok("4 ★ '이미 했어요' → event 하나 · task 없음 (task_id 가 NULL 로 남아 구분을 진다)",
+  t80Done.state === "accepted" && !!t80Done.event_id && t80Done.task_id === null
+  && t80D2.e === t80D.e + 1 && t80D2.t === t80D.t
+  && t78Link(t80Id("t80-past"))?.k === null,
+  `${JSON.stringify(t80Done)} tasks ${t80D.t}→${t80D2.t} · events ${t80D.e}→${t80D2.e}`);
+
+/* 5 — ★★ "아직 해야 해요" → event 1 · task 1. **그리고 마감일에는 절대 안 박는다.**
+ *
+ * ⚠️⚠️ **이 러너의 오늘은 이미 마감돼 있다**(위 `[7.x]`가 `POST /api/daily/close`를 부른다).
+ *    그래서 여기서 도는 것은 **폴백 가지**다 — `trg_entries_frozen_ins`가 보는 것은
+ *    *"지났는가"* 가 아니라 `daily.status='closed'` 하나라(함정 6 · `0001`) **오늘도 막힌다.**
+ *    ★ 그때 계약은 *"추측해서 409를 맞는다"* 가 아니라 **대기로 떨어뜨리고 응답이 말한다**이다.
+ * ★★ **그 전제를 검사가 직접 확인한다** — 안 그러면 픽스처가 바뀌는 날 이 검사가
+ *    **다른 가지를 재면서 조용히 초록**이 된다(`AGENT-CHAIN` §8 §저절로 참이 되는 길).
+ * ★ **정상 가지(예정일 = 오늘)는 `front.mjs`가 진다** — 거기 오늘은 열려 있다.
+ * ⚠️ **어느 가지든 공통 계약 하나**: 예정에 **지난 마감일이 없다.** 그게 이 검사의 본체다. */
+putCollected("t80-todo", "T-80 지난 마감 · 아직", atPlus(-5 * DAY));
+const t80TodayClosed =
+  (raw.prepare("SELECT status AS s FROM daily WHERE date=?").get(t0.d) as any)?.s === "closed";
+const t80T = t80Count();
+const t80Todo = (await t80Accept(t80Id("t80-todo"), "todo")).json;
+const t80T2 = t80Count();
+const t80TodoDates = t80Entries(t80Todo.task_id);
+ok("fixture — 이 러너의 오늘은 마감된 날이다 (그래서 아래가 폴백 가지를 잰다)",
+  t80TodayClosed, `daily.status(${t0.d})=${
+    (raw.prepare("SELECT status AS s FROM daily WHERE date=?").get(t0.d) as any)?.s}`);
+ok("5 ★★ '아직 해야 해요' → 지난 마감일에는 안 박는다 · 오늘이 마감이면 대기로 떨어지고 응답이 말한다",
+  t80Todo.state === "accepted" && !!t80Todo.event_id && !!t80Todo.task_id
+  && t80T2.e === t80T.e + 1 && t80T2.t === t80T.t + 1
+  && !t80TodoDates.includes(atPlus(-5 * DAY).slice(0, 10))
+  && (t80TodayClosed
+    ? t80TodoDates.length === 0 && t80Todo.scheduled_for === null && t80Todo.waiting === true
+    : JSON.stringify(t80TodoDates) === JSON.stringify([t0.d])),
+  `${JSON.stringify(t80Todo)} 예정=${JSON.stringify(t80TodoDates)} 오늘=${t0.d} 마감?=${t80TodayClosed}`);
+
+// 6 — ★ "안 할래요" → dismiss. event·task 0.
+putCollected("t80-skip", "T-80 지난 마감 · 안 할래", atPlus(-7 * DAY));
+const t80S = t80Count();
+const t80Skip = (await t80Accept(t80Id("t80-skip"), "skip")).json;
+const t80S2 = t80Count();
+ok("6 ★ '안 할래요' → dismiss · event 도 task 도 안 만든다",
+  t80Skip.state === "dismissed" && t80S2.t === t80S.t && t80S2.e === t80S.e
+  && t78Link(t80Id("t80-skip"))?.s === "dismissed",
+  `${JSON.stringify(t80Skip)} tasks ${t80S.t}→${t80S2.t} · events ${t80S.e}→${t80S2.e}`);
+
+/* 7 — ★ 멱등. **세 갈래 어느 쪽도 두 번 안 만든다.** 느린 네트워크에서 두 번 눌리는 것이
+ *   이 화면의 기본 조건이다(T-42 §할 일 ①). 개수 차로 센다. */
+const t80I = t80Count();
+const again = [
+  (await t80Accept(t80Id("t80-past"), "done")).json,
+  (await t80Accept(t80Id("t80-todo"), "todo")).json,
+  (await t80Accept(t80Id("t80-skip"), "skip")).json,
+  (await t80Accept(t80Id("t80-fut"))).json,
+];
+const t80I2 = t80Count();
+ok("7 ★ 세 갈래 어느 쪽도 두 번 누르면 안 늘어난다 (멱등)",
+  t80I2.t === t80I.t && t80I2.e === t80I.e,
+  `tasks ${t80I.t}→${t80I2.t} · events ${t80I.e}→${t80I2.e} 응답=${JSON.stringify(again.map((r) => r.state))}`);
 
 // **문구에 해석이 없다** — 결정 ②는 화면 문자열로만 확인된다(§확인 절차 4행).
 const cardSrc = readFileSync(join(here, "../public/app.js"), "utf8");
