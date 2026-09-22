@@ -1,76 +1,4 @@
-# STATE — 최종 갱신 2026-09-22
-
-## ⏳ 지금 원장에 **시험 행 5개**가 있다 — 치울 시한이 있다 (2026-09-22 삽입)
-
-> **여기 두는 이유**: 뒷정리는 **시계가 붙은 의무**이고, 이 파일이 세션마다 제일 먼저 읽히는 곳이다
-> (`CLAUDE.md` §작업 방식). 티켓에 적으면 티켓이 닫힐 때 같이 묻힌다. **사본을 두 벌 두지 않는다** —
-> `docs/tickets/T-81-…md` 에는 **이 절을 가리키는 한 줄**만 있다.
-
-원격 D1(`personal-os`)에 직접 넣은 `collected_items` **5행**. 수집기는 이 행들을 **안 건드린다**
-(`uclass.ts:178` — uid diff 라 피드에 없는 uid 는 touch 도 delete 도 안 한다).
-
-| id | uid | starts_at | 뜻 |
-|---|---|---|---|
-| `20260922-001` | `TEST-push-0925` | 2026-09-25 23:59 | **7일 창 안** — Today 의 push 경로. ⚠️ **T-42 결정 ①의 유일한 실측 기회** |
-| `20260922-002` | `TEST-near-1005` | 2026-10-05 23:59 | 한 달 안 (`FAR_DAYS=30` 안 → 검정) |
-| `20260922-003` | `TEST-far-1110` | 2026-11-10 23:59 | 한 달 밖 (→ `.trow.far` 회색) |
-| `20260922-004` | `TEST-veryfar-20270615` | 2027-06-15 23:59 | 아주 먼 것 |
-| `20260922-005` | `TEST-past-0918` | 2026-09-18 13:00 | 과거 — **[추가] 하면 묻는다**(T-80 ③) |
-
-공통: `state='new'` · `source='uclass'`(CHECK 가 `'test'` 를 안 받는다) ·
-`categories='전자기및연습1 (2026-20, 45004_01_U)'` · `summary` 앞에 `[시험]`.
-
-### ⚠️⚠️ 시한 — 지나면 **원장에 영구히 남는다**
-
-```
-과거 행(005)을 [아직 해야 해요] 로 수락했다면   → ★ 오늘(09-22) 마감 전
-  accept 가 예정을 오늘에 넣는다(collected.ts:223 `when = past ? t.d : date`).
-  오늘이 closed 가 되면 trg_entries_frozen_del 이 걸려 deleteTask 가 409 —
-  그 task 는 취소만 되고 삭제가 안 된다.
-push 행(001)                                   → ★ 09-25 가 마감되기 전
-  수락하면 events·schedule_entries 가 09-25 에 앉는다. 그날이 closed 가 되면
-  trg_events_frozen_del·trg_entries_frozen_del 둘 다 걸린다.
-002·003·004                                    → 각 날짜가 마감되기 전 (여유 있다)
-```
-
-⚠️ **시험 일정에 보호 규칙을 붙이지 않는다** — `guard_events.event_id` 가 물고
-`trg_guard_event_nodelete` 가 영구화한다. (원장 실측 2026-09-22: `guard_events` 368건 중
-`task_id` **0** · `event_id` 38 — 전부 보호 규칙이고, `accept` 는 보호 규칙을 안 붙인다.)
-
-### ★ 뒷정리 절차
-
-**FK 는 켜져 있다**(`PRAGMA foreign_keys` → `1`, 원격 실측). `collected_items` 가 `events`·`tasks` 를
-물고 있으므로 **놓아 준 뒤에** 지운다.
-
-```sql
--- 0) 무엇이 붙었는지 먼저 읽는다  ★ 이 값을 아래 <eventIds>·<taskIds> 에 리터럴로 넣는다
-SELECT id, uid, state, event_id, task_id FROM collected_items WHERE uid LIKE 'TEST-%';
-
--- 1) 지울 수 있는지 먼저 본다 — ⚠️ 셋 다 0행이어야 계속한다
-SELECT e.id, e.date FROM events e JOIN daily d ON d.date = e.date AND d.status = 'closed'
-  WHERE e.id IN (<eventIds>);
-SELECT se.task_id, se.date FROM schedule_entries se JOIN daily d ON d.date = se.date AND d.status = 'closed'
-  WHERE se.task_id IN (<taskIds>);
-SELECT COUNT(*) FROM guard_events WHERE event_id IN (<eventIds>) OR task_id IN (<taskIds>);
-
--- 2) 자식부터
-DELETE FROM wait_extensions  WHERE task_id IN (<taskIds>);
-DELETE FROM schedule_entries WHERE task_id IN (<taskIds>);
-UPDATE collected_items SET event_id = NULL, task_id = NULL WHERE uid LIKE 'TEST-%';
-DELETE FROM tasks  WHERE id IN (<taskIds>);
-DELETE FROM events WHERE id IN (<eventIds>);
-DELETE FROM collected_items WHERE uid LIKE 'TEST-%';
-
--- 3) 0건 확인 — 셋 다 0 이어야 끝난 것이다
-SELECT COUNT(*) FROM collected_items WHERE uid LIKE 'TEST-%';
-SELECT COUNT(*) FROM events WHERE title LIKE '[시험]%';
-SELECT COUNT(*) FROM tasks  WHERE title LIKE '[시험]%';
-```
-
-⚠️ **`<taskIds>`·`<eventIds>` 가 비면 `IN ()` 은 SQLite 에서 구문 오류다** — 0) 이 NULL 만 주면
-그 두 줄은 **건너뛴다**(수락한 적이 없다는 뜻이다).
-
-★ **다 치우면 이 절을 통째로 지운다.** 남겨 두면 다음 세션이 없는 행을 찾는다.
+# STATE — 최종 갱신 2026-09-23
 
 ## 저장소
 
@@ -106,8 +34,11 @@ SELECT COUNT(*) FROM tasks  WHERE title LIKE '[시험]%';
     사실상 N1 을 다시 잰 것이 됐고, **수가 N1 과 똑같아 빨간불로 보였다**(함정 17의 *"그럴듯한 수"*).
     ★ 가른 것은 **표의 예상과 대조한 것 하나**다. 원인은 셸 heredoc 이 `\` 를 한 겹 먹은 것이고
     (홑 백슬래시는 산다 — 죽는 것은 겹친 것이다), **`Write` 로 파일에 쓰자 사라졌다.** 이 세션에서 두 번 났다.
-  - 🌙 **판정은 배포 뒤다** — ★ 시험 행을 [추가] 하면 **대기 제목에 "기한" 이 없고** Calendar 에는
-    **"…기한" 그대로**인가(둘 다여야 한다) · ★★ 대기에서 날짜를 정하면 *"N월 N일로 옮겼어요"* 가 뜨는가.
+  - ✅ **판정 ★ 는 났다 (2026-09-23 · 원장 실측)** — 시험 행을 치우기 전 제목이
+    event `[시험] 지난 기한` · task `[시험] 지난` 이었다. **끝의 `기한` 하나만 떨어졌고 달력 원문은 그대로.**
+    ⚠️ **화면이 아니라 원장에서 봤다** — UI 왕복은 안 거쳤으니 *"대기 화면에 어떻게 그려지나"* 는 안 본 것이다.
+  - 🌙 **★★ 는 아직이다** — 대기에서 날짜를 정하면 *"N월 N일로 옮겼어요"* 가 뜨는가.
+    ⚠️ **시험 행이 없어졌으므로 실 과제로 본다**(T-81 §보고 — 뒷정리).
   - 라이브 확인:
     ```bash
     curl -s https://personal-os.mai-pos.workers.dev/app.js | grep -c "로 옮겼어요"
@@ -3990,6 +3921,10 @@ await (async () => {
 > `BACKLOG-0803.md`(실사용 12건)는 **닫혔다** — 다섯이 티켓(T-15·T-16·T-17·T-18·T-20)으로 나갔고,
 > 10번(취소된 할 일이 Today에)은 T-15 이후 **재현이 안 돼 접었다.** 8/3 파일은 이력으로 남긴다.
 > 아래 목록은 그 backlog가 다루지 않는 **이 층의 기술 부채·미실측**이다. 새 항목은 backlog로 간다.
+
+- ⏳ **push 경로는 티켓이 아니라 기다림이다** (2026-09-23 · T-42 결정 ①) — 시험 행을 치우면서
+  만들어 둔 실측 기회를 버렸다. **다음 uclass 수집에서 7일 창 안 과제가 오면** Today 에
+  "결정할 것" 이 뜬다. ★ **누르기 전에 화면을 한 번 본다** — 그것이 유일한 실측이다.
 
 - 🟡 **`docs/api-surface.md`의 db 표에 export 13개가 안 실려 있다** (2026-09-21 전수 대조로 잼)
   `stCancelTask`·`stUncancelTask`·`eventByExt`·`stInsertExtEvent`·`stUpdateExtEvent`·`closedDaysIn`·
