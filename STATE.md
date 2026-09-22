@@ -1,5 +1,77 @@
 # STATE — 최종 갱신 2026-09-22
 
+## ⏳ 지금 원장에 **시험 행 5개**가 있다 — 치울 시한이 있다 (2026-09-22 삽입)
+
+> **여기 두는 이유**: 뒷정리는 **시계가 붙은 의무**이고, 이 파일이 세션마다 제일 먼저 읽히는 곳이다
+> (`CLAUDE.md` §작업 방식). 티켓에 적으면 티켓이 닫힐 때 같이 묻힌다. **사본을 두 벌 두지 않는다** —
+> `docs/tickets/T-81-…md` 에는 **이 절을 가리키는 한 줄**만 있다.
+
+원격 D1(`personal-os`)에 직접 넣은 `collected_items` **5행**. 수집기는 이 행들을 **안 건드린다**
+(`uclass.ts:178` — uid diff 라 피드에 없는 uid 는 touch 도 delete 도 안 한다).
+
+| id | uid | starts_at | 뜻 |
+|---|---|---|---|
+| `20260922-001` | `TEST-push-0925` | 2026-09-25 23:59 | **7일 창 안** — Today 의 push 경로. ⚠️ **T-42 결정 ①의 유일한 실측 기회** |
+| `20260922-002` | `TEST-near-1005` | 2026-10-05 23:59 | 한 달 안 (`FAR_DAYS=30` 안 → 검정) |
+| `20260922-003` | `TEST-far-1110` | 2026-11-10 23:59 | 한 달 밖 (→ `.trow.far` 회색) |
+| `20260922-004` | `TEST-veryfar-20270615` | 2027-06-15 23:59 | 아주 먼 것 |
+| `20260922-005` | `TEST-past-0918` | 2026-09-18 13:00 | 과거 — **[추가] 하면 묻는다**(T-80 ③) |
+
+공통: `state='new'` · `source='uclass'`(CHECK 가 `'test'` 를 안 받는다) ·
+`categories='전자기및연습1 (2026-20, 45004_01_U)'` · `summary` 앞에 `[시험]`.
+
+### ⚠️⚠️ 시한 — 지나면 **원장에 영구히 남는다**
+
+```
+과거 행(005)을 [아직 해야 해요] 로 수락했다면   → ★ 오늘(09-22) 마감 전
+  accept 가 예정을 오늘에 넣는다(collected.ts:223 `when = past ? t.d : date`).
+  오늘이 closed 가 되면 trg_entries_frozen_del 이 걸려 deleteTask 가 409 —
+  그 task 는 취소만 되고 삭제가 안 된다.
+push 행(001)                                   → ★ 09-25 가 마감되기 전
+  수락하면 events·schedule_entries 가 09-25 에 앉는다. 그날이 closed 가 되면
+  trg_events_frozen_del·trg_entries_frozen_del 둘 다 걸린다.
+002·003·004                                    → 각 날짜가 마감되기 전 (여유 있다)
+```
+
+⚠️ **시험 일정에 보호 규칙을 붙이지 않는다** — `guard_events.event_id` 가 물고
+`trg_guard_event_nodelete` 가 영구화한다. (원장 실측 2026-09-22: `guard_events` 368건 중
+`task_id` **0** · `event_id` 38 — 전부 보호 규칙이고, `accept` 는 보호 규칙을 안 붙인다.)
+
+### ★ 뒷정리 절차
+
+**FK 는 켜져 있다**(`PRAGMA foreign_keys` → `1`, 원격 실측). `collected_items` 가 `events`·`tasks` 를
+물고 있으므로 **놓아 준 뒤에** 지운다.
+
+```sql
+-- 0) 무엇이 붙었는지 먼저 읽는다  ★ 이 값을 아래 <eventIds>·<taskIds> 에 리터럴로 넣는다
+SELECT id, uid, state, event_id, task_id FROM collected_items WHERE uid LIKE 'TEST-%';
+
+-- 1) 지울 수 있는지 먼저 본다 — ⚠️ 셋 다 0행이어야 계속한다
+SELECT e.id, e.date FROM events e JOIN daily d ON d.date = e.date AND d.status = 'closed'
+  WHERE e.id IN (<eventIds>);
+SELECT se.task_id, se.date FROM schedule_entries se JOIN daily d ON d.date = se.date AND d.status = 'closed'
+  WHERE se.task_id IN (<taskIds>);
+SELECT COUNT(*) FROM guard_events WHERE event_id IN (<eventIds>) OR task_id IN (<taskIds>);
+
+-- 2) 자식부터
+DELETE FROM wait_extensions  WHERE task_id IN (<taskIds>);
+DELETE FROM schedule_entries WHERE task_id IN (<taskIds>);
+UPDATE collected_items SET event_id = NULL, task_id = NULL WHERE uid LIKE 'TEST-%';
+DELETE FROM tasks  WHERE id IN (<taskIds>);
+DELETE FROM events WHERE id IN (<eventIds>);
+DELETE FROM collected_items WHERE uid LIKE 'TEST-%';
+
+-- 3) 0건 확인 — 셋 다 0 이어야 끝난 것이다
+SELECT COUNT(*) FROM collected_items WHERE uid LIKE 'TEST-%';
+SELECT COUNT(*) FROM events WHERE title LIKE '[시험]%';
+SELECT COUNT(*) FROM tasks  WHERE title LIKE '[시험]%';
+```
+
+⚠️ **`<taskIds>`·`<eventIds>` 가 비면 `IN ()` 은 SQLite 에서 구문 오류다** — 0) 이 NULL 만 주면
+그 두 줄은 **건너뛴다**(수락한 적이 없다는 뜻이다).
+
+★ **다 치우면 이 절을 통째로 지운다.** 남겨 두면 다음 세션이 없는 행을 찾는다.
+
 ## 저장소
 
 > ### ⚠️ 아래 배포·마이그레이션 줄은 **이력이다. 지금의 사실이 아니다.**
