@@ -213,6 +213,12 @@ details.fold[open] summary::before{transform:rotate(90deg)}
 #cal-rows{position:relative;overflow:hidden}
 .caltrack{display:flex;width:500%;gap:20px;will-change:transform}   /* 5-pane · 달 사이 간격은 app.js CAL_GAP과 일치 (A-4) */
 .calpane{flex:0 0 20%;min-width:0;border:1px solid var(--line);border-radius:18px;overflow:hidden;background:var(--card)}
+/* '받는 중' 칸 (T-82 ②) — ⚠️ **빈 칸과 같은 모양이면 안 된다.**
+ * 데이터가 *없는* 달과 *아직 안 온* 달이 화면에서 갈라져야 한다.
+ * 높이는 6주 그리드와 같게 잡는다(.wkdays 대략 30px + .cal-row 99px × 6) — 안 그러면 트랙이 들썩인다.
+ * ★ 색은 CSS 변수만 (함정 5) — 두 모드 모두 --sub/--faint가 이미 짝을 갖는다. */
+.calpane[data-wait]{display:flex;align-items:center;justify-content:center;min-height:600px}
+.calwait{font-size:12px;color:var(--faint);letter-spacing:.04em}
 .wkdays{display:grid;grid-template-columns:repeat(7,1fr);padding:9px 2px 5px}
 .wkdays span{font-size:10.5px;color:var(--faint);text-align:left;padding-left:5px;letter-spacing:.05em}
 .wkdays span:first-child{color:#C77}   /* 일요일 — 라이트 */

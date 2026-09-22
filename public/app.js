@@ -2158,22 +2158,46 @@ async function calendarDataFor(months) {
 }
 
 let calendarPaneBuildCount = 0;   // front 검사: 한 칸 이동은 재사용 pane 하나만 다시 조립해야 한다
-let calendarPaneRenderKey = "";   // 캐시 세대·귀속일·가운데 달이 같으면 이미 조립한 5-pane을 그대로 쓴다
 
-async function renderCalendar(rotateDir = 0) {
-  if (!S.today) return; // 부팅 전 — S.cal이 아직 비어 있다 (날짜 계산 불가)
+/** 그 달이 캐시에 있는가 — pane 하나를 '데이터'로 그릴지 '받는 중'으로 그릴지 가른다. */
+const calendarMonthCached = (o) => calendarMonthCache.has(calendarMonthKey(o));
+
+/* '받는 중' 칸. ⚠️ **빈 칸과 같은 모양이면 안 된다** — *"없다"* 와 *"아직 안 왔다"* 가
+ * 화면에서 갈라져야 한다(T-79가 배운 것과 같은 자리 · `AGENT-CHAIN` §5).
+ * 읽는 쪽은 `.calpane[data-wait]` 하나다 — 검사도 사람도 그 칸으로 본다. */
+const CAL_PANE_WAIT = '<div class="calwait" role="status">받는 중…</div>';
+
+/**
+ * ★★★★★ **한 칸의 화면은 캐시에 있는 것만으로 이미 선다** (T-82).
+ *
+ * 창이 `[-2…+2]`라 한 칸 넘길 때 새로 빠지는 달은 **두 칸 뒤**다 — 보이는 칸이 아니다.
+ * 그래서 조립을 둘로 가른다:
+ *
+ * ```
+ * ① renderCalendarFrame   동기. 캐시에 있는 달로 pane을 세운다. 없는 달은 '받는 중'
+ * ② 그것이 돌려주는 프라미스  빠진 달을 받아 ①을 한 번 더 돌려 **그 칸만** 채운다
+ * ```
+ *
+ * ⚠️⚠️ **프리페치를 *지우면* 안 된다.** 없애면 화면은 더 빨라 보이는데 **다음 칸이 매번 빈다** —
+ *    그리고 그 구현은 이 티켓의 나머지 검사를 **전부 초록으로 통과한다**(T-82 §검사 2).
+ *    **뒤로 미루는 것이지 없애는 것이 아니다.**
+ *
+ * ★ 돌려주는 값은 *"아직 받을 것이 남았다"* 는 계약이다 — `null`이면 화면이 이미 완성이다.
+ *   기다릴 사람만 기다린다(`renderCalendar`가 그 자리다). **제스처는 안 기다린다.**
+ */
+function renderCalendarFrame(rotateDir = 0, fill = true) {
+  if (!S.today) return null; // 부팅 전 — S.cal이 아직 비어 있다 (날짜 계산 불가)
   const gen = calGen;   // 이 조립을 시작할 때의 세대 — 도중에 달을 더 넘기면 버린다(최신 우선)
   const { y, m } = S.cal;
   $("#cal-title").textContent = `${y} · ${m}월`;
   /* DOM과 데이터 모두 좌우 두 달까지 유지한다. 달을 넘길 때는 기존 pane 네 개를
    * 그대로 돌려 쓰고 새 가장자리 pane 하나만 다시 조립한다. */
   const months = [-2, -1, 0, 1, 2].map((n) => addMonth(y, m, n));
-  const dataMonths = months;
   const grids = months.map((o) => weeksOf(o.y, o.m));
-  const [cal, plist] = await calendarDataFor(dataMonths);
-  if (gen !== calGen) return;   // 폐기될 조립은 아래 pane 회전까지 닿지 않는다(연속 스와이프 경합 방지)
+  // ★ **캐시에 있는 달만 합친다** — 없는 달의 pane은 '받는 중'이라 쓸 재료가 없다.
+  const cal = mergeCalendarMonths(months.filter(calendarMonthCached));
   S.calData = cal;
-  S.periods = plist;
+  S.periods = calendarPeriodListCache || [];
 
   const D = S.today ? S.today.date : "";
   const diarySet = new Set(cal.diary.map((r) => r.date));
@@ -2243,26 +2267,38 @@ async function renderCalendar(rotateDir = 0) {
     return CAL_WKDAYS + grid.map((row) => rowHtml(row, o.m)).join("");
   };
   const track = $("#cal-track");
-  const paneRenderKey = `${calendarCacheEpoch}|${D}|${calendarMonthKey({ y, m })}`;
-  const panesAlreadyCurrent = calendarPaneRenderKey === paneRenderKey
-    && track.children.length === CAL_PANE_COUNT
-    && [...track.children].every((p, i) => p.dataset.ym === calendarMonthKey(months[i]));
-  if (rotateDir && track.children.length === CAL_PANE_COUNT) {
-    // 반드시 세대 검사 뒤에서만 DOM 순서를 바꾼다. 버려진 조립이 회전하면 이후 대응이 전부 밀린다.
-    const pane = rotateDir > 0 ? track.firstElementChild : track.lastElementChild;
-    const targetIndex = rotateDir > 0 ? CAL_PANE_COUNT - 1 : 0;
-    if (rotateDir > 0) track.appendChild(pane);
-    else track.insertBefore(pane, track.firstElementChild);
-    const target = months[targetIndex];
-    pane.dataset.ym = calendarMonthKey(target);
-    pane.innerHTML = paneBody(target, grids[targetIndex]);
-  } else if (!panesAlreadyCurrent) {
+  /* pane 하나가 **지금 그려야 하는 모양** — 이 값이 같으면 내용도 같다.
+   * ★ `w`(받는 중)/`d`(데이터)가 실려 있는 것이 핵심이다: 프리페치가 도착해 `w`→`d`가 되면
+   *   **그 칸 하나만** 다시 조립된다(나머지 넷은 값이 안 변해 손대지 않는다). */
+  const paneSig = (o) => `${calendarCacheEpoch}|${D}|${calendarMonthKey(o)}|${calendarMonthCached(o) ? "d" : "w"}`;
+  const paneHtml = (o, grid) => calendarMonthCached(o) ? paneBody(o, grid) : CAL_PANE_WAIT;
+  // `cur`는 **DOM 순서에만** 달렸다 — 순서가 안 바뀐 판에서 다시 토글하면 같은 일을 두 번 한다.
+  let orderChanged = false;
+  if (track.children.length !== CAL_PANE_COUNT) {
     track.innerHTML = months.map((o, k) =>
-      `<div class="calpane${k === CAL_CENTER ? " cur" : ""}" data-ym="${calendarMonthKey(o)}">` +
-      paneBody(o, grids[k]) + `</div>`).join("");
+      `<div class="calpane${k === CAL_CENTER ? " cur" : ""}" data-ym="${calendarMonthKey(o)}"` +
+      ` data-sig="${paneSig(o)}"${calendarMonthCached(o) ? "" : ' data-wait="1"'}>` +
+      paneHtml(o, grids[k]) + `</div>`).join("");
+    orderChanged = true;
+  } else {
+    if (rotateDir) {
+      // 반드시 이 프레임 안에서만 DOM 순서를 바꾼다. 버려진 조립이 회전하면 이후 대응이 전부 밀린다.
+      const pane = rotateDir > 0 ? track.firstElementChild : track.lastElementChild;
+      if (rotateDir > 0) track.appendChild(pane);
+      else track.insertBefore(pane, track.firstElementChild);
+      orderChanged = true;
+    }
+    [...track.children].forEach((p, i) => {
+      const want = paneSig(months[i]);
+      if (p.dataset.sig === want) return;   // 모양이 같다 — 조립하지 않는다
+      p.dataset.ym = calendarMonthKey(months[i]);
+      p.dataset.sig = want;
+      if (calendarMonthCached(months[i])) delete p.dataset.wait;
+      else p.dataset.wait = "1";
+      p.innerHTML = paneHtml(months[i], grids[i]);
+    });
   }
-  [...track.children].forEach((p, i) => p.classList.toggle("cur", i === CAL_CENTER));
-  calendarPaneRenderKey = paneRenderKey;
+  if (orderChanged) [...track.children].forEach((p, i) => p.classList.toggle("cur", i === CAL_CENTER));
   trackSet(track, CAL_CENTER, false, CAL_GAP, CAL_TRACK_STEP);   // 언제나 5-pane의 가운데(index 2)
 
   // 범례는 '지금 보고 있는 달'만 — 세 달치를 다 늘어놓으면 읽을 수 없다
@@ -2287,6 +2323,26 @@ async function renderCalendar(rotateDir = 0) {
   }).join("") || `<div class="prow"><span class="cap">이번 달엔 기간이 없어요</span></div>`;
 
   applyPickDim();
+
+  /* ★ 남은 것이 있으면 **뒤에서** 받아 온다. 화면은 이미 서 있다.
+   * ⚠️ `calendarDataFor`는 요청한 달을 전부 캐시에 넣고 돌아오므로 다음 프레임에서 `w`가 사라진다. */
+  const needFetch = months.some((o) => !calendarMonthCached(o)) || !calendarPeriodListCache;
+  if (!fill || !needFetch) return null;
+  return calendarDataFor(months).then(() => {
+    // 그 사이 더 넘겼으면 이 채우기는 **버린다** — 그 프레임이 자기 몫을 이미 걸어 뒀다.
+    if (gen !== calGen) return;
+    /* ⚠️ **채우기는 한 번이다**(`fill = false`). `calendarDataFor`는 요청한 달을 전부 캐시에
+     * 넣고 돌아오므로 여기서 한 번 더 그리면 '받는 중'이 사라진다.
+     * ★ 다시 `fill`을 켜면 **캐시가 안 차는 상황에서 프레임↔요청이 무한히 돈다** —
+     *   러너가 멈추는 자리이고, 화면에서는 배터리가 오히려 더 튼튼해 보인다(함정 8·16).
+     *   그 사이 무효화가 끼어 덜 채워졌으면 **다음 조작이 다시 그린다.** */
+    renderCalendarFrame(0, false);
+  });
+}
+
+/** 끝까지 기다리는 자리 — '받는 중' 칸이 하나도 안 남을 때까지. 제스처는 이 문을 안 쓴다. */
+async function renderCalendar(rotateDir = 0) {
+  await renderCalendarFrame(rotateDir);
 }
 
 async function renderDiaryList() {
@@ -4201,9 +4257,16 @@ function calGo(dir) {
     clearTimeout(timer);
     S.cal = addMonth(S.cal.y, S.cal.m, dir);
     calGen++;                     // 세대 증가 — 이후 조립만 유효(경합 시 최신 우선)
-    // 데이터 조립과 세대 검사가 끝난 뒤에만 pane을 회전한다. 회전·재중심화까지 한 전환이므로
-    // 그 짧은 동안은 다음 제스처를 막아 DOM 순서가 중첩되지 않게 한다.
-    run(() => renderCalendar(dir).finally(() => { calBusy = false; }));
+    /* ★★★★★ **화면이 끝나면 푼다 — 응답을 안 기다린다** (T-82 ①).
+     *
+     * `renderCalendarFrame`은 **동기**라 이 줄에 닿는 순간 회전·재중심화가 이미 끝나 있다.
+     * 빠진 달은 **두 칸 뒤**라 화면 밖이고, 그 칸은 '받는 중'으로 서 있다.
+     * ⚠️ 그동안 다음 제스처를 막을 이유가 없다 — **막으면 손가락이 아예 안 따라온다**(T-81 ②).
+     * ⚠️⚠️ **그래도 프리페치는 버리지 않는다.** 없애면 다음 칸이 매번 빈다(§금지 · 검사 2).
+     *     `run`이 그 프라미스를 받아 **끝까지 돌린다** — 함정 14의 *"프라미스를 버리는 자리"*. */
+    const filling = renderCalendarFrame(dir);
+    calBusy = false;
+    if (filling) run(() => filling);
   };
   const onEnd = (e) => { if (e.target === track) finish(); };
   const timer = setTimeout(finish, TRACK_MS + 150);   // transitionend 유실 대비

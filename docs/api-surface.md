@@ -159,7 +159,9 @@
 - `expand(rules, start, end)` → `ClassInstance[]` `{date, subject, start_time, end_time, rule_id}`
   - 창 상한 400일 — 넘으면 **빈 배열이 아니라 400**(빈 시간표와 구별돼야 한다)
   - 학기 밖 날짜는 안 만든다
-- `classesIn(env, start, end)` — `assembleToday`·`assembleDay`·`calendar`가 부르는 자리
+- `classesIn(env, start, end)` — `assembleToday`·`assembleDay`가 부르는 자리
+  - ⚠️ **`calendar`는 2026-09-22(T-82 ③)부터 안 부른다** — 캘린더 화면이 `classes`를 한 곳에서도
+    안 읽는데 달을 넘길 때마다 `timetableRules` 질의 하나가 헛돌았다. 셀에 수업을 띄우기로 하면 여기부터 다시 연다.
   - ⚠️ 응답에서 `events`와 **다른 키(`classes`)** 다: 저쪽은 고칠 수 있는 원본, 이쪽은 파생이다
 
 ### calsync.ts — 폰 캘린더 미러 (0020 · ADR-029 · T-52)

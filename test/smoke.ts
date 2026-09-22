@@ -2791,7 +2791,20 @@ const ttSaved = await api("PUT", "/api/timetable",
 /* 4 ★ **없는 것을 세는 검사** — 규칙만 남고 인스턴스는 어디에도 안 생겼는가.
  *   창을 넓게 열어 전개시킨 **뒤에** 센다: 전개가 행을 만들면 여기서 늘어난다. */
 const ttEventsBefore = (raw.prepare("SELECT COUNT(*) AS n FROM events").get() as any).n;
-const ttWide = await api("GET", `/api/calendar?start=${addDays(D, -28)}&end=${addDays(D, 28)}`);
+/* ⚠️ **전개시키는 길이 `/api/calendar`에서 `/api/days/:date`로 옮겨졌다** (T-82 ③ · 2026-09-22).
+ * 캘린더 응답에서 `classes`를 뺐다 — 화면이 한 곳에서도 안 읽었고 달마다 질의 하나가 헛돌았다.
+ * ★ **이 검사들이 세는 것은 안 바뀐다**: 규칙이 창만큼 전개되는가 · 그러면서 행이 안 생기는가.
+ *   `days/:date`는 **여전히 `classesIn`을 지나므로** 같은 것을 센다(`services/daily.ts`의 `assembleDay`).
+ * ⚠️ 옮기지 않았으면 4가 **저절로 참**이 됐다 — 전개를 안 시키고 "행이 안 늘었다"를 세는 것이다. */
+const ttClassesIn = async (from: string, days: number) => {
+  const out: any[] = [];
+  for (let i = 0; i < days; i++) {
+    const r = await api("GET", `/api/days/${addDays(from, i)}`);
+    out.push(...(r.json?.classes ?? []));
+  }
+  return out;
+};
+const ttWide = await ttClassesIn(addDays(D, -28), 57);
 const ttRuleRows = (raw.prepare("SELECT COUNT(*) AS n FROM timetable_rules").get() as any).n;
 const ttEventsAfter = (raw.prepare("SELECT COUNT(*) AS n FROM events").get() as any).n;
 // ⚠️ **여기서 "전개가 일어났는가"를 같이 세지 않는다** — 그건 5의 몫이다. 겹쳐 세면
@@ -2799,20 +2812,20 @@ const ttEventsAfter = (raw.prepare("SELECT COUNT(*) AS n FROM events").get() as 
 //    4만 보면 *"아무것도 전개 안 하는 구현"*이 통과하는 것은 맞고, 그래서 5가 짝으로 선다.
 ok("4 ★ 규칙만 저장된다 — 전개해도 인스턴스 행이 안 생긴다 (없는 것을 세는 검사)",
   ttSaved.status === 200 && ttRuleRows === 8 && ttEventsAfter === ttEventsBefore,
-  `규칙행=${ttRuleRows} events=${ttEventsBefore}→${ttEventsAfter} 전개=${ttWide.json?.classes?.length}`);
+  `규칙행=${ttRuleRows} events=${ttEventsBefore}→${ttEventsAfter} 전개=${ttWide.length}`);
 
 /* 5 ★ 4의 짝 — **전개가 실제로 일어나는가.** 4만 보면 *"아무것도 전개 안 하는 구현"*이 통과한다.
  *   한 주(월~일) 창에는 정확히 8칸이 있어야 하고, **각 인스턴스의 시각이 자기 규칙과 같아야** 한다. */
 const ttMon = mondayOf(D);
-const ttWeek = await api("GET", `/api/calendar?start=${ttMon}&end=${addDays(ttMon, 6)}`);
+const ttWeek = await ttClassesIn(ttMon, 7);
 const ttRules = (await api("GET", "/api/timetable")).json.rules as any[];
-const ttTimesMatch = (ttWeek.json?.classes ?? []).every((c: any) => {
+const ttTimesMatch = ttWeek.every((c: any) => {
   const r = ttRules.find((x) => x.id === c.rule_id);
   return !!r && r.start_time === c.start_time && r.end_time === c.end_time;
 });
 ok("5 ★ 규칙이 창 범위만큼 전개된다 — 한 주 8칸 · 시각이 규칙 그대로 (4의 짝)",
-  ttWeek.status === 200 && ttWeek.json.classes.length === 8 && ttTimesMatch,
-  `한주=${ttWeek.json?.classes?.length} 시각일치=${ttTimesMatch}`);
+  ttWeek.length === 8 && ttTimesMatch,
+  `한주=${ttWeek.length} 시각일치=${ttTimesMatch}`);
 
 /* 6 ★ **이 티켓이 존재하는 이유.** 포털 그리드는 시작 칸만 그려 길이를 말하지 않는데,
  *   같은 과목이 요일마다 길이가 다르다. 같은 길이로 뭉개는 구현이 통과하면
@@ -2824,10 +2837,10 @@ ok("6 같은 과목이 요일마다 다른 길이를 갖는다 (월 3시간 · �
   `규칙 월=${ttLen(ttRules, 1)} 목=${ttLen(ttRules, 4)}`);
 
 // 7 학기 밖 — 방학에 수업이 뜨면 그 화면 전체가 못 믿을 것이 된다.
-const ttOut = await api("GET", `/api/calendar?start=${addDays(ttTermEnd, 7)}&end=${addDays(ttTermEnd, 13)}`);
+const ttOut = await ttClassesIn(addDays(ttTermEnd, 7), 7);
 ok("7 학기 범위 밖 날짜에는 안 뜬다",
-  ttOut.status === 200 && ttOut.json.classes.length === 0,
-  `밖=${ttOut.json?.classes?.length}`);
+  ttOut.length === 0,
+  `밖=${ttOut.length}`);
 
 /* 8 ★ **학기 범위가 입력에서 온다.** 코드에 박으면 다음 학기에 조용히 틀린 날짜로 전개된다.
  *   행동(범위 없이 보내면 거절)과 원문(서비스에 날짜 리터럴이 없다)을 **함께** 센다 —
@@ -2838,6 +2851,24 @@ const ttDateLiteral = /["'`]\d{4}-\d{2}-\d{2}["'`]|["'`]\d{2}-\d{2}["'`]/.test(t
 ok("8 ★ 학기 범위가 입력에서 온다 — 거절하고, 코드에 날짜가 없다 (스캐너)",
   ttNoTerm.status === 400 && !ttDateLiteral,
   `범위없음=${ttNoTerm.status} 날짜리터럴=${ttDateLiteral}`);
+
+/* ── T-82 ③ — 안 읽는 것을 안 보낸다 ────────────────────────────────
+ *
+ * `/api/calendar`가 `classes`를 만들어 보냈는데 **캘린더 화면은 한 곳에서도 안 읽었다**
+ * (`public/app.js`의 `.classes`는 `/api/today`와 `/api/days/:date`뿐이다).
+ * 달을 넘길 때마다 `db.timetableRules` 질의 하나와 그 바이트가 헛돌았다 — T-82가 노린 왕복이다.
+ *
+ * ⚠️ **읽는 둘은 그대로다.** 그래서 짝으로 센다 — 한쪽만 보면
+ *    *"`classesIn`을 통째로 없앤"* 구현이 초록으로 통과한다. */
+const t82Cal = await api("GET", `/api/calendar?start=${ttMon}&end=${addDays(ttMon, 6)}`);
+const t82Day = await api("GET", `/api/days/${ttMon}`);
+const t82Today = await api("GET", "/api/today");
+ok("T-82 ③ ★ /api/calendar 응답에 classes 가 없다 — 안 읽는 것을 안 보낸다",
+  t82Cal.status === 200 && !("classes" in (t82Cal.json ?? {})),
+  `키=${Object.keys(t82Cal.json ?? {}).join(",")}`);
+ok("T-82 ③ ★ 그런데 읽는 둘에는 그대로 있다 (위의 짝 — classesIn 을 없앤 것이 아니다)",
+  Array.isArray(t82Day.json?.classes) && Array.isArray(t82Today.json?.classes),
+  `days=${JSON.stringify(t82Day.json?.classes?.length)} today=${JSON.stringify(t82Today.json?.classes?.length)}`);
 
 // ── Level 2가 밤마다 다른 말을 한다 (T-60 · ADR-047) ─────────
 //
@@ -2853,11 +2884,21 @@ const t60Sched = (await api("GET", "/api/guard/schedule")).json;
 const t60Wake: any[] = t60Sched.wake ?? [];
 
 /* 1 **재료가 시각과 제목을 싣는다.** 기대값은 구현에서 베끼지 않고 **다른 엔드포인트**
- *   (`/api/calendar`)가 준 그 창의 수업·일정에서 만든다 — 두 경로가 같은 말을 해야 한다.
+ *   (`/api/days/:date`)가 준 그 창의 수업·일정에서 만든다 — 두 경로가 같은 말을 해야 한다.
+ *   ⚠️ **옛날엔 `/api/calendar` 였다** — T-82 ③이 거기서 `classes`를 뺐다(화면이 안 읽었다).
+ *      `days/:date`도 `assembleDay` → `classesIn`을 지나므로 **세는 것은 그대로**이고,
+ *      `guard/schedule`과 **다른 엔드포인트**라는 이 검사의 전제도 그대로다.
  *   ⚠️ 창을 D+8~D+14로 잡는 이유: 오늘·내일은 실제 시계에 따라 이미 지난 칸이 섞이는데,
  *      `wake`는 **지난 것을 안 싣는다**(그것이 규칙이다). 창이 앞이면 검사가 시각에 의존한다. */
 const t60From = addDays(D, 8), t60To = addDays(D, 14);
-const t60Cal = (await api("GET", `/api/calendar?start=${t60From}&end=${t60To}`)).json;
+const t60Days = [];
+for (let i = 0; addDays(t60From, i) <= t60To; i++) {
+  t60Days.push((await api("GET", `/api/days/${addDays(t60From, i)}`)).json);
+}
+const t60Cal = {
+  classes: t60Days.flatMap((d: any) => (d?.classes ?? []).map((c: any) => ({ ...c, date: c.date ?? d.date }))),
+  events: t60Days.flatMap((d: any) => (d?.events ?? []).map((e: any) => ({ ...e, date: e.date ?? d.date }))),
+};
 const t60Want = new Map<string, { hm: string; title: string }>();
 const t60Bid = (date: string, hm: string, title: string) => {
   const cur = t60Want.get(date);
@@ -3200,7 +3241,8 @@ const T62_CONST = T62_COMMUTE + T62_PREP;
 /* 보호 일정을 하나 세운다. **그 날 첫 약속이어야** 아침 재료에 실려 4가 성립한다 —
  * 시각은 그 날 실제 수업에서 **상대로** 잡는다(고정 시각 금지 · 함정 12). */
 const t62Day = addDays(D, 16);
-const t62Cal = (await api("GET", `/api/calendar?start=${t62Day}&end=${t62Day}`)).json;
+// ⚠️ `/api/calendar`가 아니라 `days/:date`다 — T-82 ③이 캘린더 응답에서 `classes`를 뺐다.
+const t62Cal = (await api("GET", `/api/days/${t62Day}`)).json;
 const t62MinOf = (hm: string) => Number(hm.slice(0, 2)) * 60 + Number(hm.slice(3, 5));
 const t62First = Math.min(12 * 60,
   ...(t62Cal.classes ?? []).map((c: any) => t62MinOf(c.start_time)),
@@ -3705,7 +3747,9 @@ await api("PUT", "/api/settings/wake_prep_min", { value: String(T71_P) });
 
 /** 그 날 **가장 이른 약속**이어야 wake 칸에 실린다. 시각은 달력에서 **상대로** 잡는다(함정 12). */
 const t71Slot = async (date: string) => {
-  const cal = (await api("GET", `/api/calendar?start=${date}&end=${date}`)).json;
+  // ⚠️ `/api/calendar`가 아니라 `days/:date`다 — T-82 ③이 캘린더 응답에서 `classes`를 뺐다.
+  //    ★ 여기서 안 옮기면 그 날 수업보다 **늦은** 시각이 잡혀 이 일정이 '가장 이른 약속'을 잃는다.
+  const cal = (await api("GET", `/api/days/${date}`)).json;
   const hm = (s: string) => Number(s.slice(0, 2)) * 60 + Number(s.slice(3, 5));
   const first = Math.min(12 * 60,
     ...(cal.classes ?? []).map((c: any) => hm(c.start_time)),

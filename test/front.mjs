@@ -1522,6 +1522,112 @@ ok("왼쪽으로 세 번 연속 넘겨도 각 pane과 달이 맞음", ev("S.cal.
   && panesAligned(beforeThree.y, beforeThree.m), paneYms().join(" / "));
 await ev(`(async()=>{ S.cal={y:${y0},m:${m0}}; calGen++; await renderCalendar(); })()`);
 ok("되돌리기 — 원래 달", ev("S.cal.m") === m0 && ev("S.cal.y") === y0, String(ev("S.cal.m")));
+
+/* ── T-82 — 보이는 것이 준비되면 푼다 ──────────────────────────────────────
+ *
+ * ★★★ 검사 2가 이 블록의 핵심이다. *"프리페치를 아예 지운다"* 는 구현은
+ * 1·3·4·5·6을 **전부 초록으로 통과하고 화면은 더 빨라진다** — 다음 칸이 빌 때만 드러난다.
+ * ⚠️ 그래서 *"안 기다린다"*(1)에는 반드시 *"그래도 보낸다"*(2)가 짝으로 붙는다.
+ */
+console.log("\n[T-82 캘린더 — 보이는 것이 준비되면 푼다]");
+
+/* 창이 [-2…+2]라 한 칸 넘기면 +3이 빠진다. 그 요청을 **우리가 붙잡아** 둔 채로 잰다.
+ * ⚠️ **캐시를 먼저 비우고 딱 다섯 달만 채운다** — 앞 블록이 여섯 달을 오가며 창 밖까지
+ *    데워 놨다. 그대로 두면 한 칸 넘겨도 빠지는 달이 없어 **검사 넷이 저절로 참**이 된다
+ *    (붙잡을 요청이 0건이면 1도 2도 4도 아무것도 안 센다 · `AGENT-CHAIN` §8). */
+ev("invalidateCalendarCache()");
+await capped("T-82 준비", ev(`(async()=>{ S.cal={y:${y0},m:${m0}}; calGen++; await renderCalendar(); })()`));
+ok("0 ★ 준비: 창 다섯 달만 캐시에 있다 (아래 넷의 전제 — 빠질 달이 실제로 있다)",
+  ev("calendarMonthCache.size") === 5, `캐시 ${ev("calendarMonthCache.size")}달`);
+ev(`(() => {
+  window.__t82 = { waiters: [], calls: [] };
+  window.__t82orig = Api.calendar;                       // ⚠️ 505줄의 세는 래퍼다 — 이것으로 되돌린다
+  /* ⚠️ **여기서 직접 센다.** window.__calendarCalls 는 __t82orig 가 실제로 불릴 때, 곧
+   *    **놓아 준 뒤에야** 는다 — 붙잡고 있는 동안 그것을 읽으면 언제나 0이고,
+   *    그러면 검사 2가 "프리페치를 지운 구현"과 구별을 못 한다.
+   *    (⚠️ 이 주석은 템플릿 리터럴 안이다 — 백틱을 쓰면 문자열이 거기서 끝난다.) */
+  Api.calendar = (start, end) => new Promise((res, rej) => {
+    window.__t82.calls.push({ start, end });
+    window.__t82.waiters.push(() => window.__t82orig(start, end).then(res, rej));
+  });
+  window.__t82.releaseAll = () => Promise.all(window.__t82.waiters.splice(0).map((f) => f()));
+})()`);
+
+const t82Before = ev("S.cal.m");
+w.calGo(1);
+// 전환(TRACK_MS)과 유실 대비 타이머까지만 기다린다 — **응답은 여전히 안 왔다**
+const t82Freed = await until(() => ev("calBusy") === false, 3000);
+const t82Held = ev("window.__t82.waiters.length");
+
+// 두 번째 제스처 — 첫 번째의 응답이 아직 매달려 있는 채로 들어간다
+const t82Mid = ev("S.cal.m");
+w.calGo(1);
+const t82Moved = await until(() => ev("S.cal.m") !== t82Mid, 3000);
+const t82Want2 = testAddMonth(y0, m0, 2);
+
+/* ⚠️ **여기서 *"요청이 나갔는가"* 를 같이 세지 않는다 — 그건 2의 몫이다.**
+ * 처음엔 `t82Held >= 1`을 끼워 놨는데, 그러자 **M2(프리페치를 지운다)가 1까지 죽여**
+ * 1이 자기 몫(*"제스처가 받아들여지는가"*)을 못 셌다. 겹쳐 세면 어느 검사가 무엇을
+ * 지키는지 못 가른다(T-58 §보고 검사 4가 같은 자리에서 배운 것). */
+ok("1 ★ 한 칸 넘긴 직후 다음 제스처가 받아들여진다 — 응답을 안 기다린다",
+  t82Freed && t82Moved && ev("S.cal.y") === t82Want2.y && ev("S.cal.m") === t82Want2.m,
+  `freed ${t82Freed} / 붙잡은 요청 ${t82Held} / ${t82Before}→${ev("S.cal.m")} (기대 ${t82Want2.m})`);
+
+const t82Calls = ev("window.__t82.calls.slice()");
+const t82WantStart = ev(`calendarMonthStart(addMonth(${y0},${m0},3))`);
+/* ⚠️ **범위가 딱 그 달일 것을 요구하지 않는다 — 그 달을 *덮으면* 된다.**
+ * 처음엔 `start === 기대`로 썼는데, 그러자 **M3(캐시를 안 쓰고 매번 받는다)가 2까지 죽였다**
+ * (다섯 달을 통째로 받으니 start가 달랐다). 2가 지는 것은 *"보내긴 보내는가"* 하나이고,
+ * *"캐시를 쓰는가"* 는 3의 몫이다. */
+const t82WantEnd = ev(`calendarMonthEnd(addMonth(${y0},${m0},3))`);
+ok("2 ★★ 그래도 프리페치 요청은 나간다 — 안 기다릴 뿐 지운 것이 아니다",
+  t82Calls.length >= 1
+    && t82Calls.some((c) => c.start <= t82WantStart && c.end >= t82WantEnd),
+  `요청 ${t82Calls.length}건 / ${JSON.stringify(t82Calls)} (빠진 달 ${t82WantStart}~${t82WantEnd})`);
+
+const t82WaitPanes = [...w.document.querySelectorAll("#cal-track .calpane[data-wait]")];
+ok("4 ★ 프리페치가 안 온 칸이 '받는 중'으로 읽힌다 (DOM 상태)",
+  t82WaitPanes.length >= 1, `${t82WaitPanes.length}칸`);
+ok("5 ★ 그 칸이 빈 칸과 다르다 — 6주가 없는데 말은 하고 있다",
+  t82WaitPanes.length >= 1
+    && t82WaitPanes.every((p) => p.querySelectorAll(".cal-row").length === 0
+      && p.textContent.trim().length > 0),
+  t82WaitPanes.map((p) => `${p.dataset.ym}:"${p.textContent.trim()}"`).join(" / "));
+
+// ★ 놓아 주면 그 칸이 채워진다 — `run(() => filling)` 이 프라미스를 안 버렸다는 증거다(함정 14)
+await capped("T-82 프리페치 정산", ev("window.__t82.releaseAll()"));
+const t82Filled = await until(() =>
+  w.document.querySelectorAll("#cal-track .calpane[data-wait]").length === 0
+  && [...w.document.querySelectorAll("#cal-track .calpane")].every((p) => p.querySelectorAll(".cal-row").length === 6), 5000);
+ok("4b ★ 받으면 '받는 중'이 사라지고 그 칸에 6주가 선다 — 프리페치를 버리지 않았다",
+  t82Filled, paneYms().join(" / "));
+
+// 되돌아가는 길은 원래 캐시에 있다 — 여기서 요청이 나가면 캐시를 안 쓰는 것이다
+ev("(() => { Api.calendar = window.__t82orig; })()");
+const t82BackFrom = ev("window.__calendarCalls.length");
+w.calGo(-1);
+await until(() => ev("calBusy") === false && ev("S.cal.m") === t82Mid, 3000);
+await sleep(300);
+ok("3 ★ 캐시에 있는 달로 되돌아가면 요청이 0건이다",
+  ev("window.__calendarCalls.length") === t82BackFrom,
+  `${t82BackFrom}→${ev("window.__calendarCalls.length")}`);
+
+/* 6 — 지속 시간 상수는 한 곳이다. ⚠️ 탭 캐러셀과 **공유하는** 값이라 캘린더만 줄이면 두 벌이 된다.
+ * ⚠️ 소스를 문자열로 읽어 세는 검사는 `\r`를 먼저 걷는다 (함정 16). */
+const t82Src = appJs.replace(/\r/g, "");
+const t82Defs = t82Src.match(/const\s+TRACK_MS\s*=/g) || [];
+ok("6 ★ TRACK_MS 가 한 곳에만 있고 안 바뀌었다 (탭과 공유 — 두 벌 금지)",
+  t82Defs.length === 1 && /const\s+TRACK_MS\s*=\s*300\b/.test(t82Src)
+    && !/transform\s+\d+ms/.test(t82Src),
+  `정의 ${t82Defs.length}곳`);
+// ★ 그 스캐너가 살아 있는가 — 알려진 정답 둘을 먹인다 (함정 17 · AGENT-CHAIN §8)
+ok("6b ★ 6의 스캐너가 살아 있다 — 물어야 하는 것 하나를 먹였다",
+  ("const TRACK_MS = 300, X".match(/const\s+TRACK_MS\s*=/g) || []).length === 1
+    && !/const\s+TRACK_MS\s*=\s*300\b/.test("const TRACK_MS = 200, X")
+    && /transform\s+\d+ms/.test("transition: transform 200ms ease"));
+
+await capped("T-82 정리", ev(`(async()=>{ S.cal={y:${y0},m:${m0}}; calGen++; await renderCalendar(); })()`));
+
 w.switchTab("today"); await sleep(300);
 
 // ② 일정 추가 — 팝업 하나 안에서 시각까지 (시트를 겹쳐 쌓지 않는다)

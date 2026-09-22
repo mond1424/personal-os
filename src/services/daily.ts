@@ -249,10 +249,15 @@ export async function calendar(env: Env, start: string, end: string) {
     db.eventsRange(env, start, end),
     db.calMemos(env, start, end),
   ]);
+  /* ⚠️ **`classes`를 안 싣는다** (T-82 ③ · 2026-09-22).
+   * T-58이 세 조회(`today`·`days/:date`·여기)에 한꺼번에 얹었는데 **캘린더 화면은 한 곳에서도
+   * 안 읽는다** — 달을 넘길 때마다 `db.timetableRules` 질의 하나와 그 바이트가 헛돌았다.
+   * ★ 앞의 둘은 그대로다: `assembleToday`·`assembleDay`는 **읽는 곳이 있다**(`app.js`의 `#td-classes`·날짜 팝업).
+   * ⚠️ **T-58 §확인 절차의 *"캘린더에서 다음 주를 봐도 수업이 있다"* 는 프런트가 끝내 안 지었다** —
+   *    이 줄은 그 절반이었다. 셀에 수업을 띄우기로 하면 **여기부터 다시 연다**(T-82 §보고 → Cowork). */
   return {
     periods: periods.results, entries: entries.results,
     diary: diary.results, events: evs.results, memos: memos.results,
-    classes: await classesIn(env, start, end), // 창만큼만 전개 — 저장 없음 (T-58)
   };
 }
 
