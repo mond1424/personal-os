@@ -18,7 +18,9 @@ const diffDaysStr = (a, b) =>
   Math.round((Date.parse(a + "T00:00:00Z") - Date.parse(b + "T00:00:00Z")) / 864e5);
 const md = (d) => `${+d.slice(5, 7)}/${+d.slice(8, 10)}`;
 const dowIdx = (d) => new Date(d + "T00:00:00Z").getUTCDay();
-const dlabel = (d) => `${+d.slice(5, 7)}월 ${+d.slice(8, 10)}일 ${"일월화수목금토"[dowIdx(d)]}`;
+// 한 곳이다 — `dlabel`이 요일을 얹어 쓴다. 두 벌을 두면 한쪽만 바뀐다.
+const mdKo = (d) => `${+d.slice(5, 7)}월 ${+d.slice(8, 10)}일`;
+const dlabel = (d) => `${mdKo(d)} ${"일월화수목금토"[dowIdx(d)]}`;
 const DOW_FULL = ["일요일", "월요일", "화요일", "수요일", "목요일", "금요일", "토요일"];
 const hm = (ts) => (ts && ts.length >= 16 ? ts.slice(11, 16) : ts || "—");
 function isoNowLocal() {
@@ -2448,6 +2450,12 @@ function assignDate(k) {
       await Api.schedule(p.id, k);
       exitPick();
       await Promise.all([refreshToday(), renderCalendar()]);
+      /* ★★ **어디로 갔는지 말한다** (T-83 ② · ADR-048 계열 — *"간 곳을 안 말하면 안 간 것이다"*).
+       * 대기에서 날짜를 정하면 **대기 목록에서 빠지고** 간 곳은 예정 *"이후"* 구간이라
+       * 먼 날짜일수록 스크롤 밖이다 — 화면이 아무 말도 안 하면 *"사라졌다"* 가 맞는 관찰이 된다.
+       * ⚠️ **고정 문구는 아무것도 안 말한다** — 그 날짜를 담는다.
+       * ⚠️ 따라가게 스크롤하지 않는다(`scrollIntoView` 금지 · 함정 1) — **말해 주는 것으로 충분하다.** */
+      toast(`${mdKo(k)}로 옮겼어요`);
       openDay(k);
     });
   }

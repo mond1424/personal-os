@@ -145,6 +145,33 @@ export async function status(env: Env, t: TimeCtx) {
  *
  * **보호 규칙은 붙이지 않는다** — 별개의 결정이고 ADR-030의 나머지 절반이다.
  */
+/**
+ * ★★★ **할 일의 이름은 할 일이어야 한다** (T-83 ① · ADR-048 계열).
+ *
+ * ```
+ * event.title   "학기과제 기한"    ★ 맞다. 마감 그 자체이고, 그것이 사실이다
+ * task.title    "학기과제 기한"    ⚠️ "기한을 한다" 가 된다
+ * ```
+ *
+ * ★★ **T-78 이 event 와 task 를 가른 것과 같은 자리다** — *"마감은 고정이고 할 일은 이동한다."*
+ * 같은 문자열을 쓰면 둘 중 하나가 반드시 틀린다.
+ *
+ * ⚠️ **끝의 `기한` 하나만 뗀다.** *"제출"·"문제"* 를 떼는 것은 **해석이고 근거가 없다.**
+ * ⚠️ **`summary` 저장과 `events.title` 은 원문 그대로다**(T-74) — 근거가 *"사용자가 uclass 에서
+ *    그 제목으로 찾는다"* 였고, **찾는 자리는 달력이다.**
+ *
+ * ★★ **여기가 자리인 이유** — `createTask` 안에서 다듬으면 **손으로 만든 task 까지** 바뀐다.
+ *    다듬는 근거는 *"수집한 마감에서 왔다"* 하나이므로 **수집분만**이다(티켓 §금지).
+ *    그리고 `task.title` 은 자유 변경 칸이라(`CLAUDE.md` §아키텍처 원칙 — id 불변 / title 자유)
+ *    만들 때 한 번 다듬는 것은 **되돌릴 수 있는 해석**이다.
+ */
+const DEADLINE_SUFFIX = "기한";
+export function taskTitleOf(summary: string): string {
+  const s = summary.trim();
+  if (!s.endsWith(DEADLINE_SUFFIX)) return summary;                 // 끝이 아니면 한 글자도 안 바꾼다
+  return s.slice(0, -DEADLINE_SUFFIX.length).trim() || summary;     // 떼면 비는 제목은 원문을 쓴다
+}
+
 export const PAST_CHOICES = ["done", "todo", "skip"] as const;
 export type PastChoice = (typeof PAST_CHOICES)[number];
 
@@ -226,8 +253,10 @@ export async function accept(env: Env, t: TimeCtx, id: string, choice?: string) 
    * ★★ **처음엔 `t.d`를 봤고, 그래서 변이 P5(예정일을 지난 마감일로 넣는다)가 아무 검사도
    *    안 죽였다** — `when`을 안 읽으니 바꿔도 결과가 같았다. **읽지 않는 값은 지킬 수 없다.** */
   const closed = past && (await db.getDaily(env, when))?.status === "closed";
+  // ★ **제목만 다듬는다** — `events.title`(위 `ev`)과 `summary` 저장은 원문 그대로다 (T-83 ①).
+  const taskTitle = taskTitleOf(row.summary);
   const task = await tasks.createTask(
-    env, t, closed ? { title: row.summary } : { title: row.summary, date: when },
+    env, t, closed ? { title: taskTitle } : { title: taskTitle, date: when },
   );
   await db.stAcceptCollected(env, id, ev.id, task.id).run();
   return {

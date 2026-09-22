@@ -5152,6 +5152,33 @@ ok("8 ★ 조각이 빠진 밤에도 두 칸 띄기가 남지 않는다 (7의 �
   [t77Zero, t76Mk(3, null)].every((b) => typeof b === "string" && b.length > 0 && !/ {2}/.test(b)),
   `0분밤="${t77Zero}" 아침없는밤="${t76Mk(3, null)}"`);
 
+/* ── T-83 ② — 날짜를 정하면 어디로 갔는지 말한다 ────────────────────────
+ *
+ * 대기에서 날짜를 정하면 **대기 목록에서 빠지고** 간 곳은 예정 *"이후"* 구간이라
+ * 먼 날짜일수록 스크롤 밖이다. 화면이 아무 말도 안 하면 *"사라졌다"* 가 맞는 관찰이 된다.
+ * ⚠️ **8이 없으면 7이 *"옮겼어요"* 로도 통과한다** — 그게 지금과 같은 상태다.
+ * ⚠️ 날짜는 **상대로** 잡는다(함정 12) · 기대 문구는 그 날짜에서 만든다(함정 15).
+ */
+console.log("\n[T-83 날짜를 정하면 어디로 갔는지 말한다]");
+w.closeAll();
+const t83Id = (await capped("T-83 대기 task", ev(`Api.createTask({title:"T-83 대기에서 날짜 정하기"})`))).id;
+const t83D = ev("addDaysStr(S.today.date, 5)");   // 오늘이 아니다 — Level 4 분기를 안 탄다
+ev(`startPick({mode:"schedule", id:"${t83Id}", title:"T-83 대기에서 날짜 정하기"})`);
+await until(() => ev("!!S.pick"), 3000);
+// ⚠️ 앞 검사가 남긴 문구를 자기 것으로 세지 않는다 — 비우고 시작한다(함정 14의 관측 문제와 같은 자리)
+ev(`$("#toast").textContent = ""; $("#toast").style.display = "none";`);
+// ★ `assignDate`의 비-defer 분기는 `run(...)`을 **돌려준다** — 기다릴 계약이 있다(함정 14)
+await capped("T-83 날짜 확정", w.assignDate(t83D));
+await until(() => txt("#toast").length > 0, 3000);
+
+const t83Toast = txt("#toast");
+ok("7 ★ 대기에서 날짜를 정하면 토스트가 뜬다",
+  t83Toast.length > 0 && $("#toast").style.display !== "none", `"${t83Toast}"`);
+ok("8 ★ 그 토스트가 정한 날짜를 담는다 (고정 문구가 아니다)",
+  t83Toast.includes(`${+t83D.slice(5, 7)}월 ${+t83D.slice(8, 10)}일`),
+  `"${t83Toast}" (기대 ${+t83D.slice(5, 7)}월 ${+t83D.slice(8, 10)}일)`);
+w.closeAll();
+
 console.log("\n[부팅 · 연결 실패 복구]");
 ok("로드 후 부팅 오버레이 닫힘", !$("#boot").classList.contains("on"));
 

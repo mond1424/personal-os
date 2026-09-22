@@ -2317,17 +2317,27 @@ ok("3b ★ 옛 accepted 행(task_id가 NULL)을 다시 눌러도 task를 안 만
   && t78Link(t78OldId)?.k === null,
   `${JSON.stringify(t78OldRes)} tasks=${t78Tasks("T-78 이전에 수락한 것")} task_id=${t78Link(t78OldId)?.k}`);
 
-/* 4 ★ **제목은 `summary` 원문 그대로다.** 다듬는 순간 그것이 해석이고, 개강 첫날 틀린다
- *   (T-42 결정 ② · T-74 와 같은 규칙). `RAW_TITLE`에 괄호·물결·날짜가 일부러 들어 있다.
- *   ★ **잇는 칸을 타고 전수로 센다** — *"그 task 의 제목이 X 다"* 로 쓰면 task 가 없을 때도
- *      죽어서 1의 명제를 업는다. **원문과 다른 제목을 가진 것이 하나도 없는가**로 본다. */
-const t78Trimmed = () => (raw.prepare(
-  `SELECT COUNT(*) AS n FROM tasks t
-     JOIN collected_items c ON c.task_id = t.id
-    WHERE t.title <> c.summary`).get() as any).n;
-ok("4 ★ task 제목이 summary 원문 그대로다 — 다듬지 않는다 (전수)",
-  t78Trimmed() === 0,
-  `원문과다른제목=${t78Trimmed()} 이번건="${
+/* 4 ★★★ **명제가 뒤집혔다 — T-83 ①이 이 줄을 고쳤다** (2026-09-22 · 수는 안 늘었다).
+ *   T-78은 *"원문 그대로"* 였다. 근거는 T-74의 *"다듬으면 그것이 해석이다"* 였는데,
+ *   **그 규칙은 `summary` 저장과 `events.title` 의 것이다** — 사용자가 uclass 에서 그 제목으로
+ *   찾고 **찾는 자리는 달력**이기 때문이다. `task.title` 은 *"내가 무엇을 하는가"* 이고,
+ *   *"…기한"* 을 그대로 쓰면 **"기한을 한다"** 가 된다(T-83 §①).
+ *   ★ **세는 꼴은 그대로다** — 잇는 칸을 타고 **전수**로 본다. *"그 task 의 제목이 X 다"* 로 쓰면
+ *      task 가 없을 때도 죽어서 1의 명제를 업는다.
+ *   ⚠️ **기대값을 구현에서 안 베낀다**(함정 15) — 티켓이 적은 규칙을 여기서 다시 쓴다:
+ *      끝의 `기한` 하나만 · 끝이 아니면 그대로 · 떼면 비면 원문. */
+const t83Want = (summary: string) => {
+  const s = summary.trim();
+  if (!s.endsWith("기한")) return summary;
+  return s.slice(0, -2).trim() || summary;
+};
+const t83Pairs = () => raw.prepare(
+  `SELECT t.title AS ti, c.summary AS su FROM tasks t
+     JOIN collected_items c ON c.task_id = t.id`).all() as any[];
+const t83Wrong = () => t83Pairs().filter((r) => r.ti !== t83Want(r.su));
+ok("4 ★ task 제목은 summary 에서 끝의 '기한'만 뗀 것이다 (전수 · T-83 ①이 명제를 뒤집었다)",
+  t83Wrong().length === 0,
+  `어긋난것=${JSON.stringify(t83Wrong())} 이번건="${
     (raw.prepare("SELECT title AS t FROM tasks WHERE id=?").get(t78Row?.k) as any)?.t}"`);
 
 /* 5 회귀 — **event 는 전과 똑같다.** task 를 얹으면서 달력 쪽을 건드리지 않았는가.
@@ -2351,6 +2361,61 @@ const nAfter = (raw.prepare("SELECT (SELECT COUNT(*) FROM tasks) AS t, (SELECT C
 ok("6 ★ dismiss는 task도 event도 안 만든다 (경계)",
   nAfter.t === nBefore.t && nAfter.e === nBefore.e && t78Link(t78DisId)?.k === null,
   `tasks ${nBefore.t}→${nAfter.t} · events ${nBefore.e}→${nAfter.e}`);
+
+/* ── T-83 ① — 할 일은 할 일의 이름을 갖는다 ──────────────────────────────
+ *
+ * ★★ **2가 이 블록에서 제일 중요하다.** *"둘 다 다듬는"* 구현이 1을 초록으로 통과하고
+ *    **달력에서 마감이 마감처럼 안 읽히게 된다** — 화면에서는 오히려 깔끔해 보인다.
+ * ⚠️ **4가 없으면 *"아무 데서나 '기한'을 지우는"* 구현이 통과한다** — 표본이 전부
+ *    `"…기한"` 으로 끝나서 1·2·3이 전부 초록이다(T-74 실측 5/5).
+ *
+ * 전수 검사(끝의 '기한'만 뗐는가)는 위 §T-78 검사 4가 이미 진다 — 여기선 **경계**를 센다. */
+console.log("\n[T-83] 할 일은 할 일의 이름을 갖는다");
+
+const t83Accept = async (uid: string, summary: string, days: number) => {
+  putCollected(uid, summary, atPlus(days * DAY));
+  const id = (raw.prepare("SELECT id AS i FROM collected_items WHERE uid=?").get(uid) as any).i;
+  const res = (await api("POST", `/api/collected/${id}/accept`)).json;
+  const task = res.task_id
+    ? (raw.prepare("SELECT title AS t FROM tasks WHERE id=?").get(res.task_id) as any) : null;
+  const ev = res.event_id
+    ? (raw.prepare("SELECT title AS t FROM events WHERE id=?").get(res.event_id) as any) : null;
+  const row = raw.prepare("SELECT summary AS s FROM collected_items WHERE id=?").get(id) as any;
+  return { id, res, taskTitle: task?.t ?? null, evTitle: ev?.t ?? null, summary: row?.s ?? null };
+};
+
+/* ⚠️ **1의 표본에는 '기한'이 끝에만 있다** — 앞에도 넣으면 4의 변이(아무 데서나 지운다)가
+ *    1까지 죽여 **1이 자기 몫을 못 센다**. 그 일은 아래 4의 표본이 진다(T-58 §보고 검사 4와 같은 자리). */
+const T83_TAIL = "벡터대수학 3주차 연습문제 제출 기한";
+const t83a = await t83Accept("t83-tail", T83_TAIL, 4);
+
+ok("1 ★ 수락하면 task 제목에 끝의 '기한'이 없다",
+  t83a.taskTitle === "벡터대수학 3주차 연습문제 제출",
+  `task="${t83a.taskTitle}"`);
+
+ok("2 ★★ 그런데 event 제목은 그대로 '…기한'이다 (1의 짝 — 달력엔 마감이 맞다)",
+  t83a.evTitle === T83_TAIL, `event="${t83a.evTitle}"`);
+
+ok("3 ★ collected_items.summary 는 원문 그대로다 (T-74 회귀)",
+  t83a.summary === T83_TAIL, `summary="${t83a.summary}"`);
+
+// ⚠️ **'기한'을 품고 있되 끝나지 않는다** — 아무 데서나 지우는 구현이 여기서만 죽는다
+const T83_MID = "기한 지난 과제 다시 제출";
+const t83b = await t83Accept("t83-mid", T83_MID, 5);
+ok("4 ★ '기한'으로 안 끝나는 제목은 한 글자도 안 바뀐다 (경계)",
+  t83b.taskTitle === T83_MID, `task="${t83b.taskTitle}"`);
+
+// 떼면 아무것도 안 남는다 — 이름 없는 할 일을 만들지 않는다
+const t83c = await t83Accept("t83-only", "기한", 6);
+ok("5 ★ 떼면 빈 문자열이 되는 제목은 원문을 쓴다 (방어)",
+  t83c.taskTitle === "기한", `task="${t83c.taskTitle}"`);
+
+// ★ 다듬는 근거는 "수집한 마감에서 왔다" 하나다 — 손으로 만든 것에는 그 근거가 없다
+const T83_HAND = "손으로 만든 것 기한";
+const t83Hand = (await api("POST", "/api/tasks", { title: T83_HAND })).json;
+const t83HandTitle = (raw.prepare("SELECT title AS t FROM tasks WHERE id=?").get(t83Hand.id) as any)?.t;
+ok("6 ★ 손으로 만든 task 는 안 다듬어진다 (수집분만 — createTask 가 아니라 accept 가 한다)",
+  t83HandTitle === T83_HAND, `task="${t83HandTitle}"`);
 
 /* ── T-80 · 마감이 지났으면 묻는다 ────────────────────────────────────
  *
