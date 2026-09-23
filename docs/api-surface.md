@@ -22,7 +22,7 @@
 | PUT `/api/daily/score` | `{score}` | `{date, score}` | `daily.setScore` |
 | POST `/api/daily/classify-feelings` | — | `{date, values, model}` | `daily.classifyFeelings` |
 | POST `/api/daily/close` | `{kind?: manual\|brief}` | `{date, kind}` | `daily.closeDay` |
-| GET `/api/calendar?start&end` | — | `{periods, entries, diary, events, memos}` | `daily.calendar` |
+| GET `/api/calendar?start&end` | — | `{periods, entries, diary, events, memos}` · `entries[]` 에 `collected_event_id`(T-84 — 셀이 짝을 합치는 근거. 수집분만, 그 밖은 NULL). ⚠️ `classes` 는 **안 싣는다**(T-82 ③ — 화면이 안 읽는다) | `daily.calendar` |
 | GET `/api/days/:date` | — | 날짜 팝업 조립(relation·periods·tasks·events·daily·feelings·logs·memos[{id, ts, text, created_at, same_day}]) | `daily.assembleDay` |
 | GET `/api/diary?limit` | — | 일기 목록 rows | `daily.diaryFeed` |
 | POST `/api/memos` | `{date, ts?, text}` | `{id, date}` (201) | `memos.addMemo` |
@@ -301,7 +301,7 @@
 
 **B. Today 조인** — `todayTodo(env, d)` · `todayDone(env, d)` · `reassignQueue(env, d)`(최근예정<오늘&미완료) · `waitingList(env)`(is_waiting=1)
 **C. 하루 열기** — `stOpenDaily(env, d, now)` · `getDaily(env, d)`
-**D. 캘린더 그리드** — `calPeriods(env, start, end)` · `calEntries(env, start, end)` · `calDiaryDates(env, start, end)` (memo 제외 — 마감·점수·감정·로그만) · `calMemos(env, start, end)` (날짜별 대표 1건+개수)
+**D. 캘린더 그리드** — `calPeriods(env, start, end)` · `calEntries(env, start, end)` (★ 행에 `collected_event_id` — **이 할 일이 어느 마감에서 왔나**. `collected_items` 를 타는 상관 서브쿼리이고 손으로 만든 할 일은 NULL. 월간 셀이 짝을 한 줄로 합치는 근거다 — T-84) · `calDiaryDates(env, start, end)` (memo 제외 — 마감·점수·감정·로그만) · `calMemos(env, start, end)` (날짜별 대표 1건+개수)
 **E. 날짜 팝업 조각** — `periodsAt(env, k)` · `feelingsAt(env, k)` · `logsAt(env, k)` · `memosAt(env, k)`
 **F. 파생 분류** — `classifyAt(env, k)` → done/deferred/missed/todo (마감일이면 todo→missed)
 **G. 마감 조각** — `stUpsertMech(env, kind, key, mech, now)` · `stCloseDaily(env, d, kind, now)`

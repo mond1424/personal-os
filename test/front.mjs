@@ -5179,6 +5179,155 @@ ok("8 ★ 그 토스트가 정한 날짜를 담는다 (고정 문구가 아니�
   `"${t83Toast}" (기대 ${+t83D.slice(5, 7)}월 ${+t83D.slice(8, 10)}일)`);
 w.closeAll();
 
+/* ── T-84 — 월간 셀에서 한 과제는 한 줄이다 ──────────────────────────────
+ *
+ * 수락하면 `event`(마감)와 `task`(예정)가 **같은 칸에** 앉아 같은 말을 두 번 한다.
+ * T-83이 제목을 갈랐지만 **셀에서는 끝이 잘려 그 구별이 무효**다(함정 15 계열).
+ *
+ * ⚠️ **합치는 조건에 날짜가 들어간다** — 예정을 앞당기면 두 칸에 하나씩 뜨는 것이 맞다.
+ *    검사 2가 그 짝이고 **이 티켓에서 제일 중요하다**: *"수집분 task 를 셀에서 다 뺀"*
+ *    구현은 1·3·6·7 을 전부 초록으로 통과한다.
+ * ⚠️ **픽스처 제목은 일부러 접두가 겹친다** — `"…과제"` ⊂ `"…과제 기한"`.
+ *    제목으로 짝짓는 구현이 **4에서 죽게** 하려는 것이다(손으로 만든 짝은 제목이 아예 같다).
+ * ⚠️ 날짜는 **보고 있는 달의 04~14일**로 잡는다(함정 12) — 어느 달에도 있는 날이고
+ *    `weeksOf`가 늘 6주라 전부 가운데 pane 의 `.mut` 아닌 칸이다.
+ * ★ `Api.calendar` 를 통째로 갈아끼우므로 **셀에 드는 것은 이 픽스처뿐이다** —
+ *   앞 검사들이 만든 실제 행이 수를 섞지 않는다(AGENT-CHAIN §8 ③).
+ */
+console.log("\n[T-84 월간 셀에서 한 과제는 한 줄이다]");
+w.closeAll();
+ev(`S.cal = { y:+S.today.date.slice(0,4), m:+S.today.date.slice(5,7) }`);
+const t84Ym = ev("`${S.cal.y}-${pad2(S.cal.m)}`");
+const t84D = (n) => `${t84Ym}-${String(n).padStart(2, "0")}`;
+const T84_SAME = t84D(4);    // 예정일 = 마감일 → 합친다
+const T84_PLAN = t84D(6);    // 앞당긴 예정만 있는 칸
+const T84_DEAD = t84D(8);    // 그 과제의 마감만 있는 칸
+const T84_HAND = t84D(10);   // 손으로 만든 짝 — 제목까지 같다
+const T84_BUD  = t84D(12);   // 예산 — 합친 뒤 수로 재는가
+const T84_MEMO = t84D(14);   // memo 가 자리를 받는가
+
+const t84Tk = (id, title, date, cev) => ({
+  date, id, title, status: "not_finished", deferred_to: null,
+  color: null, is_cancelled: 0, collected_event_id: cev,
+});
+const t84Ev = (id, title, date) => ({ id, title, date, time: null, color: null, protect_from: null });
+const t84Fix = {
+  periods: [], diary: [],
+  events: [
+    t84Ev("t84-ev-same", "[시험] 붙은 과제 기한", T84_SAME),
+    t84Ev("t84-ev-dead", "[시험] 옮긴 과제 기한", T84_DEAD),
+    t84Ev("t84-ev-hand", "손으로 만든 같은 이름", T84_HAND),
+    t84Ev("t84-ev-bud", "[시험] 예산 과제 기한", T84_BUD),
+    t84Ev("t84-ev-mem", "[시험] memo 과제 기한", T84_MEMO),
+    t84Ev("t84-ev-mem2", "memo 칸의 다른 일정", T84_MEMO),
+  ],
+  entries: [
+    t84Tk("t84-tk-same", "[시험] 붙은 과제", T84_SAME, "t84-ev-same"),
+    t84Tk("t84-tk-plan", "[시험] 옮긴 과제", T84_PLAN, "t84-ev-dead"),
+    t84Tk("t84-tk-hand", "손으로 만든 같은 이름", T84_HAND, null),
+    t84Tk("t84-tk-bud", "[시험] 예산 과제", T84_BUD, "t84-ev-bud"),
+    t84Tk("t84-tk-bud2", "예산 둘째", T84_BUD, null),
+    t84Tk("t84-tk-bud3", "예산 셋째", T84_BUD, null),
+    t84Tk("t84-tk-mem", "[시험] memo 과제", T84_MEMO, "t84-ev-mem"),
+    t84Tk("t84-tk-mem2", "memo 둘째", T84_MEMO, null),
+    t84Tk("t84-tk-mem3", "memo 셋째", T84_MEMO, null),
+  ],
+  memos: [{ date: T84_MEMO, text: "memo 는 자리를 받는다", n: 1 }],
+};
+
+w.switchTab("cal");
+await until(() => $$cur(".c").length > 0, 5000);
+await capped("T-84 픽스처 렌더", ev(`(async () => {
+  window.__t84 = { old: Api.calendar };
+  const fix = ${JSON.stringify(t84Fix)};
+  Api.calendar = async () => JSON.parse(JSON.stringify(fix));
+  invalidateCalendarCache(); calGen++;
+  await renderCalendar();
+})()`));
+
+const t84Cell = (d) => $cur(`.c[data-d="${d}"]`);
+const t84Lines = (d) => [...(t84Cell(d)?.querySelectorAll(".ev") ?? [])];
+const t84Cls = (d, c) => t84Lines(d).filter((e) => e.classList.contains(c));
+const t84Dump = (d) => t84Lines(d).map((e) => `${e.className}:${e.textContent}`).join(" | ") || "(빈 칸)";
+
+ok("1 ★ 같은 수집에서 온 event·task 가 같은 날이면 셀에 한 줄이다",
+  t84Lines(T84_SAME).length === 1, `${T84_SAME} → ${t84Dump(T84_SAME)}`);
+
+/* ⚠️⚠️ **2가 이 티켓에서 제일 중요하다.** 예정을 앞당긴 것은 사용자가 만든 값이고(T-80),
+ *   *"수집분 task 를 셀에서 다 뺀"* 구현은 나머지를 전부 초록으로 통과한 채 이것만 죽인다.
+ * ★ **두 칸을 한 검사가 본다** — 한쪽만 보면 *"어디로 갔는지"* 를 못 센다. */
+ok("2 ★★ 예정일과 마감일이 다르면 각 칸에 하나씩 — 둘 다 뜬다 (합치지 않는다)",
+  t84Cls(T84_PLAN, "tsum").length === 1 && t84Cls(T84_DEAD, "evt").length === 1
+  && t84Lines(T84_PLAN).length === 1 && t84Lines(T84_DEAD).length === 1,
+  `예정 ${T84_PLAN} → ${t84Dump(T84_PLAN)} / 마감 ${T84_DEAD} → ${t84Dump(T84_DEAD)}`);
+
+/* ★ 3 — 남는 쪽이 어느 쪽인지. 마감은 안 움직이고 예정은 움직인다.
+ *   ⚠️ **제목으로 재지 않는다** — task 제목이 event 제목의 접두라 `includes` 가 둘 다 참이다.
+ *   ⚠️ **`tsum === 0` 을 안 붙인다** — 검사 1이 *"한 줄이다"* 를 세므로 거기서 연역된다.
+ *      붙이면 *"안 합친다"* 변이가 1과 3을 함께 죽여 **어느 결함인지 못 읽는다**(AGENT-CHAIN §8). */
+ok("3 ★ 남은 한 줄은 event 다 (task 가 아니다)",
+  t84Cls(T84_SAME, "evt").length === 1,
+  `${T84_SAME} → ${t84Dump(T84_SAME)}`);
+
+/* ★ 4 — 출처가 조건이다. 픽스처의 제목은 **양쪽이 완전히 같고** 날짜도 같다:
+ *   제목·날짜로만 짝짓는 구현은 여기서 죽고, `collected_event_id` 를 보는 구현은 안 죽는다. */
+ok("4 ★ 손으로 만든 event·task 는 같은 날 같은 제목이어도 안 합친다 (수집분만)",
+  t84Cls(T84_HAND, "evt").length === 1 && t84Cls(T84_HAND, "tsum").length === 1,
+  `${T84_HAND} → ${t84Dump(T84_HAND)}`);
+
+/* ★ 6 — 예산은 **합친 뒤 수**로 잰다. 합치기 전 수(3)로 재면 두 줄을 그리고도 `+1` 이 남는다.
+ *   ⚠️ 줄 수가 아니라 **배지**를 센다 — 줄 수만 보면 1과 같은 것을 센다. */
+ok("6 ★ 합친 뒤 줄 수로 예산을 잰다 — 불필요한 '+N' 이 안 남는다",
+  t84Cls(T84_BUD, "tsum").length === 2
+  && t84Cell(T84_BUD).querySelectorAll(".ev.tsum b").length === 0,
+  `${T84_BUD} → ${t84Dump(T84_BUD)}`);
+
+/* ★ 7 — memo 예산(`room - memoNeed > 0`)은 그대로다. 합쳐서 자리가 남아도 할 일이
+ *   memo 를 굶기면 안 된다. 이 칸은 일정 2 + (합친 뒤) 할 일 2 + memo 라 **딱 걸리는 자리**다. */
+ok("7 ★ memo 가 여전히 자리를 받는다 (할 일 확장이 memo 를 굶기지 않는다)",
+  t84Cls(T84_MEMO, "memo").length === 1,
+  `${T84_MEMO} → ${t84Dump(T84_MEMO)}`);
+
+/* ★ 5 — 상세 화면은 **한 글자도 안 건드렸다**. 합치는 것은 셀의 일이다.
+ * ⚠️ **`Api.day` 를 갈아끼운다** — 셀과 다른 응답(`/api/days/:date`)을 쓰기 때문이고,
+ *    거기에 짝(`collected_event_id`)을 실어 줘야 *"상세에서도 합친다"* 변이가 닿을 자리가 생긴다.
+ * ⚠️ **제목으로 재지 않는다** — task 제목이 event 제목의 접두라 `includes` 가 둘 다 참이다.
+ *    할 일은 `openTask('<id>')` 로, 일정은 `.evrow` 의 전문으로 센다. */
+await capped("T-84 상세 렌더", ev(`(async () => {
+  window.__t84.oldDay = Api.day;
+  Api.day = async (k) => ({
+    date: k, relation: "future", periods: [], daily: null,
+    feelings: [], logs: [], memos: [], classes: [],
+    tasks: [{ id: "t84-tk-same", title: "[시험] 붙은 과제", class: "todo",
+              status: "not_finished", deferred_to: null, period_id: null,
+              collected_event_id: "t84-ev-same" }],
+    events: [{ id: "t84-ev-same", title: "[시험] 붙은 과제 기한", date: k,
+               time: null, protect_from: null }],
+  });
+  await openDay("${T84_SAME}");
+})()`));
+const t84Body = $("#day-body");
+const t84EvRows = [...t84Body.querySelectorAll(".evrow")]
+  .filter((r) => r.textContent.includes("[시험] 붙은 과제 기한"));
+ok("5 ★ 상세 화면은 여전히 둘 다 보여준다 (셀만 합친다 — 회귀)",
+  t84Body.innerHTML.includes("openTask('t84-tk-same')") && t84EvRows.length === 1,
+  `할일=${t84Body.innerHTML.includes("openTask('t84-tk-same')")} 일정줄=${t84EvRows.length}`);
+w.closeAll();
+
+/* ★ 스캐너가 살아 있는가 — **서버가 보내는 칸 이름과 셀이 읽는 이름이 같은가**(함정 15).
+ * ⚠️ 위 일곱은 전부 **검사가 지은 픽스처**를 쓴다. 서버가 다른 이름으로 실어 보내면
+ *    일곱이 전부 초록인 채로 폰에서만 안 합쳐진다 — *"양쪽이 함께 틀린다"* 의 그 자리다.
+ * ★ 그래서 **실제 응답**에 그 칸이 있는지 한 번 묻는다. 수집 안 된 할 일이라 값은 NULL 이고,
+ *   **칸이 있다는 것**이 세는 전부다(`"key" in row` — null 도 칸은 칸이다). */
+ev(`Api.calendar = window.__t84.old; Api.day = window.__t84.oldDay; invalidateCalendarCache(); calGen++;`);
+const t84Real = await capped("T-84 실제 calendar 응답", ev(
+  `Api.calendar(calendarMonthStart(S.cal), calendarMonthEnd(S.cal))`));
+ok("9 ★ 서버가 실제로 보내는 entries 에 `collected_event_id` 칸이 있다 (셀이 읽는 그 이름)",
+  Array.isArray(t84Real?.entries) && t84Real.entries.length > 0
+  && t84Real.entries.every((r) => "collected_event_id" in r),
+  `entries=${t84Real?.entries?.length} 첫칸=${JSON.stringify(t84Real?.entries?.[0] ?? null)}`);
+await capped("T-84 복구 렌더", ev(`renderCalendar()`));
+
 console.log("\n[부팅 · 연결 실패 복구]");
 ok("로드 후 부팅 오버레이 닫힘", !$("#boot").classList.contains("on"));
 

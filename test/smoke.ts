@@ -3929,6 +3929,51 @@ ok("7 ★ 예약이 전제하는 기상과 문구가 말할 기상이 같다 —
   + ` 값붙음=${t71Agree(t71Wake(T71_OWN_D), t71Plan(t71OwnId))}`
   + ` 갈린칸=${t71Apart.map((r) => `${r.p.date}/${r.p.title}`).join(",") || "없음"}`);
 
+/* ── T-84 · 셀이 합치려면 짝을 알아야 한다 ────────────────────────────────
+ *
+ * 월간 셀이 *"이 event 와 이 task 가 같은 수집에서 왔다"* 를 알아야 한 줄로 합친다.
+ * 그 앎은 `collected_items` 에만 있고, `/api/calendar` 는 T-84 전까지 안 실어 보냈다.
+ * ⚠️ **제목으로 짝지으면 안 된다** — T-83이 둘의 제목을 갈라 놨고 `tasks.title` 은 사용자가 고친다.
+ *    그래서 이 칸이 **유일한 짝의 근거**이고, 없으면 프런트는 짐작밖에 할 수 없다.
+ */
+console.log("\n[T-84] 월간 셀에서 한 과제는 한 줄이다 — 짝은 원장이 안다");
+putCollected("t84-pair", "T-84 짝 과제 기한", atPlus(3 * DAY));
+// ⚠️ `pending` 의 출력으로 고르지 않는다 — 창 필터가 깨지면 이 블록이 통째로 딸려 죽는다.
+const t84Id = (raw.prepare("SELECT id AS i FROM collected_items WHERE uid=?").get("t84-pair") as any).i;
+const t84Acc = (await api("POST", `/api/collected/${t84Id}/accept`)).json;
+const t84D = atPlus(3 * DAY).slice(0, 10);
+// 짝이 없는 쪽 — 손으로 만든 할 일. 같은 날에 둔다(셀이 이것까지 합치면 안 된다).
+const t84Hand = (await api("POST", "/api/tasks", { title: "T-84 손으로 만든 할 일", date: t84D })).json;
+const t84Rows = (await api("GET", `/api/calendar?start=${t84D}&end=${t84D}`)).json;
+const t84Row = (id: string) => (t84Rows.entries as any[]).find((r) => r.id === id);
+
+/* 1 ★ 수락이 만든 짝이 응답에 실려 온다. **값이 그 event 의 id 여야 한다** —
+ *   *"칸이 있다"* 만 보면 늘 NULL 을 보내는 구현이 통과한다. */
+ok("1 ★ /api/calendar entries 가 수락이 만든 event 를 collected_event_id 로 실어 온다",
+  !!t84Acc.task_id && !!t84Acc.event_id
+  && t84Row(t84Acc.task_id)?.collected_event_id === t84Acc.event_id,
+  `accept=${JSON.stringify(t84Acc)} 행=${JSON.stringify(t84Row(t84Acc.task_id) ?? null)}`);
+
+/* 2 ★ 1의 짝 — **손으로 만든 할 일은 NULL 이다.** 이것이 *"수집분만 합친다"* 를 지는 칸이고,
+ *   ⚠️ `undefined` 가 아니라 `null` 이어야 한다: 칸이 아예 빠지면 프런트에서 둘이 구별되지 않는다. */
+const t84HandRow = t84Row(t84Hand.id);
+ok("2 ★ 수집에서 안 온 할 일은 collected_event_id 가 NULL 이다 (칸은 있다)",
+  !!t84HandRow && "collected_event_id" in t84HandRow && t84HandRow.collected_event_id === null,
+  `행=${JSON.stringify(t84HandRow ?? null)}`);
+
+/* 3 ★★ **행이 불지 않는다.** `collected_items.task_id` 엔 UNIQUE 가 없다 — 같은 task 를 가리키는
+ *   행이 둘이면 LEFT JOIN 은 entries 를 **두 줄로 불리고**, 그러면 셀에 같은 할 일이 두 줄 뜬다.
+ *   ★ **고치려던 증상과 똑같은 모양**이라, 합치는 코드가 멀쩡해도 화면은 그대로다. */
+putCollected("t84-dup", "T-84 같은 task 를 가리키는 둘째 행", atPlus(3 * DAY));
+raw.prepare("UPDATE collected_items SET task_id=?, event_id=? WHERE uid=?")
+  .run(t84Acc.task_id ?? null, t84Acc.event_id ?? null, "t84-dup");
+const t84Dup = (await api("GET", `/api/calendar?start=${t84D}&end=${t84D}`)).json;
+const t84DupN = (t84Dup.entries as any[]).filter((r) => r.id === t84Acc.task_id).length;
+ok("3 ★ 같은 task 를 가리키는 수집 행이 둘이어도 entries 는 한 줄이다 (JOIN 이 아니라 서브쿼리)",
+  t84DupN === 1 && (t84Dup.entries as any[]).find((r) => r.id === t84Acc.task_id)
+    ?.collected_event_id === t84Acc.event_id,
+  `그 task 의 줄 수=${t84DupN}`);
+
 // ── 결과 ─────────────────────────────────────────────────────
 console.log(`\n${"=".repeat(46)}\n통과 ${passN} · 실패 ${fails.length}`);
 if (fails.length) { console.log("실패:\n  - " + fails.join("\n  - ")); process.exit(1); }

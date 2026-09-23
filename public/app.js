@@ -2208,8 +2208,23 @@ function renderCalendarFrame(rotateDir = 0, fill = true) {
    * 미룬 항목: 지난 날에는 '옮겨감' 표시로 남고, 오늘·앞으로는 새 날짜에만 보인다. */
   const evByDate = {}, tkByDate = {};
   for (const ev of cal.events || []) (evByDate[ev.date] = evByDate[ev.date] || []).push(ev);
+  /* ★★ 같은 수집에서 온 짝이 **같은 칸에** 있으면 할 일 줄을 안 만든다 (T-84).
+   * 마감 1 + 예정 1 = 두 줄인데 **같은 말을 두 번**이고, 제목이 잘려 T-83의 구별이 셀에선 무효다.
+   * 남기는 쪽은 `event` 다 — 마감은 안 움직이고, 예정은 움직이면 다른 칸으로 간다.
+   *
+   * ⚠️ **짝은 `collected_event_id` 로만 안다**(서버가 `collected_items` 에서 실어 준다).
+   *   제목으로 짝지으면 T-83이 갈라 놓은 구별과 사용자가 고친 제목에 함께 물린다.
+   *   ★ 손으로 만든 일정·할 일은 그 칸이 NULL 이라 **절대 안 합쳐진다.**
+   * ⚠️⚠️ **같은 칸일 때만이다.** 예정을 앞당기면 두 칸에 하나씩 뜨는 것이 맞다 —
+   *   합치는 조건에서 날짜를 빼면 **사용자가 옮긴 것이 화면에서 사라진다**(T-80이 만든 값이다).
+   * ⚠️ **옮겨간 줄(`deferred_to`)은 예정이 아니라 자취다** — 그 할 일의 예정일은 이미 다른 날이라
+   *   *"예정일 ≠ 마감일"* 쪽이고, 합치면 *"여기서 옮겼다"* 가 사라진다.
+   * ★ 거르는 자리가 **예산 계산보다 앞**이어야 한다 — 합치기 전 수로 재면 `+N` 이 남는다. */
+  const pairedInCell = (e) =>
+    !!e.collected_event_id && (evByDate[e.date] || []).some((x) => x.id === e.collected_event_id);
   for (const e of cal.entries) {
     if (e.deferred_to && e.date >= D) continue;
+    if (!e.deferred_to && pairedInCell(e)) continue;
     (tkByDate[e.date] = tkByDate[e.date] || []).push(e);
   }
   // memo — 날짜별 대표 1건(+개수). 캐시된 구버전 응답 대비 || [] (없으면 셀에 memo 줄 없음).

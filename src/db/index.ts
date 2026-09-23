@@ -85,9 +85,21 @@ export const calPeriods = (env: Env, start: string, end: string) => q(env, `
   FROM periods WHERE start_date <= ? AND end_date >= ?
   ORDER BY created_at`).bind(end, start).all<PeriodRow>();
 
+/*
+ * ★★ `collected_event_id` — **이 할 일이 어느 마감에서 왔는가** (T-84).
+ *   월간 셀이 *"같은 수집에서 온 event 와 task"* 를 알아야 한 줄로 합칠 수 있다.
+ *   ⚠️ **제목으로 짝지으면 안 된다** — T-83이 둘의 제목을 일부러 갈라 놨고,
+ *      `tasks.title` 은 사용자가 고치는 칸이다. 짝의 근거는 `collected_items` 하나다.
+ * ⚠️ **JOIN 이 아니라 상관 서브쿼리다.** `collected_items.task_id` 엔 UNIQUE 가 없어
+ *   LEFT JOIN 은 행을 불릴 수 있고, 그러면 **셀에 같은 할 일이 두 줄로 뜬다** — 고치려던 것과 같은 증상이다.
+ *   ★ 수집 안 된 할 일(손으로 만든 것)은 NULL 이고, 그래서 셀이 절대 안 합친다.
+ */
 export const calEntries = (env: Env, start: string, end: string) => q(env, `
   SELECT e.date, t.id, t.title, t.status, e.deferred_to, p.color,
-         (t.cancelled_at IS NOT NULL) AS is_cancelled  -- 표시 배지 전용. 상태 판정은 v_task_stats.state
+         (t.cancelled_at IS NOT NULL) AS is_cancelled,  -- 표시 배지 전용. 상태 판정은 v_task_stats.state
+         (SELECT c.event_id FROM collected_items c
+           WHERE c.task_id = t.id AND c.event_id IS NOT NULL
+           LIMIT 1) AS collected_event_id
   FROM schedule_entries e
   JOIN tasks t        ON t.id = e.task_id
   LEFT JOIN periods p ON p.id = t.period_id
@@ -95,6 +107,7 @@ export const calEntries = (env: Env, start: string, end: string) => q(env, `
   ORDER BY e.date, t.created_at`).bind(start, end).all<{
     date: string; id: string; title: string; status: string;
     deferred_to: string | null; color: string | null; is_cancelled: number;
+    collected_event_id: string | null;
   }>();
 
 // 캘린더 '기록 있는 날' 마커(.dr): 빈 daily(자동 생성)를 오인하지 않게 실제 내용이 있는 날만.
