@@ -45,7 +45,7 @@
 | DELETE `/api/periods/:id` | — | `{id}` (task 참조 시 FK 409) | `periods.deletePeriod` |
 | GET `/api/timetable` | — | `{rules[], term:{start,end}\|null}` — **대표 학기 하나만**(오늘이 든 학기 → 없으면 가장 늦게 시작하는 학기 → 규칙이 없으면 `term:null`, `rules:[]`). ⚠️ 모든 학기를 주면 화면이 섞인 초안을 한 범위로 저장해 **지난 학기가 이번 학기로 복제된다**(T-85) | `timetable.list` |
 | POST `/api/timetable/parse` | `{text}` | `{rules[], unread[{line,text,reason}], term\|null}` · **순수 — 저장 안 함** | `timetable.parseText` |
-| PUT `/api/timetable` | `{rules[{subject,weekday,start_time,end_time}], term_start, term_end}` | `{rules[], term}` — **방금 저장한 학기**(대표 학기가 아니다 — 토스트가 이 칸 수를 말한다). **겹치는 학기만 교체**(T-85) · 범위 없으면 400 · 과목명은 NFC로 저장(DEC-30) | `timetable.replace` |
+| PUT `/api/timetable` | `{rules[{subject,weekday,start_time,end_time}], term_start, term_end}` | `{rules[], term}` — **방금 저장한 학기**(대표 학기가 아니다 — 토스트가 이 칸 수를 말한다). **겹치는 학기만 교체**(T-85) · 범위 없으면 400 · 과목명은 NFC로 저장(T-85 ④) | `timetable.replace` |
 | POST `/api/events` | `{title, date, time?, period_id?, note?}` | `{id, ...}` | `events.create` |
 | PATCH `/api/events/:id` | `{title?, date?, time?, period_id?, note?}` | `{...}` (마감일 409) | `events.update` |
 | DELETE `/api/events/:id` | — | `{id, deleted}` (마감일 409) | `events.remove` |
@@ -149,7 +149,7 @@
 
 ### timetable.ts — 시간표 (0021 · ADR-045 · T-58 · T-85)
 - **규칙을 저장하고 날짜는 조회 시 전개한다.** 인스턴스는 **어디에도 저장되지 않는다**(원칙 1)
-- ★ **규칙은 학기마다 쌓인다**(T-85 · 설계 `docs/pos-obsidian-design.md` DEC-27). 전체 교체였을 때는 다음 학기를 넣는 순간 이번 학기 규칙이 사라졌고, **지난 날짜를 열면 그날의 수업이 없어졌다** — 전개분은 파생이라 되살릴 곳이 없다
+- ★ **규칙은 학기마다 쌓인다**(T-85). 전체 교체였을 때는 다음 학기를 넣는 순간 이번 학기 규칙이 사라졌고, **지난 날짜를 열면 그날의 수업이 없어졌다** — 전개분은 파생이라 되살릴 곳이 없다
 - `parseText(text)` → `{rules[], unread[], term|null}` — **순수 함수**. `<요일> <시>시-<시>시 <과목>[, …]`
   - ⚠️ **모델을 부르지 않는다**(비결정론·비용·오프라인). 정확성은 파서가 아니라 **확인 화면**이 진다
   - ★ **못 읽은 줄을 버리지 않는다** — `unread`에 `{line, text, reason}`으로 원문 그대로 실어 보낸다
@@ -159,7 +159,7 @@
   - 겹침: `term_start <= 새 term_end AND term_end >= 새 term_start`. `rules: []`로 저장하면 그 범위와 겹치는 학기만 비워진다
   - ★ **돌려주는 것은 방금 저장한 학기다**(대표 학기가 아니다) — 대표를 주면 지난 학기를 저장했을 때 화면이 **남의 칸 수**를 말한다
   - ⚠️ **학기 범위 기본값이 없다** — 없으면 400. 박아 두면 다음 학기에 조용히 틀린 날짜로 전개된다
-  - 과목명은 `trim()` 뒤 `normalize("NFC")`로 저장한다(설계 DEC-30). 이미 저장된 행은 안 고친다
+  - 과목명은 `trim()` 뒤 `normalize("NFC")`로 저장한다(T-85 ④). 이미 저장된 행은 안 고친다
 - `pickTerm(rules, today)` → `{start, end}|null` — **순수 함수**(DB도 시계도 안 본다). 대표 학기: 오늘이 든 학기 → 없으면 `term_start`가 가장 늦은 학기 → 규칙이 없으면 `null`
 - `list(env, t)` → `{rules, term}` — `pickTerm`이 고른 **한 학기**만. 나머지 학기는 남아 있되 안 준다
 - `expand(rules, start, end)` → `ClassInstance[]` `{date, subject, start_time, end_time, rule_id}`

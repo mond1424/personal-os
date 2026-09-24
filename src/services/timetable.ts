@@ -106,8 +106,8 @@ function validate(input: any): { rules: ParsedRule[]; term_start: string; term_e
   if (input.term_end < input.term_start) throw new ApiError(400, "학기 종료일이 시작일보다 빨라요");
   const out: ParsedRule[] = rules.map((r: any, i: number) => {
     const where = `${i + 1}번째 줄`;
-    // ④ **과목명은 NFC로 저장한다** (설계 DEC-30). 삼성 노트·Obsidian 쪽 폴더 이름은
-    //    NFD로 오는 자리가 있어, 정규화하지 않으면 화면에서 같아 보이는 두 과목이 갈린다.
+    // ④ **과목명은 NFC로 저장한다** (T-85 ④). 같은 과목명이 NFC·NFD 두 표현으로 들어오면
+    //    둘로 저장된다 — 화면에서 같아 보이는 두 과목이 갈린다.
     //    ⚠️ 길이 검사는 **정규화한 뒤** 센다 — NFD가 더 길다.
     const subject = typeof r?.subject === "string" ? r.subject.trim().normalize("NFC") : "";
     if (!subject) throw new ApiError(400, `${where}: 과목이 필요해요`);
@@ -132,7 +132,7 @@ const sameTerm = (r: db.TimetableRule, term: Term) =>
 export interface Term { start: string; end: string }
 
 /**
- * ★ **대표 학기** — 화면에 보여 줄 한 학기 (T-85 · 설계 DEC-27).
+ * ★ **대표 학기** — 화면에 보여 줄 한 학기 (T-85).
  *
  * **순수 함수다** — DB도 시계도 안 본다. 오늘을 인자로 받으므로 검사가 오늘을 바꿔 가며 부른다.
  *
@@ -173,7 +173,7 @@ export const list = async (env: Env, t: TimeCtx) => {
  * **한 학기 시간표를 갈아 끼운다.** 부분 수정이 없는 것은 그대로다 — 한 학기 시간표는 한 벌이고,
  * 붙여넣기가 그 한 벌을 통째로 준다. 부분 수정을 열면 *"지운 수업이 남아 있다"*가 생긴다.
  *
- * ★ **갈아 끼우는 범위가 "전부"에서 "겹치는 학기"로 좁아졌다** (T-85 · 설계 DEC-27):
+ * ★ **갈아 끼우는 범위가 "전부"에서 "겹치는 학기"로 좁아졌다** (T-85):
  *
  * ```
  * 겹침:  term_start <= 새 term_end  AND  term_end >= 새 term_start

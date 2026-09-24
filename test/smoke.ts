@@ -2936,7 +2936,7 @@ ok("T-82 ③ ★ 그런데 읽는 둘에는 그대로 있다 (위의 짝 — cla
   Array.isArray(t82Day.json?.classes) && Array.isArray(t82Today.json?.classes),
   `days=${JSON.stringify(t82Day.json?.classes?.length)} today=${JSON.stringify(t82Today.json?.classes?.length)}`);
 
-/* ── T-85 시간표는 학기마다 쌓인다 (설계 DEC-27 · DEC-30) ───────────────────
+/* ── T-85 시간표는 학기마다 쌓인다 (과목명 NFC는 ④) ───────────────────
  *
  * **저장이 전체 교체였다.** 다음 학기 시간표를 넣는 순간 이번 학기 규칙이 지워지고,
  * 수업은 규칙에서 전개되므로(ADR-045 ②) **지난 날짜를 열면 그날의 수업이 사라졌다.**
@@ -3037,8 +3037,8 @@ ok("T-85 7 ★ PUT 응답은 방금 저장한 학기다 (B′ — 3칸 · 범위
   && t85B2Saved.json?.term?.start === t85B2Start && t85B2Saved.json?.term?.end === t85B2End,
   `칸=${t85B2Saved.json?.rules?.length} 범위=${JSON.stringify(t85B2Saved.json?.term)}`);
 
-/* 8 ★ **과목명은 NFC로 저장한다** (설계 DEC-30). 삼성 노트 폴더 이름과 정본을 대조하는 자리가
- *   NFD로 오므로, 정규화 없이는 **화면에서 같아 보이는 두 과목이 갈린다.**
+/* 8 ★ **과목명은 NFC로 저장한다** (T-85 ④). 같은 과목명이 NFC·NFD 두 표현으로 들어오면
+ *   둘로 저장된다 — 정규화 없이는 **화면에서 같아 보이는 두 과목이 갈린다.**
  *   ⚠️ 픽스처가 이미 NFC면 이 검사는 **저절로 참**이다 — 그래서 *들어간 것이 정말 NFD였는지*를
  *      함께 센다(알려진 정답을 먹이는 것과 같은 자리 · 함정 17). */
 const t85NfdWasDifferent = t85Nfd !== t85Nfd.normalize("NFC");
