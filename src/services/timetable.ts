@@ -106,7 +106,10 @@ function validate(input: any): { rules: ParsedRule[]; term_start: string; term_e
   if (input.term_end < input.term_start) throw new ApiError(400, "학기 종료일이 시작일보다 빨라요");
   const out: ParsedRule[] = rules.map((r: any, i: number) => {
     const where = `${i + 1}번째 줄`;
-    const subject = typeof r?.subject === "string" ? r.subject.trim() : "";
+    // ④ **과목명은 NFC로 저장한다** (설계 DEC-30). 삼성 노트·Obsidian 쪽 폴더 이름은
+    //    NFD로 오는 자리가 있어, 정규화하지 않으면 화면에서 같아 보이는 두 과목이 갈린다.
+    //    ⚠️ 길이 검사는 **정규화한 뒤** 센다 — NFD가 더 길다.
+    const subject = typeof r?.subject === "string" ? r.subject.trim().normalize("NFC") : "";
     if (!subject) throw new ApiError(400, `${where}: 과목이 필요해요`);
     if (subject.length > 120) throw new ApiError(400, `${where}: 과목이 너무 길어요`);
     const weekday = Number(r?.weekday);
@@ -121,31 +124,81 @@ function validate(input: any): { rules: ParsedRule[]; term_start: string; term_e
   return { rules: out, term_start: input.term_start, term_end: input.term_end };
 }
 
-export const list = async (env: Env) => {
+/** 같은 학기의 규칙인가. 학기는 **범위로만** 가른다 — 과목명으로 가르지 않는다
+ *  (같은 과목을 다른 학기에 다시 듣는다). */
+const sameTerm = (r: db.TimetableRule, term: Term) =>
+  r.term_start === term.start && r.term_end === term.end;
+
+export interface Term { start: string; end: string }
+
+/**
+ * ★ **대표 학기** — 화면에 보여 줄 한 학기 (T-85 · 설계 DEC-27).
+ *
+ * **순수 함수다** — DB도 시계도 안 본다. 오늘을 인자로 받으므로 검사가 오늘을 바꿔 가며 부른다.
+ *
+ * ```
+ * 오늘을 포함하는 학기  →  없으면 term_start가 가장 늦은 학기  →  규칙이 없으면 null
+ * ```
+ *
+ * ⚠️ **모든 학기를 주면 안 된다.** 화면이 이 규칙을 그대로 편집 초안으로 쓰고(`openTimetable`),
+ *    여러 학기가 섞인 초안을 한 범위로 저장하면 **지난 학기 규칙이 이번 학기로 복제된다.**
+ *
+ * 저장이 겹치는 학기만 지우므로 저장된 학기끼리는 서로 겹치지 않는다 —
+ * 그래서 오늘을 포함하는 학기는 **있어도 하나**다.
+ */
+export function pickTerm(rules: db.TimetableRule[], today: string): Term | null {
+  let current: Term | null = null;
+  let latest: Term | null = null;
+  for (const r of rules) {
+    const term = { start: r.term_start, end: r.term_end };
+    if (r.term_start <= today && today <= r.term_end && !current) current = term;
+    if (!latest || term.start > latest.start
+      || (term.start === latest.start && term.end > latest.end)) latest = term;
+  }
+  return current ?? latest;
+}
+
+/** `GET /api/timetable` — **대표 학기 하나**의 규칙과 범위. 나머지 학기는 남아 있되 안 준다. */
+export const list = async (env: Env, t: TimeCtx) => {
   const rows = (await db.timetableRules(env)).results;
-  const first = rows[0];
+  const term = pickTerm(rows, t.d);
   return {
-    rules: rows,
+    rules: term ? rows.filter((r) => sameTerm(r, term)) : [],
     // 학기는 규칙마다 같은 값이라 하나로 접어 준다 — 화면이 다시 세지 않게.
-    term: first ? { start: first.term_start, end: first.term_end } : null,
+    term,
   };
 };
 
 /**
- * 시간표 전체를 갈아 끼운다. **부분 수정이 없다** — 한 학기 시간표는 한 벌이고,
+ * **한 학기 시간표를 갈아 끼운다.** 부분 수정이 없는 것은 그대로다 — 한 학기 시간표는 한 벌이고,
  * 붙여넣기가 그 한 벌을 통째로 준다. 부분 수정을 열면 *"지운 수업이 남아 있다"*가 생긴다.
+ *
+ * ★ **갈아 끼우는 범위가 "전부"에서 "겹치는 학기"로 좁아졌다** (T-85 · 설계 DEC-27):
+ *
+ * ```
+ * 겹침:  term_start <= 새 term_end  AND  term_end >= 새 term_start
+ * ```
+ *
+ * 다음 학기를 넣어도 **이번 학기 규칙이 남고**, 지난 날짜를 열면 그날의 수업이 그대로 전개된다.
+ * 빈 규칙(`rules: []`)으로 저장하면 그 범위와 겹치는 학기만 비워진다.
+ *
+ * ⚠️ **돌려주는 것은 대표 학기가 아니라 *방금 저장한* 학기다** — 화면 토스트("N칸")가 이 값을
+ *    쓰므로, 대표 학기를 주면 **지난 학기를 저장했을 때 남의 칸 수를 말한다.**
  */
 export async function replace(env: Env, t: TimeCtx, input: any) {
   const v = validate(input);
+  const saved: Term = { start: v.term_start, end: v.term_end };
   const base = Number((await nextId(env, "timetable_rules", t.compact)).slice(9));
-  const stmts = [db.stClearTimetable(env)];
+  // 지우기와 넣기는 한 batch다 — 중간 상태가 조회에 보이지 않는다.
+  const stmts = [db.stClearTimetableOverlapping(env, saved.start, saved.end)];
   v.rules.forEach((r, i) => {
     const id = `${t.compact}-${String(base + i).padStart(3, "0")}`;
     stmts.push(db.stInsertTimetableRule(
-      env, id, r.subject, r.weekday, r.start_time, r.end_time, v.term_start, v.term_end, t.now));
+      env, id, r.subject, r.weekday, r.start_time, r.end_time, saved.start, saved.end, t.now));
   });
   await env.DB.batch(stmts);
-  return list(env);
+  const rows = (await db.timetableRules(env)).results;
+  return { rules: rows.filter((r) => sameTerm(r, saved)), term: saved };
 }
 
 export interface ClassInstance {

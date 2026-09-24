@@ -1107,7 +1107,12 @@ export interface TimetableRule {
 export const timetableRules = (env: Env) =>
   q(env, "SELECT * FROM timetable_rules ORDER BY weekday, start_time, subject").all<TimetableRule>();
 
-export const stClearTimetable = (env: Env) => q(env, "DELETE FROM timetable_rules");
+// **겹치는 학기만 지운다** (T-85 · 설계 DEC-27). 전체 삭제였을 때는 다음 학기 시간표를
+// 넣는 순간 이번 학기 규칙이 사라졌고, 수업은 규칙에서 전개되므로(ADR-045 ②)
+// **지난 날짜를 열면 그날의 수업이 없어졌다.** 전개된 수업은 파생이라 되살릴 곳이 없다(원칙 1).
+export const stClearTimetableOverlapping = (env: Env, termStart: string, termEnd: string) =>
+  q(env, "DELETE FROM timetable_rules WHERE term_start <= ? AND term_end >= ?")
+    .bind(termEnd, termStart);
 
 export const stInsertTimetableRule = (
   env: Env, id: string, subject: string, weekday: number,

@@ -12,6 +12,7 @@ import * as db from "../src/db";
 import { autoClose } from "../src/scheduled";
 import * as guard from "../src/services/guard";
 import * as uclass from "../src/services/uclass";
+import { pickTerm } from "../src/services/timetable";   // T-85 — 대표 학기는 순수 함수다
 import { attributionDate, isoNow, addDays, mondayOf, diffDays, loadTime } from "../src/lib/time";
 import { buildCoreContext } from "../src/lib/context";
 import type { Env } from "../src/types";
@@ -2934,6 +2935,129 @@ ok("T-82 ③ ★ /api/calendar 응답에 classes 가 없다 — 안 읽는 것�
 ok("T-82 ③ ★ 그런데 읽는 둘에는 그대로 있다 (위의 짝 — classesIn 을 없앤 것이 아니다)",
   Array.isArray(t82Day.json?.classes) && Array.isArray(t82Today.json?.classes),
   `days=${JSON.stringify(t82Day.json?.classes?.length)} today=${JSON.stringify(t82Today.json?.classes?.length)}`);
+
+/* ── T-85 시간표는 학기마다 쌓인다 (설계 DEC-27 · DEC-30) ───────────────────
+ *
+ * **저장이 전체 교체였다.** 다음 학기 시간표를 넣는 순간 이번 학기 규칙이 지워지고,
+ * 수업은 규칙에서 전개되므로(ADR-045 ②) **지난 날짜를 열면 그날의 수업이 사라졌다.**
+ * ★ 전개된 수업은 파생이라 어디에도 저장돼 있지 않다 — **되살릴 곳이 없다**(원칙 1).
+ *
+ * ⚠️ **아래 검사는 위 §T-58의 학기(A)를 건드리지 않는다.** 뒤의 §T-60이 그 시간표를
+ *    *"오늘 밤이 다른 밤과 어떻게 다른가"* 의 재료로 쓴다 — 바꾸면 그쪽이 회귀처럼 죽는다.
+ *    그래서 **A와 겹치지 않는 학기만** 더하고, 절 끝에서 빈 규칙으로 치운다.
+ *
+ * ⚠️ 고정 날짜를 쓰지 않는다(함정 12). A = [D-60, D+60] 이므로 B·B′는 D+70 이후로 잡는다. */
+console.log("\n[T-85] 시간표는 학기마다 쌓인다 — 겹치는 학기만 갈아 끼운다");
+
+const t85BStart = addDays(D, 70), t85BEnd = addDays(D, 160);        // B  — A가 끝난 뒤
+const t85B2Start = addDays(D, 75), t85B2End = addDays(D, 170);      // B′ — B와 겹치고 범위가 다르다
+const t85ARows = () => (raw.prepare(
+  "SELECT COUNT(*) AS n FROM timetable_rules WHERE term_start=? AND term_end=?")
+  .get(ttTermStart, ttTermEnd) as any).n;
+const t85Rows = () => (raw.prepare("SELECT COUNT(*) AS n FROM timetable_rules").get() as any).n;
+const t85TermRows = (start: string, end: string) => (raw.prepare(
+  "SELECT COUNT(*) AS n FROM timetable_rules WHERE term_start=? AND term_end=?")
+  .get(start, end) as any).n;
+
+/* B는 A와 **같은 요일에도** 수업을 둔다 — 그래야 3이 *"A가 B의 날짜로 샜는가"* 를 잴 수 있다.
+ * (A는 월요일에 2칸이다. B가 월요일에 1칸이면 새는 구현에서 3칸이 보인다.) */
+const t85BWant = [
+  { subject: "다음학기전공1", weekday: 1, start_time: "09:00", end_time: "11:00" },
+  { subject: "다음학기전공2", weekday: 3, start_time: "13:00", end_time: "15:00" },
+];
+const t85BSaved = await api("PUT", "/api/timetable",
+  { rules: t85BWant, term_start: t85BStart, term_end: t85BEnd });
+
+ok("T-85 1 ★ 다음 학기를 저장해도 이번 학기 규칙이 남는다 (행 수 = A 8 + B 2) — 본체",
+  t85BSaved.status === 200 && t85Rows() === 10 && t85ARows() === 8,
+  `상태=${t85BSaved.status} 전체=${t85Rows()} A=${t85ARows()}`);
+
+/* 2 ★ 1의 짝 — **행만 남고 전개되지 않으면 소용없다.** 사용자가 보는 것은 행이 아니라 그날의 수업이다.
+ *   A 안의 **지난** 월요일을 연다. (ttMon은 §T-58이 잡은 이번 주 월요일이다.) */
+const t85PastMon = addDays(ttMon, -7);
+const t85Past = (await api("GET", `/api/days/${t85PastMon}`)).json?.classes ?? [];
+ok("T-85 2 ★ 그 뒤에도 이번 학기의 지난 날짜에 그날의 수업이 뜬다 (지난 월요일 2칸) — 1의 짝",
+  t85Past.length === 2
+  && t85Past.every((c: any) => ["전자기및연습1", "역학및연습2"].includes(c.subject)),
+  `날짜=${t85PastMon} 칸=${t85Past.length} ${JSON.stringify(t85Past.map((c: any) => c.subject))}`);
+
+/* 3 ★ 반대쪽 — **B의 날짜에 A가 새지 않는다.** `expand`가 규칙마다 학기 범위로 거르는 것이
+ *   쌓인 뒤에도 유효한가. 여기가 무너지면 방학·다음 학기에 남의 수업이 뜬다. */
+const t85BMon = mondayOf(addDays(D, 90));
+const t85BDay = (await api("GET", `/api/days/${t85BMon}`)).json?.classes ?? [];
+ok("T-85 3 ★ 다음 학기 날짜에는 다음 학기 수업만 뜬다 — 이번 학기가 새지 않는다",
+  t85BDay.length === 1 && t85BDay[0]?.subject === "다음학기전공1",
+  `날짜=${t85BMon} 칸=${t85BDay.length} ${JSON.stringify(t85BDay.map((c: any) => c.subject))}`);
+
+/* 4 ★ **GET은 대표 학기 하나만 준다.** 화면이 이 규칙을 그대로 편집 초안으로 쓰므로
+ *   (`openTimetable`), 여러 학기가 섞인 초안을 한 범위로 저장하면
+ *   **지난 학기 규칙이 이번 학기로 복제된다.** 오늘은 A 안이므로 대표는 A다. */
+const t85Get = (await api("GET", "/api/timetable")).json;
+ok("T-85 4 ★ GET은 대표 학기 하나만 준다 (오늘이 든 A — 8칸 · 범위도 A)",
+  t85Get?.rules?.length === 8
+  && t85Get?.term?.start === ttTermStart && t85Get?.term?.end === ttTermEnd,
+  `칸=${t85Get?.rules?.length} 범위=${JSON.stringify(t85Get?.term)}`);
+
+/* 5 ★ **겹치는 것만 바뀐다.** B′는 B와 겹치고 A와는 안 겹친다 — B만 사라지고 A는 그대로다.
+ *   ⚠️ 여기가 *"범위가 같은 학기만 지운다"* 로 구현되면 B와 B′가 **둘 다** 남는다.
+ *   8의 재료도 여기서 같이 들어간다(NFD 과목명 하나). */
+const t85Nfd = "다음학기전공3".normalize("NFD");
+const t85B2Want = [
+  { subject: "고친학기전공1", weekday: 1, start_time: "10:00", end_time: "12:00" },
+  { subject: "고친학기전공2", weekday: 2, start_time: "10:00", end_time: "12:00" },
+  { subject: t85Nfd, weekday: 4, start_time: "10:00", end_time: "12:00" },
+];
+const t85B2Saved = await api("PUT", "/api/timetable",
+  { rules: t85B2Want, term_start: t85B2Start, term_end: t85B2End });
+ok("T-85 5 ★ 겹치는 학기만 갈아 끼운다 — B가 B′로 바뀌고 A는 그대로다 (행 수 = A 8 + B′ 3)",
+  t85B2Saved.status === 200 && t85Rows() === 11 && t85ARows() === 8
+  && t85TermRows(t85BStart, t85BEnd) === 0 && t85TermRows(t85B2Start, t85B2End) === 3,
+  `상태=${t85B2Saved.status} 전체=${t85Rows()} A=${t85ARows()}`
+  + ` B=${t85TermRows(t85BStart, t85BEnd)} B′=${t85TermRows(t85B2Start, t85B2End)}`);
+
+/* 6 ★ **대표 학기 고르기는 순수 함수다** — DB도 시계도 안 본다. 그래서 오늘을 바꿔 가며 부른다.
+ *   ⚠️ 위 4는 *오늘이 A 안일 때* 하나만 본다. 라우트로는 오늘을 못 바꾸므로
+ *      **"오늘이 어느 학기에도 없을 때"** 가 거기서는 영영 안 걸린다. */
+const t85Fake = (start: string, end: string) =>
+  ({ id: "x", subject: "s", weekday: 1, start_time: "10:00", end_time: "11:00",
+     term_start: start, term_end: end, created_at: "" });
+const t85PureRules = [t85Fake(ttTermStart, ttTermEnd), t85Fake(t85B2Start, t85B2End)];
+const t85Inside = pickTerm(t85PureRules, D);                       // 오늘이 든 학기
+const t85Between = pickTerm(t85PureRules, addDays(D, 65));         // 둘 사이 — 어디에도 안 든다
+const t85Empty = pickTerm([], D);                                  // 규칙이 없다
+ok("T-85 6 ★ 대표 학기: 오늘이 든 학기 / 없으면 가장 늦게 시작하는 학기 / 규칙이 없으면 null (순수 함수)",
+  t85Inside?.start === ttTermStart && t85Between?.start === t85B2Start && t85Empty === null,
+  `안=${JSON.stringify(t85Inside)} 사이=${JSON.stringify(t85Between)} 빈것=${JSON.stringify(t85Empty)}`);
+
+/* 7 ★ **PUT이 돌려주는 것은 대표 학기가 아니라 방금 저장한 학기다.**
+ *   화면 토스트가 이 값으로 *"N칸"* 을 말하므로, 대표를 주면 **지난 학기를 저장했을 때
+ *   남의 칸 수를 말한다** — 저장은 됐는데 화면이 8을 말하는 자리다. */
+ok("T-85 7 ★ PUT 응답은 방금 저장한 학기다 (B′ — 3칸 · 범위도 B′)",
+  t85B2Saved.json?.rules?.length === 3
+  && t85B2Saved.json?.term?.start === t85B2Start && t85B2Saved.json?.term?.end === t85B2End,
+  `칸=${t85B2Saved.json?.rules?.length} 범위=${JSON.stringify(t85B2Saved.json?.term)}`);
+
+/* 8 ★ **과목명은 NFC로 저장한다** (설계 DEC-30). 삼성 노트 폴더 이름과 정본을 대조하는 자리가
+ *   NFD로 오므로, 정규화 없이는 **화면에서 같아 보이는 두 과목이 갈린다.**
+ *   ⚠️ 픽스처가 이미 NFC면 이 검사는 **저절로 참**이다 — 그래서 *들어간 것이 정말 NFD였는지*를
+ *      함께 센다(알려진 정답을 먹이는 것과 같은 자리 · 함정 17). */
+const t85NfdWasDifferent = t85Nfd !== t85Nfd.normalize("NFC");
+const t85Stored = (raw.prepare(
+  "SELECT subject FROM timetable_rules WHERE term_start=? AND weekday=4").get(t85B2Start) as any)?.subject;
+ok("T-85 8 ★ NFD로 들어온 과목명이 NFC로 저장된다 (들어간 것이 NFD였다는 것도 함께 센다)",
+  t85NfdWasDifferent && t85Stored === "다음학기전공3"
+  && t85Stored === t85Stored?.normalize("NFC"),
+  `NFD였나=${t85NfdWasDifferent} 저장된길이=${t85Stored?.length} NFC길이=${"다음학기전공3".length}`);
+
+/* 9 뒷정리 — **빈 규칙으로 저장하면 그 범위와 겹치는 학기만 비워진다.**
+ *   ⚠️ 이것이 안 되면 §T-60이 A 아닌 규칙을 쥔 채 돈다. 그래서 치우고 **A로 돌아왔는지 센다.** */
+const t85Clean = await api("PUT", "/api/timetable",
+  { rules: [], term_start: t85B2Start, term_end: t85B2End });
+// ⚠️ **응답이 비었는가는 여기서 안 센다** — 그것은 7의 명제(응답 = 방금 저장한 학기)이고,
+//    업고 있으면 7을 겨냥한 변이가 9까지 죽여 **9가 자기 몫을 못 센다.** 여기는 원장만 본다.
+ok("T-85 9 빈 규칙 저장은 그 범위만 비운다 — 행 수가 A(8)로 돌아온다 (뒷정리)",
+  t85Clean.status === 200 && t85Rows() === 8 && t85ARows() === 8,
+  `상태=${t85Clean.status} 전체=${t85Rows()} A=${t85ARows()}`);
 
 // ── Level 2가 밤마다 다른 말을 한다 (T-60 · ADR-047) ─────────
 //

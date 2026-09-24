@@ -196,7 +196,9 @@ app.put("/api/settings/:key", async (c) => {
 // ── 시간표 (T-58 · ADR-045) — 규칙만 저장하고 날짜는 조회 시 전개한다 ──
 // `parse`는 **순수하다** — 저장하지 않는다. 확인 화면이 그 결과를 고쳐서 `PUT`으로 보낸다.
 // ⚠️ 그래서 `parse`와 `PUT`이 갈라져 있다. 한 문으로 합치면 확인할 자리가 사라진다.
-app.get("/api/timetable", async (c) => c.json(await timetable.list(c.env)));
+// ⚠️ GET은 **대표 학기 하나**만 준다(T-85) — 그래서 시계가 필요하다. 모든 학기를 주면
+//    화면이 섞인 초안을 한 범위로 저장해 지난 학기 규칙을 이번 학기로 복제한다.
+app.get("/api/timetable", async (c) => c.json(await timetable.list(c.env, c.get("t"))));
 app.post("/api/timetable/parse", async (c) =>
   c.json(timetable.parseText((await body<{ text?: unknown }>(c)).text)));
 app.put("/api/timetable", async (c) =>

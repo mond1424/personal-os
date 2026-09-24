@@ -43,9 +43,9 @@
 | GET `/api/periods/:id` | — | period + `{goals}` | `periods.getPeriodDetail` |
 | PATCH `/api/periods/:id` | `{title?, start_date?, end_date?, color?, goals?}` | `{id}` | `periods.updatePeriod` |
 | DELETE `/api/periods/:id` | — | `{id}` (task 참조 시 FK 409) | `periods.deletePeriod` |
-| GET `/api/timetable` | — | `{rules[], term:{start,end}\|null}` | `timetable.list` |
+| GET `/api/timetable` | — | `{rules[], term:{start,end}\|null}` — **대표 학기 하나만**(오늘이 든 학기 → 없으면 가장 늦게 시작하는 학기 → 규칙이 없으면 `term:null`, `rules:[]`). ⚠️ 모든 학기를 주면 화면이 섞인 초안을 한 범위로 저장해 **지난 학기가 이번 학기로 복제된다**(T-85) | `timetable.list` |
 | POST `/api/timetable/parse` | `{text}` | `{rules[], unread[{line,text,reason}], term\|null}` · **순수 — 저장 안 함** | `timetable.parseText` |
-| PUT `/api/timetable` | `{rules[{subject,weekday,start_time,end_time}], term_start, term_end}` | `{rules[], term}` · **전체 교체** · 범위 없으면 400 | `timetable.replace` |
+| PUT `/api/timetable` | `{rules[{subject,weekday,start_time,end_time}], term_start, term_end}` | `{rules[], term}` — **방금 저장한 학기**(대표 학기가 아니다 — 토스트가 이 칸 수를 말한다). **겹치는 학기만 교체**(T-85) · 범위 없으면 400 · 과목명은 NFC로 저장(DEC-30) | `timetable.replace` |
 | POST `/api/events` | `{title, date, time?, period_id?, note?}` | `{id, ...}` | `events.create` |
 | PATCH `/api/events/:id` | `{title?, date?, time?, period_id?, note?}` | `{...}` (마감일 409) | `events.update` |
 | DELETE `/api/events/:id` | — | `{id, deleted}` (마감일 409) | `events.remove` |
@@ -147,15 +147,21 @@
 - `update(env, id, input)` → `{...}` · 마감일 트리거 409
 - `remove(env, id)` → `{id, deleted}` · 마감일 트리거 409
 
-### timetable.ts — 시간표 (0021 · ADR-045 · T-58)
+### timetable.ts — 시간표 (0021 · ADR-045 · T-58 · T-85)
 - **규칙을 저장하고 날짜는 조회 시 전개한다.** 인스턴스는 **어디에도 저장되지 않는다**(원칙 1)
+- ★ **규칙은 학기마다 쌓인다**(T-85 · 설계 `docs/pos-obsidian-design.md` DEC-27). 전체 교체였을 때는 다음 학기를 넣는 순간 이번 학기 규칙이 사라졌고, **지난 날짜를 열면 그날의 수업이 없어졌다** — 전개분은 파생이라 되살릴 곳이 없다
 - `parseText(text)` → `{rules[], unread[], term|null}` — **순수 함수**. `<요일> <시>시-<시>시 <과목>[, …]`
   - ⚠️ **모델을 부르지 않는다**(비결정론·비용·오프라인). 정확성은 파서가 아니라 **확인 화면**이 진다
   - ★ **못 읽은 줄을 버리지 않는다** — `unread`에 `{line, text, reason}`으로 원문 그대로 실어 보낸다
   - `공강`·빈 줄은 읽은 것이고 규칙이 없는 것이 맞다 → `unread`에 안 들어간다
   - `학기 YYYY-MM-DD~YYYY-MM-DD` 줄이 있으면 `term`으로 딴다
-- `replace(env, t, {rules, term_start, term_end})` → `list()` — **전체 교체**(부분 수정 없음)
+- `replace(env, t, {rules, term_start, term_end})` → `{rules, term}` — **겹치는 학기만** 교체(한 학기 안에서는 부분 수정 없음)
+  - 겹침: `term_start <= 새 term_end AND term_end >= 새 term_start`. `rules: []`로 저장하면 그 범위와 겹치는 학기만 비워진다
+  - ★ **돌려주는 것은 방금 저장한 학기다**(대표 학기가 아니다) — 대표를 주면 지난 학기를 저장했을 때 화면이 **남의 칸 수**를 말한다
   - ⚠️ **학기 범위 기본값이 없다** — 없으면 400. 박아 두면 다음 학기에 조용히 틀린 날짜로 전개된다
+  - 과목명은 `trim()` 뒤 `normalize("NFC")`로 저장한다(설계 DEC-30). 이미 저장된 행은 안 고친다
+- `pickTerm(rules, today)` → `{start, end}|null` — **순수 함수**(DB도 시계도 안 본다). 대표 학기: 오늘이 든 학기 → 없으면 `term_start`가 가장 늦은 학기 → 규칙이 없으면 `null`
+- `list(env, t)` → `{rules, term}` — `pickTerm`이 고른 **한 학기**만. 나머지 학기는 남아 있되 안 준다
 - `expand(rules, start, end)` → `ClassInstance[]` `{date, subject, start_time, end_time, rule_id}`
   - 창 상한 400일 — 넘으면 **빈 배열이 아니라 400**(빈 시간표와 구별돼야 한다)
   - 학기 밖 날짜는 안 만든다
@@ -324,7 +330,8 @@
 **guard(0010)** — `guardEventsList(env, limit)`(**`later_fires` 동반** · 거르지 않는다 · T-79 ③) · `guardEventGet(env, id)` · `stInsertGuardEvent(env, e)` · `stReactGuardEvent(env, id, reaction, reason, at)`(`AND reaction IS NULL`) · `stMarkGuardAsked(env, id)`(**`MAX(IFNULL(asked,0),1)` — 올리기만 한다** · T-70 · 0023) · `stClassifyOverride` · `stSetGuardOutcome`(`AND outcome IS NULL`) · `guardEventsUnreacted(env, before)` · `guardEventsPendingOutcome(env)` · `guardWatchL2Recent(env, limit)`(감지 L2의 최근 반응 — 연속 무시 재료 · T-60) · `guardAiCallsOn(env, onDate)`(ADR-024 일일 상한) · `guardAiVerdictFor(env, onDate, eventId)`(ADR-024 캐시 — `'unavailable'`은 제외, `fired_at DESC, id DESC`)
 **guard_modes** — `guardModes(env)` · `guardActiveMode(env)` · `stClearActiveMode` · `stSetActiveMode` (부분 유니크 인덱스 때문에 **해제 → 설정** 순서)
 **watch_apps** — `watchApps(env, source?)` · `stAddWatchApp` · `stRemoveWatchApp`
-**시간표 (0021)** — `timetableRules(env)` → `TimetableRule[]` · `stClearTimetable(env)` · `stInsertTimetableRule(env, id, subject, weekday, start, end, termStart, termEnd, now)`
+**시간표 (0021)** — `timetableRules(env)` → `TimetableRule[]`(전 학기) · `stClearTimetableOverlapping(env, termStart, termEnd)` · `stInsertTimetableRule(env, id, subject, weekday, start, end, termStart, termEnd, now)`
+  ⚠️ **전체 삭제문은 없다**(T-85가 `stClearTimetable`을 지웠다) — 학기 하나를 비우려면 그 범위로 `rules: []`를 저장한다
   ⚠️ **전개 SQL은 없다** — 규칙만 읽어 오고 날짜 전개는 `services/timetable.expand`가 한다(파생을 SQL로 물화하지 않는다)
 **장소 (0022)** — `places(env)`(방문 수·마지막 시각을 **조인으로 센다**) · `placeByNet(env, netId)` · `placeById` · `stInsertPlace` · `stDeletePlace`(방문은 FK CASCADE) · `lastVisit(env)`(전이 판정이 읽는 한 행) · `visitsSince(env, fromDate, limit)` · `stInsertVisit(env, placeId, at, date, now)`
   ⚠️ **"지금 어디인가"를 주는 SQL은 없다** — 그것은 `lastVisit` 하나에서 나오는 파생이다(원칙 1)
