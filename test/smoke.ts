@@ -19,7 +19,7 @@ import type { Env } from "../src/types";
 import { makeD1, rawOf } from "./d1shim";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const schema = ["0001_init.sql", "0002_models.sql", "0003_ai_provider.sql", "0004_events.sql", "0005_delete_scope.sql", "0006_fix_model_high.sql", "0007_defer_reason.sql", "0008_cancel_task.sql", "0009_cancel_reason.sql", "0010_guard.sql", "0011_guard_sync.sql", "0012_life_model.sql", "0013_analysis_backfill.sql", "0014_schema_titles.sql", "0015_me_history_reason.sql", "0016_guard_unavailable_reason.sql", "0017_ai_reason.sql", "0018_collected_items.sql", "0019_guard_ai_immutable.sql", "0020_cal_sync.sql", "0021_timetable.sql", "0022_places.sql", "0023_guard_asked.sql", "0024_collected_categories.sql", "0025_collected_task_id.sql"]
+const schema = ["0001_init.sql", "0002_models.sql", "0003_ai_provider.sql", "0004_events.sql", "0005_delete_scope.sql", "0006_fix_model_high.sql", "0007_defer_reason.sql", "0008_cancel_task.sql", "0009_cancel_reason.sql", "0010_guard.sql", "0011_guard_sync.sql", "0012_life_model.sql", "0013_analysis_backfill.sql", "0014_schema_titles.sql", "0015_me_history_reason.sql", "0016_guard_unavailable_reason.sql", "0017_ai_reason.sql", "0018_collected_items.sql", "0019_guard_ai_immutable.sql", "0020_cal_sync.sql", "0021_timetable.sql", "0022_places.sql", "0023_guard_asked.sql", "0024_collected_categories.sql", "0025_collected_task_id.sql", "0026_collected_title_backfill.sql"]
   .map((f) => readFileSync(join(here, "../migrations/" + f), "utf8")).join("\n");
 const env: Env = { DB: makeD1(schema) };
 const raw = rawOf(env.DB);
@@ -2122,29 +2122,40 @@ putCollected("t42-past", "지난 것", atPlus(-2 * DAY));               // 과�
 putCollected("t42-dis", "거절한 것", atPlus(3 * DAY), "dismissed");  // 이미 거절
 
 const pend1 = (await api("GET", "/api/collected/pending")).json;
+/* ⚠️ **id 로 본다 — 원문으로 보지 않는다** (T-86 · 2026-10-01에 고쳤다). 원문(`summary`)으로 보면
+ *    *"응답의 summary 를 다듬는"* 변이가 **이 창 검사와 아래 수락 전부를** 함께 죽인다 —
+ *    그 명제(응답의 summary 는 원문)는 `[T-86]` 5 의 것이다(`AGENT-CHAIN` §8 *"남의 명제를 업는다"*). */
+const T42_IN = "2026-t42-t42-in";
 ok("pending이 7일 밖·과거·dismissed를 안 준다 — 창 안 하나만",
-  pend1.length === 1 && pend1[0].summary === RAW_TITLE, JSON.stringify(pend1.map((r: any) => r.summary)));
+  pend1.length === 1 && pend1[0].id === T42_IN, JSON.stringify(pend1.map((r: any) => r.summary)));
 
 // ⚠️ **위치(`[0]`)로 고르지 않는다.** 그러면 아래 둘이 검사 1의 출력에 매달려,
 //    창 필터가 깨졌을 때 **셋이 한꺼번에** 죽는다(변이가 무엇을 죽였는지 못 읽는다).
-//    아는 원문으로 집으면 각 검사가 자기 것만 본다.
-const accId = pend1.find((r: any) => r.summary === RAW_TITLE)?.id;
+//    아는 id 로 집으면 각 검사가 자기 것만 본다.
+const accId = pend1.find((r: any) => r.id === T42_IN)?.id;
 const acc1 = (await api("POST", `/api/collected/${accId}/accept`)).json;
 // ⚠️ **`?? ""` 는 관대함이 아니라 가드다** — `event_id` 가 없는 응답(예: 묻기로 돌아선 변이)에서
 //    `.get(null)` 이 **던져서 러너를 죽이면** 그 판은 아무것도 안 잰 것이 된다(함정 16 · T-79 M7).
-//    아래 단언은 그대로 `evRow?.ti === RAW_TITLE` 을 요구하므로 **무르게 하지 않는다.**
+/* ⚠️⚠️ **title 단언을 뺐다 — T-86이 명제를 뒤집었다** (2026-10-01 · 수는 그대로).
+ *   옛 명제는 *"title 은 원문 그대로"*(T-42 결정 ②)였고, 이제 event 도 이름만 받는다.
+ *   ★ **뒤집어 여기 다시 세우지 않았다** — 같은 명제를 아래 T-83 검사 2(= T-86 검사 1)가 진다.
+ *     여기도 세우면 변이 하나가 둘을 죽여 표를 못 읽는다(`AGENT-CHAIN` §8 *"남의 명제를 업는다"*). */
 const evRow = raw.prepare("SELECT title AS ti, date AS dt, time AS tm FROM events WHERE id=?").get(acc1.event_id ?? null) as any;
-ok("accept가 events를 만들고 state·event_id를 잇는다 · title은 원문 그대로",
-  !!acc1.event_id && evRow?.ti === RAW_TITLE && evRow?.tm === atPlus(2 * DAY).slice(11, 16)
+ok("accept가 events를 만들고 state·event_id를 잇는다 · 시각은 원문 그대로 (title 은 T-86 1이 진다)",
+  !!acc1.event_id && evRow?.tm === atPlus(2 * DAY).slice(11, 16)
   && (raw.prepare("SELECT state AS s, event_id AS e FROM collected_items WHERE id=?").get(accId) as any)?.s === "accepted",
   `${JSON.stringify(acc1)} ${JSON.stringify(evRow)}`);
 
-// ★ 2의 짝. 느린 네트워크에서 두 번 눌리는 것이 이 카드의 기본 조건이다.
+/* ★ 2의 짝. 느린 네트워크에서 두 번 눌리는 것이 이 카드의 기본 조건이다.
+ * ⚠️ **개수를 제목으로 세지 않는다** (T-86 · 2026-10-01에 고쳤다) — 원문 제목으로 세고 있어서
+ *    event 제목이 바뀌자 **멱등과 무관하게 0**이 됐다. 앞뒤 총수로 센다 — 제목이 뭐든 안 매달린다. */
+const evTotal = () => (raw.prepare("SELECT COUNT(*) AS n FROM events").get() as any).n as number;
+const evBefore2 = evTotal();
 const acc2 = (await api("POST", `/api/collected/${accId}/accept`)).json;
-const evCount = (raw.prepare("SELECT COUNT(*) AS n FROM events WHERE title=?").get(RAW_TITLE) as any).n;
+const evAfter2 = evTotal();
 ok("★ accept를 두 번 불러도 events가 하나다 (멱등)",
-  acc2.event_id === acc1.event_id && acc2.duplicate === true && evCount === 1,
-  `${JSON.stringify(acc2)} events=${evCount}`);
+  acc2.event_id === acc1.event_id && acc2.duplicate === true && evAfter2 === evBefore2,
+  `${JSON.stringify(acc2)} events ${evBefore2}→${evAfter2}`);
 
 putCollected("t42-d2", "거절할 것", atPlus(4 * DAY));
 const dId = (await api("GET", "/api/collected/pending")).json.find((r: any) => r.summary === "거절할 것").id;
@@ -2342,11 +2353,13 @@ ok("4 ★ task 제목은 summary 에서 끝의 '기한'만 뗀 것이다 (전수
     (raw.prepare("SELECT title AS t FROM tasks WHERE id=?").get(t78Row?.k) as any)?.t}"`);
 
 /* 5 회귀 — **event 는 전과 똑같다.** task 를 얹으면서 달력 쪽을 건드리지 않았는가.
- *   ⚠️ **날짜까지 본다** — 위 T-42 검사는 title·time 만 보고 `date`를 안 본다. */
+ *   ⚠️ **날짜까지 본다** — 위 T-42 검사는 time 만 보고 `date`를 안 본다.
+ *   ⚠️ **title 은 뺐다 — T-86이 명제를 뒤집었다**(원문 → 이름). 뒤집은 명제는 T-83 검사 2가 진다
+ *      — 여기도 세우면 변이 하나가 둘을 죽인다(위 T-42 검사와 같은 이유). */
 const t78Ev = raw.prepare(
   "SELECT title AS ti, date AS dt, time AS tm FROM events WHERE id=?").get(t78Row?.e) as any;
-ok("5 event는 전과 똑같다 — title·date·time (T-78 회귀)",
-  t78Ev?.ti === RAW_TITLE && t78Ev?.dt === atPlus(2 * DAY).slice(0, 10)
+ok("5 event는 전과 똑같다 — date·time (T-78 회귀 · title 은 T-86 1이 진다)",
+  t78Ev?.dt === atPlus(2 * DAY).slice(0, 10)
   && t78Ev?.tm === atPlus(2 * DAY).slice(11, 16),
   `${JSON.stringify(t78Ev)} 기대일=${atPlus(2 * DAY).slice(0, 10)}`);
 
@@ -2365,8 +2378,10 @@ ok("6 ★ dismiss는 task도 event도 안 만든다 (경계)",
 
 /* ── T-83 ① — 할 일은 할 일의 이름을 갖는다 ──────────────────────────────
  *
- * ★★ **2가 이 블록에서 제일 중요하다.** *"둘 다 다듬는"* 구현이 1을 초록으로 통과하고
- *    **달력에서 마감이 마감처럼 안 읽히게 된다** — 화면에서는 오히려 깔끔해 보인다.
+ * ⚠️⚠️ **2의 명제는 T-86이 뒤집었다** (2026-10-01). T-83 때는 *"둘 다 다듬는"* 구현을 막는
+ *    자리였는데, 이제 **둘 다 다듬는 것이 계약**이다 — 원문은 원장(3)에만 남는다.
+ *    ★ 그래서 **3이 이 블록에서 제일 중요해졌다**: *"원문까지 다듬은"* 구현이 1·2를 초록으로
+ *    통과하고, **원장이 원문을 잃은 것은 화면에서 아무도 못 본다**(T-86 §검사 2).
  * ⚠️ **4가 없으면 *"아무 데서나 '기한'을 지우는"* 구현이 통과한다** — 표본이 전부
  *    `"…기한"` 으로 끝나서 1·2·3이 전부 초록이다(T-74 실측 5/5).
  *
@@ -2394,10 +2409,16 @@ ok("1 ★ 수락하면 task 제목에 끝의 '기한'이 없다",
   t83a.taskTitle === "벡터대수학 3주차 연습문제 제출",
   `task="${t83a.taskTitle}"`);
 
-ok("2 ★★ 그런데 event 제목은 그대로 '…기한'이다 (1의 짝 — 달력엔 마감이 맞다)",
-  t83a.evTitle === T83_TAIL, `event="${t83a.evTitle}"`);
+/* 2 ★★★ **명제가 뒤집혔다 — T-86이 이 줄을 고쳤다** (2026-10-01 · 수는 안 늘었다).
+ *   옛 명제: *"event 제목은 그대로 '…기한'이다 — 달력엔 마감이 맞다."*
+ *   T-86 §무엇이 어긋났나: 날짜 상세가 이미 23:59 와 "일정" 칸으로 마감을 말하고, "기한"은
+ *   과목과 무관하게 전부 붙는 **Moodle 의 꼬리**다(원격 9/9). ★ **그대로 뒀으면 옛 동작을 지키는 자물쇠**가 된다.
+ *   ★ **이 줄이 곧 T-86 검사 1이다** — `[T-86]` 블록에 다시 세우지 않았다(두 번 세면 변이 하나가 둘을 죽인다). */
+ok("2 ★★ event 제목도 끝의 '기한'을 뗐다 (T-86 1 · T-86이 명제를 뒤집었다)",
+  t83a.evTitle === "벡터대수학 3주차 연습문제 제출", `event="${t83a.evTitle}"`);
 
-ok("3 ★ collected_items.summary 는 원문 그대로다 (T-74 회귀)",
+// ★ **이 줄이 곧 T-86 검사 2다** — 1·2(T-86 1)의 짝. *"원문까지 다듬은"* 구현은 여기서만 죽는다.
+ok("3 ★★ collected_items.summary 는 원문 그대로다 (T-74 회귀 · T-86 2 — 원문은 원장에만)",
   t83a.summary === T83_TAIL, `summary="${t83a.summary}"`);
 
 // ⚠️ **'기한'을 품고 있되 끝나지 않는다** — 아무 데서나 지우는 구현이 여기서만 죽는다
@@ -2417,6 +2438,164 @@ const t83Hand = (await api("POST", "/api/tasks", { title: T83_HAND })).json;
 const t83HandTitle = (raw.prepare("SELECT title AS t FROM tasks WHERE id=?").get(t83Hand.id) as any)?.t;
 ok("6 ★ 손으로 만든 task 는 안 다듬어진다 (수집분만 — createTask 가 아니라 accept 가 한다)",
   t83HandTitle === T83_HAND, `task="${t83HandTitle}"`);
+
+/* ── T-86 · "기한"은 과제 이름이 아니다 — 원문은 원장에만, 화면은 이름만 ──────────
+ *
+ * T-83이 할 일만 뗐고 일정·들어온 것 목록은 *"…기한"* 그대로였다(2026-10-01 사용자).
+ * ★ 이름을 만드는 함수는 `titleOf` **하나**다 — 일정용·목록용을 따로 짜면 한쪽만 바뀐다.
+ *
+ * 티켓 검사와의 대응 — ⚠️ **새로 세우지 않고 옮긴 것이 둘이다.** 같은 명제를 두 번 세우면
+ * 변이 하나가 둘을 죽여 **어느 검사가 무엇을 지키는지** 가려진다(`AGENT-CHAIN` §8):
+ *   1  수락하면 event.title 에 끝의 "기한"이 없다   ← 위 T-83 검사 2 (명제를 뒤집어 그 자리에 섰다)
+ *   2  summary 는 원문 그대로다                    ← 위 T-83 검사 3 (그대로)
+ *   4  들어온 것 목록이 표시용 이름을 쓴다          ← 화면은 front [T-86] · 여기 4는 *서버가 싣는가*
+ * ⚠️ **기대값은 위 `t83Want` 다** — 티켓의 규칙을 검사 쪽이 다시 쓴 것이다. 구현에서 안 베낀다(함정 15). */
+console.log("\n[T-86] '기한'은 과제 이름이 아니다 — 원문은 원장에만");
+
+/* 경계 표본 — **규칙이 갈리는 자리마다 하나씩.** 일정용 규칙을 따로 짜면(`/ 기한$/` 따위)
+ * 이 중 하나에서 event 와 task 가 갈린다. ⚠️ 4일 뒤 · 지금 시각 — 위 T-83 첫 표본과 **같은 칸**이라
+ * 그 날의 가장 이른 약속(wake)을 새로 만들지 않는다(함정 12 — 이 파일이 만드는 시각을 피한다). */
+const T86_EDGE: [string, string][] = [
+  ["t86-glued", "T-86 붙은기한"],               // 공백 없이 붙었다
+  ["t86-pad", "  T-86 앞뒤 공백 기한  "],       // 앞뒤 공백
+  ["t86-twice", "T-86 겹친 기한 기한"],          // 끝 하나만 뗀다
+  ["t86-mid", "기한 T-86 앞에만"],               // 끝이 아니다 — 그대로
+];
+for (const [uid, s] of T86_EDGE) putCollected(uid, s, atPlus(4 * DAY));
+const t86Pend = (await api("GET", "/api/collected/pending")).json as any[];
+const t86List = (await api("GET", "/api/collected/list")).json as any[];
+const t86Mine = (rows: any[]) => T86_EDGE.map(([uid, s]) => ({ s, r: rows.find((r) => r.id === `2026-t42-${uid}`) }));
+
+/* 4 ★ **서버가 표시용 이름을 싣는다 — 규칙대로** (pending · list 둘 다 · ③).
+ *   ⚠️ 시트는 이 칸을 쓴다(front [T-86] 4). 서버가 안 실으면 화면엔 `undefined` 가 뜨는데
+ *      **front 는 스텁을 먹으므로 그것을 못 본다** — 그래서 이 층에 따로 선다. */
+const t86Bad4 = [...t86Mine(t86Pend), ...t86Mine(t86List)].filter(({ s, r }) => r?.title !== t83Want(s));
+ok("4 ★ pending·list 가 표시용 이름(title)을 싣는다 — 끝의 '기한'만 뗀 것 (경계 전수)",
+  t86Bad4.length === 0,
+  `어긋난것=${JSON.stringify(t86Bad4.map(({ s, r }) => [s, r?.title]))}`);
+
+/* 5 ★ **4의 짝 — 그 응답의 `summary` 칸은 원문 그대로다.** 앞뒤 공백까지 한 글자도.
+ *   ⚠️ 없으면 *"응답의 summary 도 다듬는"* 구현이 4를 초록으로 통과한다 — 시트는 title 만 쓰므로
+ *      화면은 똑같고, **원문을 보여 줄 길이 사라진 것을 아무도 못 본다.** */
+const t86Bad5 = [...t86Mine(t86Pend), ...t86Mine(t86List)].filter(({ s, r }) => r?.summary !== s);
+ok("5 ★ 그 응답의 summary 는 원문 그대로다 (4의 짝 · 공백까지)",
+  t86Bad5.length === 0,
+  `어긋난것=${JSON.stringify(t86Bad5.map(({ s, r }) => [s, r?.summary]))}`);
+
+/* 3 ★ **event·task 제목이 같은 함수에서 나온다 — 같은 입력 → 같은 출력** (경계 전수).
+ *   ⚠️ **이 검사는 *같다*만 센다.** 둘 다 원문이어도 참이다 — 그 상태는 T-83 1·2가 죽는다.
+ *      여기서 *"뗐다"* 까지 요구하면 남의 명제를 업고 변이 하나가 셋을 죽인다. */
+const t86Pairs: { s: string; ev: string | null; tk: string | null }[] = [];
+for (const [uid, s] of T86_EDGE) {
+  const res = (await api("POST", `/api/collected/2026-t42-${uid}/accept`)).json;
+  t86Pairs.push({
+    s,
+    ev: res.event_id ? (raw.prepare("SELECT title AS t FROM events WHERE id=?").get(res.event_id) as any)?.t ?? null : null,
+    tk: res.task_id ? (raw.prepare("SELECT title AS t FROM tasks WHERE id=?").get(res.task_id) as any)?.t ?? null : null,
+  });
+}
+const t86Bad3 = t86Pairs.filter((p) => p.ev == null || p.ev !== p.tk);
+ok("3 ★ event·task 제목이 같은 함수에서 나온다 — 경계 표본 넷 전부 같다",
+  t86Pairs.length === T86_EDGE.length && t86Bad3.length === 0,
+  `갈린것=${JSON.stringify(t86Bad3)}`);
+
+/* ── ④ 소급 — `0026` 을 픽스처에 태운다 ──────────────────────────────────
+ *
+ * ⚠️ **로컬 dev DB 로는 못 잰다** — 과제는 원격 원장에만 있고, 원격 적용은 **되돌릴 수 없는 한 번**이다
+ *    (위 T-70 7c 와 같은 자리). 0025 까지의 표에 행을 넣고 0026 을 적용해 본다.
+ * ⚠️⚠️ **0013 이 물린 모양을 여기서 먼저 태운다** — 트리거에 걸리는 행이 로컬엔 없어서
+ *    로컬은 통과하고 원격에서만 죽었다. 검사 9가 그 행(마감된 날)을 일부러 넣는다.
+ * ⚠️ **던지면 잡아서 기록한다** — 마이그레이션이 던져 러너가 죽으면 그 판은 아무것도 안 잰 것이다(함정 16 · T-79 M7).
+ * 날짜는 오늘에서 **상대로** 잡는다(함정 12) — 이 DB 는 시계를 안 읽지만 규칙은 규칙이다. */
+const T86_MIG = readFileSync(join(here, "../migrations/0026_collected_title_backfill.sql"), "utf8");
+const T86_OPEN = addDays(D, 60), T86_CLOSED = addDays(D, 61);
+const t86Db = (closed: string[]) => {
+  const d = new DatabaseSync(":memory:");
+  for (const f of readdirSync(join(here, "../migrations")).filter((f) => f.endsWith(".sql")).sort()) {
+    if (f >= "0026") break;
+    d.exec(readFileSync(join(here, "../migrations/" + f), "utf8"));
+  }
+  for (const c of closed) {
+    d.prepare("INSERT INTO daily (date, status, closed_at, created_at) VALUES (?, 'closed', ?, ?)")
+      .run(c, `${c}T06:00:00+09:00`, `${c}T06:00:00+09:00`);
+  }
+  return d;
+};
+/** 수락된 수집 하나. event·task 제목을 **따로** 준다 — 사용자가 고친 제목을 흉내 내려고. */
+const t86Put = (d: DatabaseSync, n: number, summary: string, ev: string, tk: string, date = T86_OPEN) => {
+  d.prepare("INSERT INTO events (id, title, date, time, created_at) VALUES (?,?,?,?,?)")
+    .run(`e${n}`, ev, date, "23:59", t0.now);
+  d.prepare("INSERT INTO tasks (id, title, wait_anchor_at, created_at) VALUES (?,?,?,?)")
+    .run(`k${n}`, tk, t0.now, t0.now);
+  d.prepare(`INSERT INTO collected_items
+      (id, uid, source, summary, starts_at, first_seen_at, last_seen_at, state, event_id, task_id, created_at)
+      VALUES (?,?, 'uclass', ?,?,?,?, 'accepted', ?,?,?)`)
+    .run(`c${n}`, `u${n}`, summary, `${date}T23:59:00+09:00`, t0.now, t0.now, `e${n}`, `k${n}`, t0.now);
+};
+const t86Of = (d: DatabaseSync, n: number) => ({
+  ev: (d.prepare("SELECT title AS t FROM events WHERE id=?").get(`e${n}`) as any)?.t,
+  tk: (d.prepare("SELECT title AS t FROM tasks WHERE id=?").get(`k${n}`) as any)?.t,
+  su: (d.prepare("SELECT summary AS s FROM collected_items WHERE id=?").get(`c${n}`) as any)?.s,
+});
+const t86Apply = (d: DatabaseSync) => { try { d.exec(T86_MIG); return null; } catch (e) { return String(e); } };
+
+/* 6·7·8·2b 의 원장 — **마감된 날이 없다.** 9의 표본(마감된 날)을 섞으면 그 행이 이 넷의 결과까지 바꾼다.
+ * ⚠️ **SQL 이 규칙의 두 번째 벌이라 경계를 둘로 가른다** — *떼야 하는 것*(6)과 *떼면 안 되는 것*(8).
+ *    한 검사에 섞으면 *"소급을 안 하는"* 변이와 *"아무 데서나 지우는"* 변이가 **둘 다** 그 검사를 죽여
+ *    어느 쪽이 깨졌는지 못 읽는다. ⚠️ 그래서 *"겹친 기한 기한"* 은 여기 안 넣었다 — 떼야 하면서(끝)
+ *    떼면 안 되는(앞) 것이 한 표본에 있어 어느 쪽에 둬도 두 변이가 함께 죽인다. 앞쪽은 `기한 앞에만` 이 진다.
+ * 기대값은 `t83Want`(검사 쪽 규칙)다 — 원문 그대로인 제목이 **규칙이 낼 답**이 되었는지 본다. */
+const t86M = t86Db([]);
+const T86_M_CUT = ["학기과제 기한", "붙은기한", "  앞뒤 공백 기한  "];   // 떼야 한다
+const T86_M_KEEP = ["기한 앞에만", "기한"];                             // 떼면 안 된다
+t86Put(t86M, 2, "중간고사대체과제 기한", "내가 고친 일정 기한", "내가 고친 할 일 기한");  // 사용자가 고쳤다
+T86_M_CUT.forEach((s, i) => t86Put(t86M, 10 + i, s, s, s));
+T86_M_KEEP.forEach((s, i) => t86Put(t86M, 20 + i, s, s, s));
+const t86MErr = t86Apply(t86M);
+const t86Rows = (ss: string[], base: number) => ss.map((s, i) => ({ s, ...t86Of(t86M, base + i) }));
+
+/* 6 ★ **소급 — 원문과 같던 제목은 떼어졌다** (event · task 둘 다 · 평범한 꼬리 · 붙은 · 앞뒤 공백).
+ *   ★ 붙은·공백 표본이 *"' 기한' 만 찾는"* SQL 을 잡는다 — `titleOf` 는 둘 다 뗀다. */
+const t86Bad6 = t86Rows(T86_M_CUT, 10).filter((r) => r.ev !== t83Want(r.s) || r.tk !== t83Want(r.s));
+ok("6 ★ 소급 — 원문과 같던 event·task 제목에서 끝의 '기한'이 규칙대로 떼어졌다 (붙은·공백 포함)",
+  t86MErr === null && t86Bad6.length === 0,
+  `err=${t86MErr} 어긋난것=${JSON.stringify(t86Bad6)}`);
+
+/* 7 ★★ **6의 짝 — 사용자가 고친 제목은 한 글자도 안 바뀐다.**
+ *   ⚠️ 표본이 **일부러 '기한'으로 끝난다** — 그래야 지켜 주는 것이 *"원문과 같을 때"* 하나뿐이다.
+ *      없으면 *"수집분이면 전부 고치는"* 소급이 6을 초록으로 통과한다. */
+const t86Two = t86Of(t86M, 2);
+ok("7 ★★ 소급 — 사용자가 고친 event·task 제목은 한 글자도 안 바뀐다 (6의 짝)",
+  t86Two.ev === "내가 고친 일정 기한" && t86Two.tk === "내가 고친 할 일 기한",
+  JSON.stringify(t86Two));
+
+/* 8 ★ **경계 — '기한'으로 안 끝나는 제목은 소급에서도 안 바뀐다.** 떼면 비는 `기한` 하나도 그대로다.
+ *   *"어디서도"* 의 나머지 자리(수락·목록)는 위 T-83 4 와 이 블록 3·4 가 같은 함수로 진다. */
+const t86Bad8 = t86Rows(T86_M_KEEP, 20).filter((r) => r.ev !== r.s || r.tk !== r.s);
+ok("8 ★ 소급 — '기한'으로 안 끝나는 제목·떼면 비는 제목은 그대로다 (경계)",
+  t86MErr === null && t86Bad8.length === 0,
+  `err=${t86MErr} 어긋난것=${JSON.stringify(t86Bad8)}`);
+
+/* 2b ★★ **소급도 원장을 안 건드린다** — 위 T-83 3(= T-86 2)의 소급판. 전 표본의 summary 가 넣은 그대로다.
+ *   ⚠️ 없으면 *"원문까지 다듬는"* 소급이 6·7·8 을 전부 초록으로 통과한다 — 그 셋은 제목만 본다. */
+const t86Bad2b = [...t86Rows(T86_M_CUT, 10), ...t86Rows(T86_M_KEEP, 20),
+  { s: "중간고사대체과제 기한", ...t86Two }].filter((r) => r.su !== r.s);
+ok("2b ★★ 소급도 원장(summary)을 안 건드린다 — 전 표본 그대로 (T-86 2의 소급판)",
+  t86MErr === null && t86Bad2b.length === 0,
+  `err=${t86MErr} 어긋난것=${JSON.stringify(t86Bad2b)}`);
+
+/* 9 ★★ **마감된 날의 일정은 건너뛴다 — 그리고 파일이 안 죽는다.**
+ *   `trg_events_frozen_upd` 는 **어떤 UPDATE 든** 막는다. 거르지 않으면 한 행이 UPDATE 전체를 ABORT 시키고,
+ *   원격 적용이 통째로 실패한다(원격엔 그런 행이 둘 있다 — 09-09 · 09-26).
+ *   ⚠️ **다른 원장에 둔다** — 6과 같은 원장이면 이 변이가 6까지 죽인다(표본 탓).
+ *   ★ 이 검사는 *소급을 아예 안 하는* 구현에서도 참이다 — 그 상태는 6이 죽는다. */
+const t86F = t86Db([T86_CLOSED]);
+t86Put(t86F, 1, "마감된 날 과제 기한", "마감된 날 과제 기한", "마감된 날 과제 기한", T86_CLOSED);
+const t86FErr = t86Apply(t86F);
+const t86Frozen = t86Of(t86F, 1);
+ok("9 ★★ 소급 — 마감된 날의 일정은 원문 그대로 건너뛰고 마이그레이션이 안 죽는다 (트리거 우회 없음)",
+  t86FErr === null && t86Frozen.ev === "마감된 날 과제 기한",
+  `err=${t86FErr} ${JSON.stringify(t86Frozen)}`);
 
 /* ── T-80 · 마감이 지났으면 묻는다 ────────────────────────────────────
  *

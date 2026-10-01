@@ -2206,8 +2206,8 @@ console.log("\n[수집 제안 카드 — 곧 닥치는 것만, 원문 그대로]
 // 똑같이 안 보이므로, 여기서도 **둘을 가르는 것이 짝**이다 — 그 자리를 네 번 물렸다.
 const t42Bar = $("#td-coll");
 const t42Rows = [
-  { id: "t42-a", source: "uclass", summary: "5주차 과제 (~9/3 23:00) 기한", starts_at: "2026-09-03T23:00:00+09:00" },
-  { id: "t42-b", source: "uclass", summary: "실험2 결과보고서", starts_at: "2026-09-05T18:00:00+09:00" },
+  { id: "t42-a", source: "uclass", summary: "5주차 과제 (~9/3 23:00) 기한", title: "5주차 과제 (~9/3 23:00)", starts_at: "2026-09-03T23:00:00+09:00" },
+  { id: "t42-b", source: "uclass", summary: "실험2 결과보고서", title: "실험2 결과보고서", starts_at: "2026-09-05T18:00:00+09:00" },
 ];
 await ev(`(async()=>{
   window.__t42 = { pending: ${JSON.stringify(t42Rows)}, sent: [],
@@ -2229,11 +2229,15 @@ ok("① 대기가 있으면 카드가 뜬다 · state='ask' · 건수가 문구�
   t42Bar.dataset.state === "ask" && t42Bar.style.display === "flex"
   && txt("#td-coll-text").includes("2건"),
   `${t42Bar.dataset.state} / ${txt("#td-coll-text")}`);
-// ★ 결정 ②는 **문자열로만** 확인된다. 원문이 그대로 나오고, 우리가 뜻을 붙이지 않는다.
+/* ★ 결정 ②는 **문자열로만** 확인된다 — 우리가 뜻을 붙이지 않는다.
+ * ⚠️⚠️ **"원문이 그대로 나온다" 는 T-86이 뒤집었다** (2026-10-01 · 수는 그대로). 시트는 이제 서버가 준
+ *    이름(`title`)을 쓰고, 그 명제는 `[T-86]` 4가 진다. ★ 여기는 **이름이 원문의 앞부분**이라
+ *    *"원문을 그대로 보여 주는"* 변이에서도 참이다 — **일부러 그렇게 뒀다.** 같은 명제를 두 곳이 세면
+ *    변이 하나가 둘을 죽인다(`AGENT-CHAIN` §8). 여기 남은 것은 *"그 줄이 뜬다 · 뜻을 안 붙인다"* 다. */
 $("#td-coll-open").click();
 await sleep(120);
-ok("② 시트에 원문이 그대로 나온다 · '마감'·'제출'을 우리가 붙이지 않는다",
-  txt("#coll-list").includes("5주차 과제 (~9/3 23:00) 기한")
+ok("② 시트에 그 줄이 나온다 · '마감'·'제출'을 우리가 붙이지 않는다 (원문 → 이름은 T-86 4)",
+  txt("#coll-list").includes("5주차 과제 (~9/3 23:00)")
   && !txt("#td-coll-text").includes("마감") && !txt("#td-coll-text").includes("제출"),
   txt("#coll-list").slice(0, 80));
 // "전부 추가"가 없다 — 첫 수집에 무엇이 오는지 아직 못 봤다(§금지 3행).
@@ -2319,16 +2323,19 @@ ok("⑥ 조회가 실패해도 Today를 막지 않는다 · state='error'",
 // ★ 아래 제목은 실측이다: 이 과제의 과목은 **벡터대수학이 아니라 전자기및연습1**이다.
 const T74_CAT = "전자기및연습1 (2026-20, 45004_01_U)";
 const T74_TITLE = "벡터대수학 2주차 연습문제 제출 기한";
+/* ⚠️ **스텁에 `title` 을 실었다 — 서버 응답 모양이 T-86에서 바뀌었다.** 시트는 그 칸을 쓴다.
+ *   아래 단언은 *이름*(끝의 기한 없이)을 보고, 이 검사의 명제(과목이 제목을 덮지 않는다)는 그대로다. */
+const T74_NAME = "벡터대수학 2주차 연습문제 제출";
 await ev(`renderCollected([
-  { id: "t74-a", source: "uclass", summary: ${JSON.stringify(T74_TITLE)},
+  { id: "t74-a", source: "uclass", summary: ${JSON.stringify(T74_TITLE)}, title: ${JSON.stringify(T74_NAME)},
     starts_at: null, categories: ${JSON.stringify(T74_CAT)} },
-  { id: "t74-b", source: "uclass", summary: "개인 일정", starts_at: null, categories: null }
+  { id: "t74-b", source: "uclass", summary: "개인 일정", title: "개인 일정", starts_at: null, categories: null }
 ])`);
 const t74A = $("#coll-list [data-cid='t74-a']");
 const t74B = $("#coll-list [data-cid='t74-b']");
 ok("★ 과목이 제목 위에 뜬다 — 제목은 그대로 남는다 (덮지도 지우지도 않는다)",
   t74A?.querySelector(".ec")?.textContent === "전자기및연습1"
-  && (t74A?.textContent || "").includes(T74_TITLE),
+  && (t74A?.textContent || "").includes(T74_NAME),
   `${t74A?.querySelector(".ec")?.textContent} / ${(t74A?.textContent || "").slice(0, 50)}`);
 ok("★ 괄호 안(학기·코드)은 화면에 없다 — 저장은 원문, 표시는 과목명까지",
   !!t74A && !t74A.textContent.includes("2026-20") && !t74A.textContent.includes("45004_01_U"),
@@ -2337,6 +2344,21 @@ ok("★ 괄호 안(학기·코드)은 화면에 없다 — 저장은 원문, 표
 ok("★ 짝 — 과목이 없으면 그 줄이 아예 없다",
   !t74B?.querySelector(".ec") && (t74B?.textContent || "").includes("개인 일정"),
   (t74B?.outerHTML || "").slice(0, 90));
+
+/* ── T-86 · 들어온 것 시트는 서버가 준 이름을 쓴다 (③) ──────────────
+ * ★ 스텁의 `title` 은 **규칙으로는 못 만드는 값**이다 — 프런트가 `summary` 에서 이름을 다시 만들면
+ *   (규칙을 두 벌로 짜면) 그 값이 안 나와 여기서 죽는다. `summary` 를 그대로 보여 줘도 죽는다.
+ *   ⚠️ 실제 서버라면 `"T-86 원문 제목"` 을 줬을 것이다 — **그 값을 쓰면 두 변이를 못 가른다.**
+ * ⚠️ **서버가 그 칸을 싣는지는 smoke [T-86] 4가 진다** — 이 층은 스텁을 먹는다(층을 나눠야 변이가 읽힌다).
+ * ★ 자기 id 로 묻는다 — `renderCollected` 가 목록을 통째로 갈지만, 남의 줄을 세지 않는 습관이다(§8 ③). */
+console.log("\n[T-86] 들어온 것 시트는 서버가 준 이름을 쓴다");
+const T86_RAW = "T-86 원문 제목 기한";
+const T86_NAME = "T-86 서버가 지은 이름";
+await ev(`renderCollected([{ id: "t86-a", source: "uclass", summary: ${JSON.stringify(T86_RAW)},
+  title: ${JSON.stringify(T86_NAME)}, starts_at: null, categories: null }])`);
+const t86Text = $("#coll-list [data-cid='t86-a'] .en")?.textContent || "";
+ok("4 ★ 시트가 서버가 준 이름(title)을 쓴다 — 원문도, 프런트가 만든 이름도 아니다",
+  t86Text.includes(T86_NAME) && !t86Text.includes("원문 제목"), `"${t86Text.slice(0, 60)}"`);
 
 await ev(`(async()=>{
   Api.collectedPending = window.__t42.old[0];
@@ -2355,9 +2377,9 @@ console.log("\n[T-75] 가서 보는 길의 입구 — Works · 대기 위");
 const t75Day = ev(`S.today.date`);
 const t75Plus = (d) => ev(`addDaysStr(${JSON.stringify(t75Day)}, ${d})`);
 const t75Rows = [
-  { id: "t75-a", source: "uclass", summary: "중간고사대체과제 기한",
+  { id: "t75-a", source: "uclass", summary: "중간고사대체과제 기한", title: "중간고사대체과제",
     starts_at: `${await t75Plus(70)}T23:59:00+09:00`, categories: null },
-  { id: "t75-b", source: "uclass", summary: "학기과제 기한",
+  { id: "t75-b", source: "uclass", summary: "학기과제 기한", title: "학기과제",
     starts_at: `${await t75Plus(70)}T23:59:00+09:00`, categories: null },
 ];
 const t75Entry = $("#coll-entry");
@@ -2429,7 +2451,7 @@ const t80At = (d) => ev(`addDaysStr(${JSON.stringify(t80Day)}, ${d})`);
  *   누른 것을 그대로 보내고, 토스트는 서버가 준 사실만 말한다."*
  *   **서버 계약(무엇을 만드는가)은 smoke [T-80]이 진다** — 층을 나눠야 변이가 어디를 죽였는지 읽힌다.
  * ⚠️ 그래서 `Api.collectedAccept`를 갈아끼운다. 수집 원장에 넣는 왕복은 이 층의 것이 아니다. */
-const t80Rows = (startsAt) => [{ id: "t80-x", source: "uclass", summary: "T-80 과제", starts_at: startsAt, categories: null }];
+const t80Rows = (startsAt) => [{ id: "t80-x", source: "uclass", summary: "T-80 과제", title: "T-80 과제", starts_at: startsAt, categories: null }];
 await ev(`(async()=>{
   window.__t80 = { sent: [], old: [Api.collectedAccept, Api.collectedDismiss], reply: {} };
   Api.collectedAccept = async (id, choice) => {

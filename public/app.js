@@ -733,7 +733,9 @@ async function loadGuardNag() {
  *
  * ★ **문구에 "마감"·"제출"을 쓰지 않는다.** `DTSTART`가 마감 시각인지 아직 모른다
  * (ADR-037 §실측). 이름을 믿는 순간 그것이 해석이고, 개강 첫날 틀린다 —
- * **원문과 시각만** 보여준다. `summary`를 다듬지도 않는다.
+ * **서버가 준 이름(`title`)과 시각만** 보여준다 (T-86 ③).
+ * ⚠️ **여기서 이름을 만들지 않는다** — 끝의 "기한"을 떼는 규칙은 서버 `titleOf` 하나다.
+ *    프런트에 다시 짜면 두 벌이 되고 한쪽만 바뀐다. `summary`(원문)는 응답에 있어도 안 쓴다.
  *
  * **"전부 추가"를 두지 않는다.** 첫 수집에 무엇이 들어오는지 아직 아무도 못 봤다.
  * 지금 만들면 오수집을 한 번에 캘린더에 붓는 버튼이 된다 — 보고 나서 정한다.
@@ -810,13 +812,13 @@ function renderCollected(rows) {
   body.innerHTML = rows.map((r) => {
     // `2026-09-03T23:00:00+09:00` → "9/3(수) 23:00". **원문은 그대로 붙인다.**
     const when = r.starts_at ? `${md(r.starts_at.slice(0, 10))} ${r.starts_at.slice(11, 16)}` : "";
-    // ★ **과목은 얹기만 한다.** 제목(`summary`)은 원문 그대로 남는다 —
-    //   교수가 지은 이름이 틀렸어도 **사용자가 uclass 에서 그 제목으로 찾는다**(T-74 §금지).
+    // ★ **과목은 얹기만 한다.** 이름은 서버가 준 `title` 그대로다 —
+    //   교수가 지은 이름이 틀렸어도 고치지 않는다(T-74 §금지). 서버가 떼는 것은 Moodle 의 꼬리 "기한" 뿐이다(T-86).
     const course = courseOf(r.categories);
     // ★ 버튼 둘을 `.ev-act`로 감싼다 (T-80 ③) — 과거 시각이 지난 것이면 **그 칸만** 세 갈래로 바뀐다.
     //   ⚠️ 줄 전체를 다시 그리지 않는다: 제목·과목은 그대로 두고 물음만 그 자리에 선다.
     return `<div class="evrow" data-cid="${esc(r.id)}">
-      <span class="en" style="flex:1">${course ? `<b class="ec">${esc(course)}</b>` : ""}${esc(when)} · ${esc(r.summary)}</span>
+      <span class="en" style="flex:1">${course ? `<b class="ec">${esc(course)}</b>` : ""}${esc(when)} · ${esc(r.title)}</span>
       <span class="ev-act">
         <button class="go" data-act="add">추가</button>
         <button class="go" data-act="skip" style="color:var(--sub)">무시</button>
@@ -2209,11 +2211,11 @@ function renderCalendarFrame(rotateDir = 0, fill = true) {
   const evByDate = {}, tkByDate = {};
   for (const ev of cal.events || []) (evByDate[ev.date] = evByDate[ev.date] || []).push(ev);
   /* ★★ 같은 수집에서 온 짝이 **같은 칸에** 있으면 할 일 줄을 안 만든다 (T-84).
-   * 마감 1 + 예정 1 = 두 줄인데 **같은 말을 두 번**이고, 제목이 잘려 T-83의 구별이 셀에선 무효다.
+   * 마감 1 + 예정 1 = 두 줄인데 **같은 말을 두 번**이다(T-86 이후엔 이름까지 같다).
    * 남기는 쪽은 `event` 다 — 마감은 안 움직이고, 예정은 움직이면 다른 칸으로 간다.
    *
    * ⚠️ **짝은 `collected_event_id` 로만 안다**(서버가 `collected_items` 에서 실어 준다).
-   *   제목으로 짝지으면 T-83이 갈라 놓은 구별과 사용자가 고친 제목에 함께 물린다.
+   *   제목으로 짝지으면 사용자가 고친 제목과 **소급에서 원문으로 남은 마감된 날의 일정**(0026 · T-86)에 물린다.
    *   ★ 손으로 만든 일정·할 일은 그 칸이 NULL 이라 **절대 안 합쳐진다.**
    * ⚠️⚠️ **같은 칸일 때만이다.** 예정을 앞당기면 두 칸에 하나씩 뜨는 것이 맞다 —
    *   합치는 조건에서 날짜를 빼면 **사용자가 옮긴 것이 화면에서 사라진다**(T-80이 만든 값이다).

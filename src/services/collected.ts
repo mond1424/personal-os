@@ -3,8 +3,8 @@
 // T-41이 `collected_items`에 쌓는다. 여기는 **그중 곧 닥치는 것만 물어** 1탭으로 `events`에 넣는다.
 //
 // ★ **"마감"이라고 쓰지 않는다.** `DTSTART`가 마감 시각인지 아직 모른다(ADR-037 §실측의 ❌ 셋째) —
-//   T-41이 칼럼을 `starts_at`이라 지은 것과 같은 이유다. `summary` 원문을 **다듬지 않고**
-//   그대로 보여주고 그대로 `events.title`에 넣는다. 다듬는 순간 그것이 해석이고, 개강 첫날 틀린다.
+//   T-41이 칼럼을 `starts_at`이라 지은 것과 같은 이유다. `summary` 원문은 **원장에만** 남고
+//   (T-74 — 바뀌지 않는다), 화면·`events.title`·`tasks.title`은 **`titleOf` 하나**가 만든 이름이다 (T-86).
 import * as db from "../db";
 import * as events from "./events";
 // ★ **task 생성 로직을 여기 다시 짜지 않는다**(T-78 §금지). `createTask`가 id 발급·
@@ -39,9 +39,11 @@ export async function pending(env: Env, t: TimeCtx) {
   // ★ `categories`는 보낸다(T-74) — **과목을 아는 유일한 칸**이고 카드가 그것을 얹는다.
   //   ⚠️ **원문 그대로 보낸다.** 괄호 안(학기·코드)을 여기서 떼지 않는다 —
   //   쪼개기는 해석이고, 해석은 **표시하는 쪽**이 한다(0024 §해석 금지).
+  // ★★ `title`은 **표시용 이름**이다 (T-86 ③) — 시트는 이것을 쓴다. ⚠️ `summary`는 원문 그대로 둔다.
+  //   **프런트에 같은 규칙을 다시 짜지 않으려고 서버가 싣는다** — 두 벌이면 한쪽만 바뀐다.
   return rows.results.map((r) => ({
-    id: r.id, source: r.source, summary: r.summary, starts_at: r.starts_at,
-    categories: r.categories,
+    id: r.id, source: r.source, summary: r.summary, title: titleOf(r.summary),
+    starts_at: r.starts_at, categories: r.categories,
   }));
 }
 
@@ -61,8 +63,8 @@ export async function pending(env: Env, t: TimeCtx) {
 export async function list(env: Env) {
   const rows = await db.collectedNewAll(env);
   return rows.results.map((r) => ({
-    id: r.id, source: r.source, summary: r.summary, starts_at: r.starts_at,
-    categories: r.categories,
+    id: r.id, source: r.source, summary: r.summary, title: titleOf(r.summary),
+    starts_at: r.starts_at, categories: r.categories,
   }));
 }
 
@@ -124,8 +126,8 @@ export async function status(env: Env, t: TimeCtx) {
  * *캘린더 전용 · 완료·이월 없음*으로 두었는데 **과제는 둘 다**이기 때문이다:
  *
  * ```
- * event   11/30 23:59 학기과제 기한   ★ 마감. 안 움직인다
- * task    "학기과제 기한"              ★ 할 일. 언제 할지는 움직인다
+ * event   11/30 23:59 학기과제   ★ 마감. 안 움직인다
+ * task    "학기과제"              ★ 할 일. 언제 할지는 움직인다
  * ```
  *
  * ⚠️ **하나로 합치면 둘 중 하나를 잃는다** — 설계가 *"미루기는 복사가 아니라 같은 일의
@@ -146,27 +148,34 @@ export async function status(env: Env, t: TimeCtx) {
  * **보호 규칙은 붙이지 않는다** — 별개의 결정이고 ADR-030의 나머지 절반이다.
  */
 /**
- * ★★★ **할 일의 이름은 할 일이어야 한다** (T-83 ① · ADR-048 계열).
+ * ★★★ **"기한"은 과제 이름이 아니다** (T-83 ① → T-86 · ADR-048 계열).
  *
  * ```
- * event.title   "학기과제 기한"    ★ 맞다. 마감 그 자체이고, 그것이 사실이다
- * task.title    "학기과제 기한"    ⚠️ "기한을 한다" 가 된다
+ * collected_items.summary   "학기과제 기한"   ★ 원문. 원장에만 (T-74 — 바뀌지 않는다)
+ * events.title              "학기과제"        ← T-86
+ * tasks.title               "학기과제"        ← T-83
+ * 들어온 것 목록 (title)     "학기과제"        ← T-86 (보여 줄 때만)
  * ```
  *
- * ★★ **T-78 이 event 와 task 를 가른 것과 같은 자리다** — *"마감은 고정이고 할 일은 이동한다."*
- * 같은 문자열을 쓰면 둘 중 하나가 반드시 틀린다.
+ * ★★ **T-83 은 할 일만 뗐다** — 일정은 *"마감 그 자체"* · *"uclass 에서 그 이름으로 찾는다"* 가
+ *    근거였는데, 날짜 상세가 이미 23:59 와 "일정" 칸으로 마감을 말하고 *"학기과제"* 로 찾아도
+ *    똑같이 나온다. 그리고 수집분이 과목과 무관하게 **전부** `" 기한"` 으로 끝난다(원격 9/9 ·
+ *    2026-10-01) — Moodle 이 마감 일정에 붙이는 꼬리이지 교수가 지은 글자가 아니다.
+ *    ⚠️ 그래서 T-74 의 *"제목을 고치지 마라"* (교수가 틀리게 지은 이름) 에 안 걸린다.
+ *
+ * ★★ **함수는 이것 하나다** — 일정용·목록용을 따로 짜면 한쪽만 바뀐다(T-86 §금지).
+ *    ⚠️ **예외 하나 — 소급 마이그레이션 `0026` 이 SQL 로 같은 규칙을 한 번 더 쓴다.**
+ *    한 번만 도는 일이라 받아들였다. **여기를 고치면 그 파일은 이미 적용된 이력이다.**
  *
  * ⚠️ **끝의 `기한` 하나만 뗀다.** *"제출"·"문제"* 를 떼는 것은 **해석이고 근거가 없다.**
- * ⚠️ **`summary` 저장과 `events.title` 은 원문 그대로다**(T-74) — 근거가 *"사용자가 uclass 에서
- *    그 제목으로 찾는다"* 였고, **찾는 자리는 달력이다.**
  *
- * ★★ **여기가 자리인 이유** — `createTask` 안에서 다듬으면 **손으로 만든 task 까지** 바뀐다.
- *    다듬는 근거는 *"수집한 마감에서 왔다"* 하나이므로 **수집분만**이다(티켓 §금지).
- *    그리고 `task.title` 은 자유 변경 칸이라(`CLAUDE.md` §아키텍처 원칙 — id 불변 / title 자유)
+ * ★★ **`accept` 가 부르는 자리인 이유** — `createTask` 안에서 다듬으면 **손으로 만든 task 까지**
+ *    바뀐다. 다듬는 근거는 *"수집한 마감에서 왔다"* 하나이므로 **수집분만**이다(T-83 §금지).
+ *    그리고 두 title 은 자유 변경 칸이라(`CLAUDE.md` §아키텍처 원칙 — id 불변 / title 자유)
  *    만들 때 한 번 다듬는 것은 **되돌릴 수 있는 해석**이다.
  */
 const DEADLINE_SUFFIX = "기한";
-export function taskTitleOf(summary: string): string {
+export function titleOf(summary: string): string {
   const s = summary.trim();
   if (!s.endsWith(DEADLINE_SUFFIX)) return summary;                 // 끝이 아니면 한 글자도 안 바꾼다
   return s.slice(0, -DEADLINE_SUFFIX.length).trim() || summary;     // 떼면 비는 제목은 원문을 쓴다
@@ -188,7 +197,6 @@ export async function accept(env: Env, t: TimeCtx, id: string, choice?: string) 
   if (!row.starts_at) throw new ApiError(400, "시각이 없어 일정으로 만들 수 없어요");
 
   // `2026-09-03T23:00:00+09:00` → date `2026-09-03` · time `23:00`.
-  // **원문을 다듬지 않는다** — `title`은 `summary` 그대로다(결정 ②).
   const date = row.starts_at.slice(0, 10);
   const time = row.starts_at.slice(11, 16);
 
@@ -218,7 +226,11 @@ export async function accept(env: Env, t: TimeCtx, id: string, choice?: string) 
     return { id: row.id, state: "dismissed", event_id: null, task_id: null, duplicate: false };
   }
 
-  const ev = await events.create(env, t, { title: row.summary, date, time });
+  /* ★★ **일정과 할 일은 같은 이름을 받는다 — 한 번 만들어 둘에 쓴다** (T-86 ②).
+   *   T-78 결정 ②는 *"`title`은 `summary` 그대로"* 였고 T-83은 할 일만 뗐다. 이제 원문은 원장에만 있다.
+   * ⚠️ `summary` 저장은 **안 건드린다** — `stAcceptCollected`는 `state`·잇는 칸만 쓴다. */
+  const title = titleOf(row.summary);
+  const ev = await events.create(env, t, { title, date, time });
 
   /*
    * ★★ **"이미 했어요"는 task 를 안 만든다** — *하지 않은 것을 기록하지 않는다.*
@@ -253,10 +265,8 @@ export async function accept(env: Env, t: TimeCtx, id: string, choice?: string) 
    * ★★ **처음엔 `t.d`를 봤고, 그래서 변이 P5(예정일을 지난 마감일로 넣는다)가 아무 검사도
    *    안 죽였다** — `when`을 안 읽으니 바꿔도 결과가 같았다. **읽지 않는 값은 지킬 수 없다.** */
   const closed = past && (await db.getDaily(env, when))?.status === "closed";
-  // ★ **제목만 다듬는다** — `events.title`(위 `ev`)과 `summary` 저장은 원문 그대로다 (T-83 ①).
-  const taskTitle = taskTitleOf(row.summary);
   const task = await tasks.createTask(
-    env, t, closed ? { title: taskTitle } : { title: taskTitle, date: when },
+    env, t, closed ? { title } : { title, date: when },
   );
   await db.stAcceptCollected(env, id, ev.id, task.id).run();
   return {

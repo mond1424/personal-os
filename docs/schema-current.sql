@@ -1,6 +1,8 @@
 -- docs/schema-current.sql — 스키마 스냅샷 (자동 생성)
 -- migrations/ 전체를 인메모리 sqlite에 적용한 뒤 sqlite_master를 덤프한 것.
--- 최신 마이그레이션: 0025_collected_task_id.sql  ·  갱신 2026-09-17
+-- 최신 마이그레이션: 0026_collected_title_backfill.sql  ·  갱신 2026-10-01
+-- 0026 = **DDL 없음** — 수집분 events·tasks 제목의 일회 소급(T-86 ④ · UPDATE만). 아래 본문은 0025 때와 같다
+--   (전체 적용 덤프와 문서의 CREATE 71개를 문장 단위로 대조 · 0026 전후 sqlite_master 동일).
 -- 0025 = collected_items에 task_id TEXT REFERENCES tasks(id) 추가(T-78 — 수락이 만든 할 일).
 --   ALTER라 컬럼이 표 끝에 붙는다. **`event_id`와 같은 꼴이다** — 수락의 산물 둘을 수락한 행이 안다.
 --   ⚠️ T-78 이전에 accepted가 된 행은 NULL로 남는다. **소급해서 task를 만들지 않는다.**

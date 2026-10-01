@@ -88,8 +88,9 @@ export const calPeriods = (env: Env, start: string, end: string) => q(env, `
 /*
  * ★★ `collected_event_id` — **이 할 일이 어느 마감에서 왔는가** (T-84).
  *   월간 셀이 *"같은 수집에서 온 event 와 task"* 를 알아야 한 줄로 합칠 수 있다.
- *   ⚠️ **제목으로 짝지으면 안 된다** — T-83이 둘의 제목을 일부러 갈라 놨고,
- *      `tasks.title` 은 사용자가 고치는 칸이다. 짝의 근거는 `collected_items` 하나다.
+ *   ⚠️ **제목으로 짝지으면 안 된다** — T-86 이후 만들 때는 같은 이름이지만 두 title 다
+ *      사용자가 고치는 칸이고, **마감된 날의 일정은 소급(0026)에서 원문으로 남았다.**
+ *      짝의 근거는 `collected_items` 하나다.
  * ⚠️ **JOIN 이 아니라 상관 서브쿼리다.** `collected_items.task_id` 엔 UNIQUE 가 없어
  *   LEFT JOIN 은 행을 불릴 수 있고, 그러면 **셀에 같은 할 일이 두 줄로 뜬다** — 고치려던 것과 같은 증상이다.
  *   ★ 수집 안 된 할 일(손으로 만든 것)은 NULL 이고, 그래서 셀이 절대 안 합친다.
