@@ -647,6 +647,35 @@ export const collectedNewAll = (env: Env) =>
            WHERE state = 'new' AND starts_at IS NOT NULL
            ORDER BY starts_at, id`).all<CollectedItemRow>();
 
+/**
+ * **과제 재촉의 대상** (ADR-050 ① · T-87) — 수락한 수집 과제 중 할 일이 열려 있고 마감 시각이 있는 것.
+ *
+ * ★★ **마감은 일정(`events`)의 시각이다 — 할 일의 예정일이 아니다.** 예정을 옮겨도 마감은 그대로다
+ *    (T-84의 *"예정을 앞당긴 과제"*). 그래서 `schedule_entries`를 아예 안 읽는다.
+ * ⚠️ **잇는 칸(`event_id`·`task_id`)으로만 찾는다** — 제목으로 잇지 않는다(두 title 다 자유 변경 칸이다).
+ * ⚠️ **할 일당 한 줄이다.** `collected_items.task_id`엔 UNIQUE가 없어(`calEntries` 참조) 그냥 JOIN 하면
+ *    같은 과제가 두 번 실릴 수 있고, 그러면 **같은 알림이 두 번 울린다** — 가장 이른 수집 행 하나로 고정한다.
+ * ★ **열려 있다는 판정은 `v_task_stats.state` 하나를 쓴다** — 그 뷰가 상태의 유일한 진실이다.
+ * ⚠️ **시각 없는 일정은 뺀다** — 마감 *시각*이 없으면 *"3시간 전"* 이 없다. 수락이 만든 일정엔 늘 시각이 있고
+ *    (`accept`가 `starts_at`에서 자른다), 사용자가 종일로 고친 경우만 여기 걸린다.
+ * `taskId`가 있으면 그 하나만 — 응답의 *"바뀌었다"* 판정이 같은 질의를 쓴다(규칙이 두 벌이 안 되게).
+ */
+export const nudgeTargets = (env: Env, from: string, to: string, taskId: string | null) =>
+  q(env, `SELECT s.id AS task_id, s.title AS title, c.categories AS categories,
+                 e.date AS date, e.time AS time
+          FROM v_task_stats s
+          JOIN collected_items c ON c.id = (
+            SELECT MIN(c2.id) FROM collected_items c2
+             WHERE c2.task_id = s.id AND c2.state = 'accepted' AND c2.event_id IS NOT NULL)
+          JOIN events e ON e.id = c.event_id
+          WHERE s.state = 'not_finished'
+            AND e.time IS NOT NULL
+            AND e.date BETWEEN ? AND ?
+            AND (? IS NULL OR s.id = ?)
+          ORDER BY e.date, e.time, s.id`).bind(from, to, taskId, taskId).all<{
+    task_id: string; title: string; categories: string | null; date: string; time: string;
+  }>();
+
 /** `AND state <> 'accepted'`가 **두 번째 요청을 조용히 무해하게** 만든다(T-42 §할 일 ①). */
 /**
  * 수락의 산물 **둘**을 한 문장으로 잇는다 (T-78 · 0025).

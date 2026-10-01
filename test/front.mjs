@@ -862,7 +862,8 @@ const rows = [...$("#set-list").querySelectorAll(".srow")].map((r) => r.textCont
 // ⚠️ **또 고쳤다** — T-59가 장소 줄을 하나 더한다(14 → 15). 같은 규칙이다.
 // ⚠️ **또 고쳤다** — T-61이 아침(이동·준비) 두 줄을 더한다(15 → 17). 같은 규칙이다.
 // ⚠️ **또 고쳤다** — T-63이 밤 알림 줄을 하나 더한다(17 → 18). 같은 규칙이다.
-ok("설정 18행 (AI 연결 통합 + 시간표 + 아침 두 줄 + 상태 네 줄)", rows.length === 18, String(rows.length));
+// ⚠️ **또 고쳤다** — T-87이 과제 재촉(전날 저녁 · 당일 아침) 두 줄을 더한다(18 → 20). 같은 규칙이다.
+ok("설정 20행 (AI 연결 통합 + 시간표 + 아침 두 줄 + 재촉 두 줄 + 상태 네 줄)", rows.length === 20, String(rows.length));
 // ⚠️ **"맨 아래가 수집 상태"에서 옮겼다.** 이 검사가 지키던 것은 *"그 줄이 사라지지 않는다"*이고,
 //    이제 같은 자리에 줄이 둘이라 **둘 다** 봐야 그 뜻이 남는다. 순서까지 고정하는 이유는
 //    **둘이 서로 다른 것**이기 때문이다: 학사 캘린더는 서버가 iCal을 긁는 것(T-41)이고,
@@ -2326,15 +2327,21 @@ const T74_TITLE = "벡터대수학 2주차 연습문제 제출 기한";
 /* ⚠️ **스텁에 `title` 을 실었다 — 서버 응답 모양이 T-86에서 바뀌었다.** 시트는 그 칸을 쓴다.
  *   아래 단언은 *이름*(끝의 기한 없이)을 보고, 이 검사의 명제(과목이 제목을 덮지 않는다)는 그대로다. */
 const T74_NAME = "벡터대수학 2주차 연습문제 제출";
+/* ⚠️⚠️ **스텁에 `course` 를 실었다 — 자르기가 T-87에서 서버로 올라갔다** (`lib/course.ts`).
+ *   과제 재촉 알림도 과목을 말하게 되어 **표시하는 쪽이 둘**이 됐고, 규칙을 한 곳에 두려고 서버가 싣는다.
+ *   ★ **값은 `categories` 를 잘라서는 못 만드는 것이다** — 프런트가 원문을 다시 자르면(규칙 두 벌)
+ *     `전자기및연습1` 이 나와 여기서 죽는다. 자르기 규칙 자체는 smoke `[T-87]` 이 진다. */
+const T74_COURSE = "전자기및연습1 · 서버가 준 이름";
 await ev(`renderCollected([
   { id: "t74-a", source: "uclass", summary: ${JSON.stringify(T74_TITLE)}, title: ${JSON.stringify(T74_NAME)},
-    starts_at: null, categories: ${JSON.stringify(T74_CAT)} },
-  { id: "t74-b", source: "uclass", summary: "개인 일정", title: "개인 일정", starts_at: null, categories: null }
+    course: ${JSON.stringify(T74_COURSE)}, starts_at: null, categories: ${JSON.stringify(T74_CAT)} },
+  { id: "t74-b", source: "uclass", summary: "개인 일정", title: "개인 일정", course: null,
+    starts_at: null, categories: null }
 ])`);
 const t74A = $("#coll-list [data-cid='t74-a']");
 const t74B = $("#coll-list [data-cid='t74-b']");
-ok("★ 과목이 제목 위에 뜬다 — 제목은 그대로 남는다 (덮지도 지우지도 않는다)",
-  t74A?.querySelector(".ec")?.textContent === "전자기및연습1"
+ok("★ 과목이 제목 위에 뜬다 — 서버가 준 과목 그대로 · 제목은 그대로 남는다 (T-87: 프런트가 다시 자르지 않는다)",
+  t74A?.querySelector(".ec")?.textContent === T74_COURSE
   && (t74A?.textContent || "").includes(T74_NAME),
   `${t74A?.querySelector(".ec")?.textContent} / ${(t74A?.textContent || "").slice(0, 50)}`);
 ok("★ 괄호 안(학기·코드)은 화면에 없다 — 저장은 원문, 표시는 과목명까지",
@@ -5349,6 +5356,34 @@ ok("9 ★ 서버가 실제로 보내는 entries 에 `collected_event_id` 칸이 
   && t84Real.entries.every((r) => "collected_event_id" in r),
   `entries=${t84Real?.entries?.length} 첫칸=${JSON.stringify(t84Real?.entries?.[0] ?? null)}`);
 await capped("T-84 복구 렌더", ev(`renderCalendar()`));
+
+/* ── T-87 · 재촉 시각이 바뀌면 기기를 깨운다 (③) ─────────────────────
+ * ★ **`_req` 하나가 서버의 `nudge_changed` 를 읽는다** — 호출부마다 걸지 않았다(상한과 같은 자리 · T-57).
+ * ⚠️ 이 층은 수집 원장에 넣을 길이 없다(T-42 · T-80 이 `collectedAccept` 를 갈아끼운 이유) — 그래서
+ *    **서버가 실제로 깃발을 다는 왕복**을 고른다: 재촉 설정 저장. 수락·완료·취소가 깃발을 다는 것은
+ *    smoke `[T-87]` 13(서버 짝)이 센다. 여기가 세는 것은 *"깃발을 보면 부르고, 없으면 안 부른다"* 다.
+ * ★★ **짝이 계약이다** — "안 부른다" 가 없으면 *"모든 요청마다 sync"* 가 통과한다(티켓 13 ⚠️).
+ * ★ **기다리는 것은 `Api` 의 프라미스다**(함정 14) — `_req` 가 `sync()` 를 **동기로** 부르고 돌아오므로
+ *   `await` 뒤에 센 수가 곧 그 왕복의 결과다. 관측(`until`)으로 기다리지 않는다. */
+console.log("\n[T-87] 재촉 시각이 바뀌면 기기를 깨운다 — 서버가 말할 때만");
+ev(`window.__t87 = { n: 0, prev: globalThis.Capacitor };
+  globalThis.Capacitor = { Plugins: { Guard: {
+    sync: () => { window.__t87.n++; return Promise.resolve({ ok: true }); } } } };`);
+const t87N = () => ev(`window.__t87.n`);
+// 무관한 왕복 — 손으로 만든 할 일을 만들고 완료한다(서버가 `nudge_changed: false` 를 단다).
+const t87Task = await capped("T-87 손 할 일 생성", ev(`Api.createTask({ title: "T-87 손으로 만든 할 일" })`));
+const t87Done = await capped("T-87 손 할 일 완료", ev(`Api.complete(${JSON.stringify(t87Task?.id ?? "")})`));
+const t87AfterHand = t87N();
+// 깃발이 달리는 왕복 — 재촉 설정 저장(서버가 `nudge_changed: true` 를 단다).
+const t87Put = await capped("T-87 재촉 설정 저장", ev(`Api.putSetting("nudge_evening", "22:40")`));
+const t87AfterPut = t87N();
+ok("13 ★ 서버가 재촉이 바뀌었다고 말하면 Guard.sync() 를 부른다 (재촉 설정 저장 — 실제 왕복)",
+  t87Put?.nudge_changed === true && t87AfterPut === t87AfterHand + 1,
+  `put=${JSON.stringify(t87Put)} n=${t87AfterHand}→${t87AfterPut}`);
+ok("13 ★ 짝 — 재촉과 무관한 동작(손 할 일 생성·완료)엔 안 부른다",
+  !!t87Done && t87Done.nudge_changed === false && t87AfterHand === 0,
+  `done=${JSON.stringify(t87Done)} n=${t87AfterHand}`);
+ev(`(() => { const p = window.__t87.prev; if (p === undefined) delete globalThis.Capacitor; else globalThis.Capacitor = p; })()`);
 
 console.log("\n[부팅 · 연결 실패 복구]");
 ok("로드 후 부팅 오버레이 닫힘", !$("#boot").classList.contains("on"));

@@ -150,7 +150,7 @@ app.post("/api/tasks/:id/cancel", async (c) => {
   return c.json(await tasks.cancelTask(c.env, c.get("t"), c.req.param("id"), b.reason));
 });
 app.post("/api/tasks/:id/uncancel", async (c) =>
-  c.json(await tasks.uncancelTask(c.env, c.req.param("id"))));
+  c.json(await tasks.uncancelTask(c.env, c.get("t"), c.req.param("id"))));
 app.delete("/api/tasks/:id", async (c) => c.json(await tasks.deleteTask(c.env, c.req.param("id"))));
 app.put("/api/tasks/:id/rate", async (c) => {
   const b = await body<{ date: string; rate: number }>(c);

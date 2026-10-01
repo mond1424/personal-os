@@ -2,6 +2,8 @@ import * as db from "../db";
 import { nextId } from "../lib/id";
 import { addDays, attributionOfIso, diffDays, isDate } from "../lib/time";
 import { ApiError, type Env, type TimeCtx } from "../types";
+// ★ 응답의 `nudge_changed` (T-87 ③) — 재촉 계산은 저쪽 하나다. 여기서 대상 판정을 다시 짜지 않는다.
+import { hasNudges } from "./nudge";
 
 // 미루기 전용 상한: 오늘부터 2주 (7장). 미루기가 '무기한 연기'가 되지 않게 하는 장치이므로
 // 신규 일정 지정(생성·대기 확정)에는 적용하지 않는다 — 시험처럼 먼 확정 일정도 넣을 수 있어야 한다.
@@ -145,6 +147,8 @@ export async function completeTask(env: Env, t: TimeCtx, id: string) {
   if (stats.state === "finished") throw new ApiError(409, "이미 완료된 task예요");
   if (stats.state === "cancelled") throw new ApiError(409, "취소된 일은 완료할 수 없어요");
   const live = await db.liveEntry(env, id);
+  // ★ **바꾸기 전에 묻는다** — 완료한 뒤엔 대상이 아니라서 언제나 거짓이 된다 (T-87 ③ · ADR-050 ⑤).
+  const nudged = await hasNudges(env, t, id);
   const stmts = [db.stFinishTask(env, id, t.now, t.d)];
   if (live && live.day_status !== "closed") stmts.unshift(db.stRate100At(env, id, live.date));
   await env.DB.batch(stmts);
@@ -152,6 +156,7 @@ export async function completeTask(env: Env, t: TimeCtx, id: string) {
     id, finished_on: t.d,
     planned_on: live?.date ?? null,
     rate_applied: !!live && live.day_status !== "closed",
+    nudge_changed: nudged,
   };
 }
 
@@ -171,23 +176,29 @@ export async function cancelTask(env: Env, t: TimeCtx, id: string, reason?: stri
   const trimmedReason = reason?.trim() || null;   // 빈 문자열·공백만 → NULL
 
   const kept = (await db.closedEntryDates(env, id)).results.map((r) => r.date);
+  const nudged = await hasNudges(env, t, id);   // ★ 바꾸기 전에 (T-87 ③ — 완료와 같은 이유)
   await env.DB.batch([
     db.stDeleteOpenEntries(env, id),        // 앞으로의 계획을 비우고
     // 사유는 append-only — 여기서 한 번 쓰고 취소 상태인 동안 고치지 않는다.
     // cancelled_by는 지금 단계에선 항상 'user'(Guard 개입 4단계에서 'guard'가 생긴다).
     db.stCancelTask(env, id, t.now, t.d, trimmedReason, "user"),
   ]);
-  return { id, cancelled_at: t.now, cancelled_on: t.d, kept_dates: kept, cancel_reason: trimmedReason };
+  return {
+    id, cancelled_at: t.now, cancelled_on: t.d, kept_dates: kept, cancel_reason: trimmedReason,
+    nudge_changed: nudged,
+  };
 }
 
 /** 취소 해제 — 예정은 복구되지 않으므로 '대기'로 돌아간다. */
-export async function uncancelTask(env: Env, id: string) {
+export async function uncancelTask(env: Env, t: TimeCtx, id: string) {
   const task = await db.taskStats(env, id);
   if (!task) throw new ApiError(404, "해당 task가 없어요");
   if (task.state !== "cancelled") throw new ApiError(409, "취소된 일이 아니에요");
   await db.stUncancelTask(env, id).run();
   const after = await db.taskStats(env, id);
-  return { id, cancelled: false, waiting: !!after?.is_waiting };
+  // ★ **되돌리면 재촉도 돌아온다** — 취소가 기기를 깨웠으니 되돌리기도 깨워야 한다(티켓 ③의 넷 밖 · §보고).
+  //   ⚠️ 이건 **바꾼 뒤에** 묻는다 — 취소된 동안엔 대상이 아니라서 앞에서 물으면 언제나 거짓이다.
+  return { id, cancelled: false, waiting: !!after?.is_waiting, nudge_changed: await hasNudges(env, t, id) };
 }
 
 const shortDate = (d: string) => `${+d.slice(5, 7)}/${+d.slice(8, 10)}`;

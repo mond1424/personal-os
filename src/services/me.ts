@@ -2,6 +2,7 @@
 // '지금'은 활성 기간 goals의 조인 파생 — 저장하지 않는다 (원칙 4).
 import * as db from "../db";
 import { ApiError, type Env, type TimeCtx } from "../types";
+import { NUDGE_EVENING_KEY, NUDGE_MORNING_KEY } from "./nudge";
 
 export async function getMe(env: Env, t: TimeCtx) {
   const [fields, active] = await Promise.all([db.meAll(env), db.periodsAt(env, t.d)]);
@@ -61,7 +62,14 @@ const RULES: Record<string, (v: string) => boolean> = {
    * 상한만 둔다 — 하루를 넘는 이동·준비는 값이 아니라 오타다. */
   wake_commute_min: (v) => /^\d{1,4}$/.test(v) && Number(v) <= 1440,
   wake_prep_min: (v) => /^\d{1,4}$/.test(v) && Number(v) <= 1440,
+  /* ★ 과제 재촉의 저녁·아침 시각 (ADR-050 ② · T-87). **기본값은 `services/nudge.ts` 하나다** —
+   *   키 이름도 거기서 가져온다(두 곳에 적으면 한쪽만 바뀐다). */
+  [NUDGE_EVENING_KEY]: (v) => /^([01]\d|2[0-3]):[0-5]\d$/.test(v),
+  [NUDGE_MORNING_KEY]: (v) => /^([01]\d|2[0-3]):[0-5]\d$/.test(v),
 };
+
+/** 바꾸면 재촉 시각이 달라지는 설정 — 응답이 기기를 깨우라고 말한다(T-87 ③). */
+const NUDGE_KEYS = new Set([NUDGE_EVENING_KEY, NUDGE_MORNING_KEY]);
 
 /** 개인 키는 값을 돌려주지 않는다 — 설정 여부만. */
 const MASKED = new Set(["ai_api_key", "ai_key_anthropic", "ai_key_openai", "ai_key_google"]);
@@ -75,6 +83,6 @@ export async function putSetting(env: Env, key: string, value: string) {
   if (!rule) throw new ApiError(404, `설정 키: ${Object.keys(RULES).join(" | ")}`);
   if (typeof value !== "string" || !rule(value)) throw new ApiError(400, `${key} 값 형식이 맞지 않아요`);
   await db.stSettingPut(env, key, value).run();
-  return { key, value };
+  return { key, value, ...(NUDGE_KEYS.has(key) ? { nudge_changed: true } : {}) };
   // 경계 변경은 이후 기록부터 적용 — 과거 귀속일은 재해석되지 않는다 (스키마 헤더 원칙)
 }

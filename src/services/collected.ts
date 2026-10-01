@@ -11,6 +11,9 @@ import * as events from "./events";
 //   `wait_anchor_at`·대기 판정을 한 곳에서 지고 있고, `deferTask`·`completeTask`가 그 전제 위에 있다.
 import * as tasks from "./tasks";
 import * as uclass from "./uclass";
+// ★ 응답의 `nudge_changed` (T-87 ③) — 수락이 재촉을 만들었는지는 재촉 계산이 답한다.
+import { hasNudges } from "./nudge";
+import { courseOf } from "../lib/course";
 import { isoNow } from "../lib/time";
 import { ApiError, type Env, type TimeCtx } from "../types";
 
@@ -36,14 +39,14 @@ export async function pending(env: Env, t: TimeCtx) {
   const to = isoNow(Date.parse(t.now) + WINDOW_DAYS * 86400_000, t.offsetMin);
   const rows = await db.collectedPending(env, t.now, to);
   // 화면이 쓰는 것만 준다. **`description`은 안 보낸다** — 카드가 원문 한 줄만 쓴다.
-  // ★ `categories`는 보낸다(T-74) — **과목을 아는 유일한 칸**이고 카드가 그것을 얹는다.
-  //   ⚠️ **원문 그대로 보낸다.** 괄호 안(학기·코드)을 여기서 떼지 않는다 —
-  //   쪼개기는 해석이고, 해석은 **표시하는 쪽**이 한다(0024 §해석 금지).
-  // ★★ `title`은 **표시용 이름**이다 (T-86 ③) — 시트는 이것을 쓴다. ⚠️ `summary`는 원문 그대로 둔다.
+  // ★ `categories`는 보낸다(T-74) — **과목을 아는 유일한 칸**이다. ⚠️ **원문 그대로다**(0024 §해석 금지).
+  // ★★ `title`·`course`는 **표시용 이름**이다 (T-86 ③ · T-87 ①) — 시트는 이 둘을 쓴다.
   //   **프런트에 같은 규칙을 다시 짜지 않으려고 서버가 싣는다** — 두 벌이면 한쪽만 바뀐다.
+  //   ⚠️ T-74 때는 과목 자르기를 화면이 했다(*"해석은 표시하는 쪽이 한다"*). **표시하는 쪽이 둘이 됐다** —
+  //   과제 재촉 알림도 과목을 말한다(ADR-050 ④). 그래서 규칙이 `lib/course.ts` 하나로 올라왔다.
   return rows.results.map((r) => ({
     id: r.id, source: r.source, summary: r.summary, title: titleOf(r.summary),
-    starts_at: r.starts_at, categories: r.categories,
+    course: courseOf(r.categories), starts_at: r.starts_at, categories: r.categories,
   }));
 }
 
@@ -64,7 +67,7 @@ export async function list(env: Env) {
   const rows = await db.collectedNewAll(env);
   return rows.results.map((r) => ({
     id: r.id, source: r.source, summary: r.summary, title: titleOf(r.summary),
-    starts_at: r.starts_at, categories: r.categories,
+    course: courseOf(r.categories), starts_at: r.starts_at, categories: r.categories,
   }));
 }
 
@@ -273,6 +276,9 @@ export async function accept(env: Env, t: TimeCtx, id: string, choice?: string) 
     id: row.id, event_id: ev.id, task_id: task.id, state: "accepted", duplicate: false,
     // 화면이 토스트를 고르는 재료. **추측하지 않게 서버가 말한다.**
     scheduled_for: closed ? null : when, waiting: !!task.waiting,
+    // ★ **재촉이 생겼으면 기기를 깨우라는 신호** (T-87 ③). 잇고 **난 뒤에** 묻는다 — 잇기 전엔 대상이 아니다.
+    //   ⚠️ 위의 갈래(묻기 · 거절 · 이미 했어요 · 멱등)엔 안 싣는다: 거기선 재촉이 안 생긴다.
+    nudge_changed: await hasNudges(env, t, task.id),
   };
 }
 

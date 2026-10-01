@@ -14,6 +14,7 @@ import { addDays, attributionOfIso, isoNow, normalizeIso } from "../lib/time";
 import { ApiError, type Env, type TimeCtx } from "../types";
 // 시간표는 규칙이라 조회 시 전개된다(T-58). Guard는 **읽기만** 한다 — 전개도 저장도 저쪽 몫이다.
 import { classesIn } from "./timetable";
+import * as nudge from "./nudge";
 
 /** 설정 기본값 — event별 값이 없을 때. 초기값의 정확도보다 조정 가능한 구조가 중요하다. */
 const DEFAULT_SLEEP_MIN = 360;   // 6시간
@@ -496,6 +497,11 @@ export async function schedule(env: Env, t: TimeCtx, days = 30) {
     //   정한다 — 그 판단에 `now`가 들어가고, 발동 경로엔 네트워크가 없기 때문이다(ADR-021).
     //   서버는 *"무엇이 언제 있다"* 까지만 말한다.
     wake: await wakePoints(env, t, days),
+    // ★ **과제 재촉** (ADR-050 · T-87). 계산은 `services/nudge.ts`가 진다 — 여기는 싣기만 한다.
+    //   ⚠️ **새 키 하나로만 붙인다.** 위의 키는 한 글자도 안 바꾼다 — 깔린 APK의 `GuardSync`가 그것을 읽고,
+    //   모르는 키는 무시한다(그래서 이 배포가 APK보다 먼저 나가도 안전하다). 울리는 것은 T-88.
+    //   ⚠️ **`events[].fires[]`에 섞지 않는다** — 그 길은 `AlarmReceiver → fire()`라 밤 개입으로 기록·계수된다.
+    nudges: await nudge.nudges(env, t, days),
   };
 }
 

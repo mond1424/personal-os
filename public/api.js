@@ -73,9 +73,35 @@ async function _req(method, path, body) {
   let timer = null;
   const cap = new Promise((_, reject) => { timer = setTimeout(() => reject(_timeoutError()), ms); });
   try {
-    return await Promise.race([_send(method, path, body, ms), cap]);
+    const json = await Promise.race([_send(method, path, body, ms), cap]);
+    _wakeIfNudgeChanged(json);
+    return json;
   } finally {
     clearTimeout(timer);
+  }
+}
+
+/**
+ * ★ **서버가 *"재촉 시각이 바뀌었다"* 고 말하면 기기를 깨운다** (T-87 ③ · ADR-050 §실행 경로).
+ *
+ * 기기는 일정을 **하루 한 번** 받는다 — 오후에 수락한 오늘 밤 마감 과제는 그대로면 내일 아침까지 모른다.
+ * 수락·완료·취소 순간엔 앱이 열려 있으니 **그 자리에서** 다시 받게 한다. 하루 동기화는 그물이다.
+ *
+ * ⚠️ **자리는 `_req` 하나다** — 상한(위)과 같은 판단이다. 호출부(완료만 넷이다)마다 걸면 빠뜨린 곳이 남는다.
+ * ⚠️ **웹이 추측하지 않는다.** 어느 할 일이 수집분인지 웹은 모른다 — 서버가 `nudge_changed`로 말한 때만 부른다.
+ *    `sync()`는 무겁다(발동 기록 · 폰 캘린더 · 예약 pull · 재예약) — 재촉과 무관한 동작에선 안 부른다.
+ * ⚠️ **기다리지 않는다.** 결과가 화면을 안 바꾸고, 실패해도 이미 걸린 알람은 그대로다(ADR-021).
+ *    부르는 것 자체는 **여기서 동기로 일어난다** — 이 요청을 `await` 한 쪽은 그 뒤에 이미 불린 것을 본다.
+ * 브라우저(플러그인 없음)에선 조용히 지나간다.
+ */
+function _wakeIfNudgeChanged(json) {
+  if (!json || json.nudge_changed !== true) return;
+  const G = globalThis.Capacitor?.Plugins?.Guard;
+  if (!G?.sync) return;
+  try {
+    Promise.resolve(G.sync()).catch((e) => console.warn("[guard] 재촉 sync 실패:", e));
+  } catch (e) {
+    console.warn("[guard] 재촉 sync 예외:", e);
   }
 }
 
