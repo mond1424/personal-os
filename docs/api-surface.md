@@ -47,7 +47,7 @@
 | POST `/api/timetable/parse` | `{text}` | `{rules[], unread[{line,text,reason}], term\|null}` · **순수 — 저장 안 함** | `timetable.parseText` |
 | PUT `/api/timetable` | `{rules[{subject,weekday,start_time,end_time}], term_start, term_end}` | `{rules[], term}` — **방금 저장한 학기**(대표 학기가 아니다 — 토스트가 이 칸 수를 말한다). **겹치는 학기만 교체**(T-85) · 범위 없으면 400 · 과목명은 NFC로 저장(T-85 ④) | `timetable.replace` |
 | POST `/api/events` | `{title, date, time?, period_id?, note?}` | `{id, ...}` | `events.create` |
-| PATCH `/api/events/:id` | `{title?, date?, time?, period_id?, note?}` | `{...}` (마감일 409) | `events.update` |
+| PATCH `/api/events/:id` | `{title?, date?, time?, period_id?, note?}` | `{..., nudge_changed?}` (마감일 409) · `nudge_changed:true` = **수집 과제의 마감 일정을 고쳐 재촉이 달라졌다**(T-88 ①-c · 바꾸기 전후의 재촉을 견준다 — 손 일정 · 제목만 · 끝난 할 일엔 없다) | `events.update` |
 | DELETE `/api/events/:id` | — | `{id, deleted}` (마감일 409) | `events.remove` |
 | POST `/api/cal/sync` | `{items:[{ext_uid, title, date, time?, all_day?, ext_updated?}], window:{from,to}}` | `{upserted, skipped_closed, skipped_stale, deleted, protected_kept, window}` · **멱등** · 앱 생성 일정(`ext_src IS NULL`)은 안 지운다 | `calsync.syncCal` |
 | GET `/api/places` | — | `{places[{id,name,net_id,visits,last_at}], recent[], today[], last\|null}` | `places.list` |
@@ -144,7 +144,7 @@
 
 ### events.ts — 일정(캘린더 전용 사건)
 - `create(env, t, input)` → `{id, ...}` · 마감된 날에도 추가 가능(불변)
-- `update(env, id, input)` → `{...}` · 마감일 트리거 409
+- `update(env, t, id, input)` → `{..., nudge_changed?}` · 마감일 트리거 409 · ⚠️ T-88 이 `t` 를 받게 했다 — `collectedTaskOfEvent` 로 잇는 할 일을 찾아 `nudge.nudgeKey` 를 전후로 견준다
 - `remove(env, id)` → `{id, deleted}` · 마감일 트리거 409
 
 ### timetable.ts — 시간표 (0021 · ADR-045 · T-58 · T-85)
@@ -228,8 +228,9 @@
 - `setProtect(env, id, input)` → `{id, protected, ...}` · **`stUpdateEvent`를 타지 않는다** — 보호 규칙은 '계획'이라 마감된 날 트리거에 걸리면 안 된다. `stSetProtect` 전용 경로
 
 ### nudge.ts — 과제 재촉 (ADR-050 · T-87). **계산만 한다 — 저장도 기록도 없다**(원칙 1 · ADR-050 ⑥)
-- `nudges(env, t, days=30, taskId=null)` → `[{at, items:[{task_id, course, title, due}]}]` 시각순 · 대상 = `db.nudgeTargets`(수락한 수집 과제 · 할 일 열림 · 일정에 시각) · 점 넷 = 마감 **귀속일**의 전날 `nudge_evening` · 당일 `nudge_morning` · 3시간 전 · 1시간 전 · 정리 = 마감 이후·지난 점 빼기 → **1시간 안(경계 포함)이면 늦은 쪽만**(과제 안에서) → 같은 시각 묶기 · 창 `days` 는 1~30 으로 자른다
+- `nudges(env, t, days=30, taskId=null)` → `[{at, items:[{task_id, course, title, due}]}]` 시각순 · 대상 = `db.nudgeTargets`(수락한 수집 과제 · 할 일 열림 · 일정에 시각) · 점 넷 = 마감 **귀속일**의 전날 `nudge_evening` · 당일 `nudge_morning` · 3시간 전 · 1시간 전 · 정리 넷 = 지난 점 · **마감 시각 이후·같은 시각의 점** 빼기 → **1시간 미만이면 늦은 쪽만**(과제 안에서 · ⚠️ 정각 1시간은 안 합친다 — 이하면 사슬로 무너진다 · ADR-050 ② 개정 · T-88 ①-a) → 같은 시각 묶기 · 창 `days` 는 1~30 으로 자른다
 - `hasNudges(env, t, taskId)` → boolean · 응답의 `nudge_changed` 재료(같은 계산 · 판정을 따로 짜지 않는다)
+- `nudgeKey(env, t, taskId)` → string · 그 할 일의 재촉을 한 줄로 — 일정 수정이 **"달라졌는가"** 를 견줄 때(T-88 ①-c)
 - `NUDGE_EVENING_KEY`·`NUDGE_MORNING_KEY` — 설정 키 이름의 자리. **기본값(상수)은 이 파일 안에만** 있다
 - ⚠️ `guard_events` 에 쓰지 않는다 · `events[].fires[]` 에 안 섞는다(밤 개입의 원장·계수)
 
@@ -326,7 +327,7 @@
 **엔티티 단건** — `taskStats(env, id)` · `taskEntries(env, id)`(+`day_status`) · `taskEntryAt(env, id, date)` · `waitExtensions(env, id)`
 **삭제 가드/실행** — `closedEntryDates(env, taskId)`(막는 날짜 이름) · `guardEventCount(env, taskId)` · `stDeleteExtensions` · `stDeleteEntries` · `stDeleteTask(env, id)` · `stDeletePeriod(env, id)`
 **Me** — `meAll(env)` · `meGet(env, field)` · `stMeHistory(env, field, oldV, newV, source, now, reason?)` · `stMeUpsert(env, field, value, now)` · `meHistory(env, limit)`
-**collected_items(0018 · 0024 · 0025)** — ⚠️ `0026`은 스키마가 아니라 **이 원장에 이어진 `events`·`tasks` 제목의 일회 소급**이다(T-86 ④ · `summary`는 안 건드린다) · `collectedByUid(env, uid)`(UNIQUE가 diff 기준이자 멱등 키) · `collectedGet(env, id)` · `collectedList(env, limit)`(원장 전체 덤프 · 모든 state) · `collectedNewAll(env)`(**창 없이 `new` 전부** · `starts_at NOT NULL` · T-75 — ⚠️ 이름을 `collectedList`와 가른 이유는 **뜻이 다르기 때문**이다) · `collectedPending(env, from, to)`(`state='new'` + 창 안 + `starts_at NOT NULL`) · `stInsertCollected` · `stTouchCollected`(**`state`는 안 건드린다** · `categories`는 매번 갱신한다 — **옛 행이 다음 수집에서 채워지는 경로다**) · `stAcceptCollected(env, id, eventId, taskId)`(★ **수락의 산물 둘을 한 UPDATE로 잇는다**(0025 · T-78) — 나눠 쓰면 *"둘 중 하나만 이어진 행"*이 생긴다 · `AND state <> 'accepted'`로 멱등) · `stDismissCollected` · `nudgeTargets(env, from, to, taskId|null)`(★ T-87 · 수락한 수집 과제 중 `v_task_stats.state='not_finished'` · 일정에 시각 · `e.date` 창 — **마감은 일정의 시각이고 `schedule_entries`를 안 읽는다** · ⚠️ 할 일당 한 줄(`MIN(c2.id)` — `task_id`에 UNIQUE 가 없다)) · `collectedCountsByState(env)`(T-43 · **없는 state는 행이 안 나온다** — 0은 세는 쪽이 채운다)
+**collected_items(0018 · 0024 · 0025)** — ⚠️ `0026`은 스키마가 아니라 **이 원장에 이어진 `events`·`tasks` 제목의 일회 소급**이다(T-86 ④ · `summary`는 안 건드린다) · `collectedByUid(env, uid)`(UNIQUE가 diff 기준이자 멱등 키) · `collectedGet(env, id)` · `collectedList(env, limit)`(원장 전체 덤프 · 모든 state) · `collectedNewAll(env)`(**창 없이 `new` 전부** · `starts_at NOT NULL` · T-75 — ⚠️ 이름을 `collectedList`와 가른 이유는 **뜻이 다르기 때문**이다) · `collectedPending(env, from, to)`(`state='new'` + 창 안 + `starts_at NOT NULL`) · `stInsertCollected` · `stTouchCollected`(**`state`는 안 건드린다** · `categories`는 매번 갱신한다 — **옛 행이 다음 수집에서 채워지는 경로다**) · `stAcceptCollected(env, id, eventId, taskId)`(★ **수락의 산물 둘을 한 UPDATE로 잇는다**(0025 · T-78) — 나눠 쓰면 *"둘 중 하나만 이어진 행"*이 생긴다 · `AND state <> 'accepted'`로 멱등) · `stDismissCollected` · `collectedTaskOfEvent(env, eventId)`(T-88 ①-c · 이 일정이 마감인 수집 과제의 할 일 · `MIN(id)` 고정 · `task_id` NULL 행은 안 나온다) · `nudgeTargets(env, from, to, taskId|null)`(★ T-87 · 수락한 수집 과제 중 `v_task_stats.state='not_finished'` · 일정에 시각 · `e.date` 창 — **마감은 일정의 시각이고 `schedule_entries`를 안 읽는다** · ⚠️ 할 일당 한 줄(`MIN(c2.id)` — `task_id`에 UNIQUE 가 없다)) · `collectedCountsByState(env)`(T-43 · **없는 state는 행이 안 나온다** — 0은 세는 쪽이 채운다)
 **settings** — `settingsAll(env)` · `stSettingPut(env, key, value)` · 수집 상태 키는 `uclass_last_collect_at`·`uclass_last_error`·`uclass_last_seen_count`(**이름의 주인은 `services/uclass.ts`의 export 상수** — 읽는 쪽이 문자열을 다시 적으면 그 순간 두 벌이다)
 **analyses/summary** — `analysesList(env)` · `analysisGet(env, id)` · `weeklySummaryGet(env, key)` · `weeklySummaryFull(env, key)` · `mechDaily(env, key)`
 **컨텍스트 범위 조회** — `dailyRange` · `logsRange` · `feelingsRange` · `memosRange` (각 `(env, start, end)`) · `analysesRecentFull(env, n)` · `stInsertAnalysis(env, id, prompt, pass1, pass2, meta, now)`

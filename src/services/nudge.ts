@@ -26,9 +26,11 @@ const DEFAULT_MORNING = "09:00";
 const HOURS_BEFORE = [3, 1];
 
 /**
- * **두 점이 이 안이면 늦은 쪽 하나만** (ADR-050 ② 정리 규칙 둘째).
- * ⚠️ **경계 포함이다(≤ 1시간).** *"1시간 안"* 을 그렇게 읽었다 — 정각 1시간 간격의 두 알림도
- *    잔소리로 들리는 거리라서다. ADR 의 예(10:00 마감의 아침 09:00 · 1시간 전 09:00)는 어느 쪽이든 같다.
+ * **두 점 사이가 이것 미만이면 늦은 쪽 하나만** (ADR-050 ② 정리 규칙).
+ * ⚠️⚠️ **미만(<)이다 — 정각 1시간 간격은 합치지 않는다** (ADR-050 ② 개정 · T-88 ①-a).
+ *    T-87 은 이하(≤)로 짰고 그러면 **사슬로 무너진다**: 11:00 마감의 08:00(3시간 전)·09:00(아침)·10:00(1시간 전)이
+ *    정확히 1시간씩이라 08→09, 09→10 이 차례로 합쳐져 **10:00 하나만** 남는다 — 사용자가 고른 넷 중 셋이 사라진다.
+ *    ★ 이 규칙은 **거의 같은 시각의 중복**을 없애려는 것이지 간격을 줄이려는 것이 아니다.
  */
 const MERGE_MS = 3600_000;
 
@@ -55,12 +57,12 @@ export type NudgeBundle = { at: string; items: NudgeItem[] };
  *   달력 날짜로 세면 *"당일 아침"* 이 마감 **뒤**(그날 09:00)로 가서 사라진다.
  *   ⚠️ 하루 경계는 `t.boundary`(설정값)다 — 상수로 박지 않는다.
  *
- * **정리 규칙 셋**(ADR-050 ②) + 하나:
+ * **정리 규칙 넷**(ADR-050 ② 개정):
  * ```
- * 마감 이후의 점             뺀다 (사후 재촉은 없다 — ⑤)
- * 요청 시점에 이미 지난 점    뺀다
- * 두 점이 1시간 안           늦은 쪽 하나만   (한 과제 안에서)
- * 같은 시각의 과제 여럿       한 묶음
+ * 요청 시점에 이미 지난 점       뺀다
+ * 마감 시각 이후·같은 시각의 점   뺀다 (사후 재촉은 없다 — ⑤ · 같은 시각이면 "마감까지 0분" 이다)
+ * 두 점 사이가 1시간 미만         늦은 쪽 하나만   (한 과제 안에서)
+ * 같은 시각의 과제 여럿           한 묶음
  * ```
  */
 export async function nudges(env: Env, t: TimeCtx, days = MAX_DAYS, taskId: string | null = null): Promise<NudgeBundle[]> {
@@ -98,7 +100,7 @@ export async function nudges(env: Env, t: TimeCtx, days = MAX_DAYS, taskId: stri
     const kept: number[] = [];
     for (const ms of points) {
       const later = kept[kept.length - 1];             // 마지막으로 남긴 것 = 바로 뒤의 점
-      if (later !== undefined && later - ms <= MERGE_MS) continue;
+      if (later !== undefined && later - ms < MERGE_MS) continue;   // ⚠️ 미만 — 이하면 사슬로 무너진다
       kept.push(ms);
     }
 
@@ -128,4 +130,13 @@ export async function nudges(env: Env, t: TimeCtx, days = MAX_DAYS, taskId: stri
  */
 export async function hasNudges(env: Env, t: TimeCtx, taskId: string): Promise<boolean> {
   return (await nudges(env, t, MAX_DAYS, taskId)).length > 0;
+}
+
+/**
+ * **이 할 일의 재촉을 한 줄로** — 바꾸기 전후를 견줄 때 쓴다 (T-88 ①-c · 일정 수정).
+ * ★ 일정 수정은 *"재촉이 있는가"* 가 아니라 **"달라졌는가"** 를 물어야 한다 — 제목만 고친 마감은
+ *   재촉이 있어도 기기를 깨울 이유가 없다(재촉이 싣는 이름은 할 일의 제목이다).
+ */
+export async function nudgeKey(env: Env, t: TimeCtx, taskId: string): Promise<string> {
+  return JSON.stringify(await nudges(env, t, MAX_DAYS, taskId));
 }

@@ -4350,7 +4350,8 @@ await api("PUT", "/api/settings/nudge_morning", { value: "10:30" });
 const t87C = await t87Accept("t87-c", "T-87 병합 과제 기한", T87_C_DATE, "12:00");
 const t87C3 = t87Ats(await t87Sched(), t87C.task_id ?? null);
 t87SetOff();
-ok("3 ★ 1시간 안의 두 점은 늦은 하나만 (아침 10:30 이 1시간 전 11:00 에 먹힌다)",
+// ★ **이 줄이 곧 T-88 검사 2 다** — *"1시간 미만이면 늦은 쪽 하나"* (ADR-050 ② 개정). `[T-88]` 블록에 다시 세우지 않았다.
+ok("3 (= T-88 2) ★ 1시간 미만의 두 점은 늦은 하나만 (아침 10:30 이 1시간 전 11:00 에 먹힌다)",
   t87C3.length === 3
   && t87C3.includes(t87Ms(T87_C_DATE, "09:00")) && t87C3.includes(t87Ms(T87_C_DATE, "11:00"))
   && !t87C3.includes(t87Ms(T87_C_DATE, "10:30")),
@@ -4499,6 +4500,71 @@ ok("13 (서버 짝) ★ 수락·완료·취소·되돌리기·재촉 설정은 n
  *   ★ 맨 끝에 센다 — 이 블록의 수락·완료·취소·조회가 **전부** 지난 뒤다. */
 ok("10 ★★ guard_events 에 한 행도 안 생긴다 (이 블록의 수락·조회·완료·취소 전부 뒤)",
   t87GuardN() === t87GuardBefore, `${t87GuardBefore} → ${t87GuardN()}`);
+
+/* ── T-88 ① · 과제 재촉 서버 보정 셋 (ADR-050 ② ⑤ 개정) ─────────────────────
+ *
+ * ⚠️ **T-87 블록 뒤에 둔다** — 그 블록의 도우미(`t87Accept`·`t87Sched`·`t87Ats`·`t87Ms`·`t87SetOff`)를 그대로 쓴다.
+ * ★ **검사 2(1시간 미만이면 늦은 쪽 하나)는 새로 세우지 않았다** — T-87 3 이 이미 진다(30분 거리 · 라벨에 T-88 2 를 적었다).
+ *   다시 세우면 *"1시간 규칙을 뺀다"* 변이 하나가 둘을 죽여 표를 못 읽는다(`AGENT-CHAIN` §8 *"남의 명제를 업는다"*).
+ * ⚠️ 아침 시각은 **직접 넣는다**(09:00) — 기본값에 기대지 않는다(함정 15). 블록 끝에 지운다.
+ */
+console.log("\n[T-88] ① 과제 재촉 서버 보정 — 1시간 미만 · 마감 뒤 점 · 일정 수정이 기기를 깨운다");
+await api("PUT", "/api/settings/nudge_morning", { value: "09:00" });
+
+/* 1 ★ 정각 1시간 간격의 점은 합치지 않는다 — 11:00 마감의 08:00(3시간 전) · 09:00(아침) · 10:00(1시간 전) 셋 다 남는다.
+ *   ⚠️ **이하(≤)로 합치면 사슬로 무너져 10:00 하나만** 남는다(ADR-050 ② 개정). 전날 저녁까지 넷. */
+const T88_A_DATE = addDays(D, 10);
+const t88A = await t87Accept("t88-a", "T-88 정각 간격 과제 기한", T88_A_DATE, "11:00");
+const t88A1 = t87Ats(await t87Sched(), t88A.task_id ?? null);
+ok("1 ★ 정각 1시간 간격의 점은 합치지 않는다 (11:00 마감 → 08·09·10시 셋 다 남는다)",
+  t88A1.length === 4
+  && ["08:00", "09:00", "10:00"].every((hm) => t88A1.includes(t87Ms(T88_A_DATE, hm))),
+  `점=${t87Show(t88A1)}`);
+
+/* 3 ★ 마감 시각 이후·같은 시각의 점은 없다 — 아침 09:00 이 08:00 마감에선 **뒤**, 09:00 마감에선 **같은 시각**이다.
+ *   같은 시각이면 *"마감까지 0분"* 이다(ADR-050 ② 개정 — 규칙이 넷이 됐다). 나머지 점은 그대로 있어야 한다(빈 응답이 통과하지 않게). */
+const T88_B_DATE = addDays(D, 11);
+const T88_C_DATE = addDays(D, 12);
+const t88B = await t87Accept("t88-b", "T-88 아침보다 이른 마감 기한", T88_B_DATE, "08:00");
+const t88C = await t87Accept("t88-c", "T-88 아침과 같은 마감 기한", T88_C_DATE, "09:00");
+const t88S3 = await t87Sched();
+const t88B3 = t87Ats(t88S3, t88B.task_id ?? null);
+const t88C3 = t87Ats(t88S3, t88C.task_id ?? null);
+ok("3 ★ 마감 시각 이후·같은 시각의 점은 없다 (08:00 마감의 아침 09:00 · 09:00 마감의 아침 09:00)",
+  t88B3.every((ms) => ms < t87Ms(T88_B_DATE, "08:00")) && !t88B3.includes(t87Ms(T88_B_DATE, "09:00"))
+  && t88B3.includes(t87Ms(T88_B_DATE, "05:00")) && t88B3.includes(t87Ms(T88_B_DATE, "07:00"))
+  && t88C3.every((ms) => ms < t87Ms(T88_C_DATE, "09:00")) && !t88C3.includes(t87Ms(T88_C_DATE, "09:00"))
+  && t88C3.includes(t87Ms(T88_C_DATE, "06:00")) && t88C3.includes(t87Ms(T88_C_DATE, "08:00")),
+  `08:00 마감=${t87Show(t88B3)} · 09:00 마감=${t87Show(t88C3)}`);
+
+/* 4 ★ 수집 일정(마감)의 시각을 고치면 응답이 "바뀌었다" 를 단다 (T-87 §보고 결정 ② → T-88 ①-c).
+ *   ★ 고친 뒤 재촉이 **실제로** 새 마감을 따라갔는지도 본다 — 깃발만 달고 계산이 옛 마감을 보면 그건 거짓 깃발이다. */
+const T88_D_DATE = addDays(D, 13);
+const t88D = await t87Accept("t88-d", "T-88 마감 시각 고치는 과제 기한", T88_D_DATE, "23:59");
+const t88DEdit = (await api("PATCH", `/api/events/${t88D.event_id}`, { time: "21:00" })).json;
+const t88DAts = t87Ats(await t87Sched(), t88D.task_id ?? null);
+ok("4 ★ 수집 일정(마감)의 시각을 고치면 nudge_changed 를 단다 — 재촉도 새 마감을 따른다",
+  t88DEdit?.nudge_changed === true
+  && t88DAts.includes(t87Ms(T88_D_DATE, "18:00")) && t88DAts.includes(t87Ms(T88_D_DATE, "20:00"))
+  && !t88DAts.includes(t87Ms(T88_D_DATE, "20:59")),
+  `응답=${JSON.stringify(t88DEdit)} 점=${t87Show(t88DAts)}`);
+
+/* 5 손으로 만든 일정을 고치면 안 단다 — 4의 짝. ⚠️ 없으면 *"모든 일정 수정에 단다"* 가 통과한다(무거운 sync 가 매번 돈다). */
+const t88Hand = (await api("POST", "/api/events", { title: "T-88 손 일정", date: addDays(D, 13), time: "15:00" })).json;
+const t88HandEdit = (await api("PATCH", `/api/events/${t88Hand.id}`, { time: "16:00" })).json;
+ok("5 손으로 만든 일정을 고치면 nudge_changed 를 안 단다 (4의 짝)",
+  !!t88Hand.id && t88HandEdit?.time === "16:00" && t88HandEdit?.nudge_changed !== true,
+  JSON.stringify(t88HandEdit));
+
+/* + ★ 수집 마감이라도 **제목만** 고치면 안 단다 (티켓 밖 · 4·5 사이의 칸).
+ *   판정은 *"수집분인가"* 가 아니라 *"재촉이 달라졌는가"* 다 — 재촉이 싣는 이름은 **할 일의** 제목이라 일정 제목은 재촉을 안 바꾼다.
+ *   ⚠️ 없으면 *"수집 일정이면 무조건 단다"* 가 4·5 를 둘 다 초록으로 통과한다. */
+const t88DTitle = (await api("PATCH", `/api/events/${t88D.event_id}`, { title: "T-88 마감 일정 제목만 바꿈" })).json;
+ok("+ ★ 수집 마감이라도 제목만 고치면 nudge_changed 를 안 단다 — 재촉이 달라졌는가를 본다 (티켓 밖)",
+  t88DTitle?.title === "T-88 마감 일정 제목만 바꿈" && t88DTitle?.nudge_changed !== true,
+  JSON.stringify(t88DTitle));
+
+t87SetOff();
 
 // ── 결과 ─────────────────────────────────────────────────────
 console.log(`\n${"=".repeat(46)}\n통과 ${passN} · 실패 ${fails.length}`);

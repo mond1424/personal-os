@@ -676,6 +676,17 @@ export const nudgeTargets = (env: Env, from: string, to: string, taskId: string 
     task_id: string; title: string; categories: string | null; date: string; time: string;
   }>();
 
+/**
+ * **이 일정이 마감인 수집 과제의 할 일** (T-88 ①-c) — 일정을 고쳤을 때 재촉이 달라지는지 물을 상대.
+ * ⚠️ 잇는 칸(`event_id`)으로만 찾는다. 수락이 할 일을 안 만든 행(*"이미 했어요"* · T-80 ③)은 `task_id`가 NULL 이라 안 나온다.
+ * `MIN(id)` 는 `nudgeTargets`와 같은 고정이다 — 같은 일정을 가리키는 수락 행이 둘이어도 하나만.
+ */
+export const collectedTaskOfEvent = (env: Env, eventId: string) =>
+  q(env, `SELECT task_id FROM collected_items
+          WHERE id = (SELECT MIN(id) FROM collected_items
+                       WHERE event_id = ? AND state = 'accepted' AND task_id IS NOT NULL)`)
+    .bind(eventId).first<{ task_id: string }>();
+
 /** `AND state <> 'accepted'`가 **두 번째 요청을 조용히 무해하게** 만든다(T-42 §할 일 ①). */
 /**
  * 수락의 산물 **둘**을 한 문장으로 잇는다 (T-78 · 0025).

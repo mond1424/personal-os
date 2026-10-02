@@ -3,6 +3,8 @@ import * as db from "../db";
 import { nextId } from "../lib/id";
 import { isDate } from "../lib/time";
 import { ApiError, type Env, type TimeCtx } from "../types";
+// ★ 응답의 `nudge_changed` (T-88 ①-c) — 재촉 계산은 저쪽 하나다.
+import { nudgeKey } from "./nudge";
 
 const isTime = (v: unknown) => typeof v === "string" && /^([01]\d|2[0-3]):[0-5]\d$/.test(v);
 
@@ -35,15 +37,21 @@ export async function create(env: Env, t: TimeCtx, input: any) {
   return { id, ...v };
 }
 
-export async function update(env: Env, id: string, input: any) {
+export async function update(env: Env, t: TimeCtx, id: string, input: any) {
   const cur = await db.eventGet(env, id);
   if (!cur) throw new ApiError(404, "해당 일정이 없어요");
   const v = parse(input, true);
   const next = { ...cur, ...v };
+  /* ★ **수집 마감을 고치면 기기를 깨운다** (T-88 ①-c · T-87 §보고 결정 ②) — 그날 재촉이 틀리면 아프고 사용자가 앱에 있다.
+   *   ⚠️ **"달라졌는가"를 바꾸기 전후로 견준다.** 수집 과제가 아니면 묻지도 않는다(손 일정은 재촉이 없다) ·
+   *   제목만 고치면 재촉은 그대로다(재촉이 싣는 이름은 할 일의 제목) · 끝난 할 일의 마감을 고쳐도 그대로다. */
+  const linked = (await db.collectedTaskOfEvent(env, id))?.task_id ?? null;
+  const before = linked ? await nudgeKey(env, t, linked) : null;
   await db.stUpdateEvent(env, id, next.title as string, next.date as string,
     (next.time ?? null) as string | null, (next.period_id ?? null) as string | null,
     (next.note ?? null) as string | null).run();
-  return { ...next, id };
+  const changed = linked ? (await nudgeKey(env, t, linked)) !== before : false;
+  return { ...next, id, ...(changed ? { nudge_changed: true } : {}) };
 }
 
 /**
