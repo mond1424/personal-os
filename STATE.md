@@ -41,10 +41,13 @@
     ≤ 면 11:00 마감의 08·09·10시가 **사슬로 이어져 10시 하나로 무너진다.** 고치는 것은 **T-88 ①-a**. 검사는 30분 거리만 쟀다(정각 1시간은 안 정했다).
   - 🌙 **판정은 배포 뒤 하나다** — ★ 앱이 평소처럼 돈다(밤 Guard 알림 · 캘린더 · 과제 추가가 전과 같다).
     **울리는 것의 확인은 T-88 에서 한다.**
-  - 라이브 확인(배포됐으면 `nudges` 칸이 있다 — 비어 있어도 칸은 있다):
+  - 라이브 확인 — ★ **2026-10-02 이 줄로 라이브임을 확인했다**(`1` · 대조 `function handleBack` 도 `1`):
     ```bash
-    curl -s "https://personal-os.mai-pos.workers.dev/api/guard/schedule" | python -c "import sys,json;j=json.load(sys.stdin);print('nudges' in j, len(j.get('nudges',[])))"
+    curl -s https://personal-os.mai-pos.workers.dev/app.js | grep -c 'r.course ||'
     ```
+    ⚠️⚠️ **처음 적은 확인법은 안 돌았다** — `curl …/api/guard/schedule` 은 토큰 없이 **401** 이라 `'nudges' in j` 가
+    **배포됐어도 `False`** 를 낸다(함정 18 — *없다* 가 아니라 *못 봤다*). `app.js` 는 토큰 없이 열리고, 서버와 **같은 `deploy`** 로 올라간다.
+    (위 T-71 의 `guard/schedule` 확인법도 지금은 401 이다 — 쓰려면 `-H "Authorization: Bearer <토큰>"`.)
 - 마지막 코드 변경: **T-86** (2026-10-01 · **★ 마이그레이션 `0026` 하나(소급) · APK 무관 · `guard/` 무변경** ·
   **★ `--local` → `--remote` → 배포 순서.** *"기한"은 과제 이름이 아니다* — 일정·들어온 것 목록에서도 뗀다.
   `collected.titleOf`(옛 `taskTitleOf`) **하나**가 일정·할 일·목록 이름을 만든다 · 원문은 `collected_items.summary` 에만.
