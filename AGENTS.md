@@ -96,6 +96,8 @@ Test-Path GEMINI.md, AGENTS.override.md, .agent, .agents, ~/GEMINI.md, ~/.agents
 - **`npm run verify`는 Android를 안 본다.** `android/`를 건드렸으면 `assembleRelease`까지 돌린다(`CONVENTIONS.md` 함정 13)
 - 검사 러너가 환경 때문에 죽으면(권한 · 샌드박스 · 포트) 숫자 없이 닫지 않고 막힌 것으로 올린다 —
   `CONVENTIONS.md` 함정 8 · `STATE.md` T-06 배제 목록부터 본다
+- front에는 원인을 못 짚은 간헐 hang이 있다(`STATE.md` §front 간헐 hang). 다시 돌려 재현되는지 보되,
+  다시 돌려 통과한 것을 결론으로 쓰지 않는다 — 간헐은 "환경 탓"으로 읽히기 쉽다(`CONVENTIONS.md` 함정 14)
 
 세션을 마칠 때 감독층은 `CONVENTIONS.md` §세션 종료 규칙을 따른다.
 

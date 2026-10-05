@@ -20,7 +20,7 @@ Codex는 2026-07에 이 리포의 `npm run front`를 샌드박스 권한 때문�
 ```
 STATE.md                    맨 위 §저장소에 전환 줄 · §raw 링크 · §기준선 재확인 한 줄
 APP-BUILD.md                락 줄(27) · 락 형식 줄(64)
-README0722.md               CLAUDE.md → CONVENTIONS.md (131)
+README0722.md               CLAUDE.md → CONVENTIONS.md (131) · §함정에 19 한 줄(CONVENTIONS 함정 19의 짝)
 docs/api-surface.md         CLAUDE.md → CONVENTIONS.md (4 · 271)
 src/services/collected.ts   주석 (177)
 test/smoke.ts               주석 (1825 · 2274 · 3338)
@@ -60,7 +60,9 @@ test/front.mjs              주석 (4588)
    - EPERM(`.wrangler\tmp`)이나 헬스 대기 실패가 나면 그 출력을 붙이고, 샌드박스 밖 실행 승인을 받아 다시 돈다.
      **어느 환경에서 통과했는지**(기본 · `--add-dir` · 샌드박스 밖) 적는다
    - 숫자가 다르면 멈춘다(위 금지)
-4. **`CLAUDE.md` → `CONVENTIONS.md`** — 범위의 주석 · 문서. 절 이름과 함정 번호는 그대로다
+4. **`CLAUDE.md` → `CONVENTIONS.md`** — 범위의 주석 · 문서. 절 이름과 함정 번호는 그대로다.
+   `README0722.md` §함정에 19(전역 클래스명 충돌)를 한 줄로 더한다 — `AGENT-CHAIN.md` §3의 *한 벌인데 주인이 다르다*.
+   16~18도 요약에 없다. 이번에 채울지는 감독층이 정하고 보고에 적는다
 5. **훑기** — `git grep -c "CLAUDE\.md"`로 남은 곳을 파일별로 센다. 남는 곳은 기록
    (`STATE.md` 지난 항목 · 닫힌 티켓 · `APP-ADR.md` · 옛 계획 문서)뿐이어야 한다.
    ⚠️ **0건이면 스캐너부터 의심한다** — `STATE.md` 지난 항목에 반드시 남아 있어야 한다(양성 대조 · 함정 17 · 18)
