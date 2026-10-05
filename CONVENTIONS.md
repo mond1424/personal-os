@@ -1,4 +1,4 @@
-# CLAUDE.md — Personal OS Worker
+# CONVENTIONS.md — Personal OS Worker 코드 규약
 
 학생 사용자의 개인 판단-보조 에이전트 PWA. **폰에 설치해 실사용 중이므로 회귀에 민감하다.**
 Cloudflare Worker (Hono / TS) + D1 + `[assets]` 정적 서빙.
@@ -15,14 +15,13 @@ Cloudflare Worker (Hono / TS) + D1 + `[assets]` 정적 서빙.
 
 ## 에이전트 체인
 
-**사용자 → Cowork → Claude Code → Antigravity CLI.** 경계·소유권·보고 형식은 `AGENT-CHAIN.md`.
-Antigravity의 진입 파일은 `AGENTS.md`(이 문서를 원본으로 가리킨다 — 규약을 복사하면 반드시 갈라진다).
-⚠️ **`GEMINI.md`·`~/.gemini/AGENTS.md`·`.agents/`를 두지 않는다** — Antigravity가 자동으로 읽어
-**규약이 두 벌이 된다.** 전역 파일은 리포 밖이라 이 층이 보지도 못한다(`AGENTS.md` 머리 참조).
+층(설계 · 감독 · 구현)과 경계 · 소유권 · 보고 형식은 `AGENT-CHAIN.md`, 어느 도구가 어느 층인지는 그 §1.1 표.
+모든 도구의 진입 파일은 `AGENTS.md` 하나다 — 이 문서를 원본으로 가리킨다. **규약을 복사하면 반드시 갈라진다.**
+도구별 규약 자리(`GEMINI.md` · `AGENTS.override.md` · `.agents/` · 전역 파일)를 두지 않는 이유와 확인법은 `AGENTS.md` §0.
 
-이 층(Claude Code)이 지는 것: **`STATE.md`·`APP-BUILD.md`·`docs/*`·git의 유일한 편집자**,
+감독층이 지는 것: **`STATE.md`·`APP-BUILD.md`·`docs/*`·git의 유일한 편집자**,
 `npm run verify`로 숫자를 만드는 유일한 층, 위임 금지 영역(트리거·마이그레이션·귀속일·Guard 발동 경로) 직접 구현.
-설계 문서·`APP-PLAN`·`APP-ADR`은 **읽기만** 한다 — 고칠 것이 있으면 Cowork에 올린다.
+설계 문서·`APP-PLAN`·`APP-ADR`은 **읽기만** 한다 — 고칠 것이 있으면 설계층에 올린다.
 
 **미커밋 코드가 남은 채 다음 티켓을 착수하지 않는다.**
 두 번 물렸다 — T-08(넷이 섞임)·T-16(둘이 섞임). 락은 *동시* 작업을 막지만 *순차 누적*은 안 막는다.
@@ -82,7 +81,7 @@ $p = (adb shell pm path dev.mond1424.personalos) -replace 'package:','' ; adb sh
 ## 마이그레이션 · 배포
 
 - **마이그레이션은 배포보다 먼저**, `--local` → `--remote` 순서.
-- **`wrangler deploy`와 `wrangler secret put`은 사용자가 직접** 한다. Claude가 배포하지 않는다.
+- **`wrangler deploy`와 `wrangler secret put`은 사용자가 직접** 한다. 에이전트는 배포하지 않는다.
 - **`wrangler.toml`의 `database_id`는 건드리지 않는다.**
 - **새 마이그레이션을 추가하면 `test/smoke.ts`의 스키마 목록(하드코딩)에도 파일명을 넣는다.** (`e2e.mjs`는 디렉터리 전체를 적용하므로 자동.)
 - **적용된 마이그레이션은 SQL을 고치지 않는다. 주석은 고쳐도 된다.**
@@ -219,7 +218,7 @@ npm run deploy
     **결과는 에러가 아니라 `0건`** 이다. ★ **그 0건은 *"없다"* 와 화면에서 같다.**
     ⚠️ **훑기가 0건을 내면 그 스캐너에 *물어야 하는 것 하나*를 먹여 보고 넘어간다**
     (`AGENT-CHAIN` §8 — 검사 층의 *"스캐너가 살아 있는가"* 짝을 조사 층에도 댄다).
-    **막는 법**: heredoc 대신 파일로 쓰거나(`Write` 도구), quoted heredoc(`<<'EOF'`)을 쓴다.
+    **막는 법**: heredoc 대신 파일 편집 도구로 파일에 쓰거나, quoted heredoc(`<<'EOF'`)을 쓴다.
     ⚠️ **heredoc 만이 아니다** — T-72에서 **명령 치환 `$( )` 안의 `$'\r'`** 가 빈 패턴이 됐다. **두 번.**
 
     ★★ **그리고 그때 나오는 것이 `0건`이 아니라 *그럴듯한 수*일 수 있다. 그쪽이 훨씬 오래 산다.**
@@ -235,7 +234,7 @@ npm run deploy
     수가 `N1` 과 똑같아 빨간불로 보였다.** 이 세션에서 **두 번** 났다.
     ★★★ **가른 것은 하나다 — 변이 예상표(어느 검사가 죽어야 하나)와 대조한 것.**
     **배터리는 돌리기 전에 예상을 적고, 안 맞으면 결론보다 *도구*를 먼저 의심한다.**
-    ★ 막는 법은 그대로다: **`Write` 로 파일에 쓰거나 quoted heredoc(`<<'EOF'`).**
+    ★ 막는 법은 그대로다: **파일 편집 도구로 파일에 쓰거나 quoted heredoc(`<<'EOF'`).**
 
 18. **도구의 답은 *무엇이 일어났나*만 말한다 — *없다*도 *어느 길로*도 말하지 않는다.**
     세 번 같은 모양으로 물렸고, 셋이 서로 다른 층이라 따로따로 물렸다.
@@ -271,10 +270,10 @@ npm run deploy
 
 ## ★ 세션 종료 규칙 (선택 아님)
 
-**세션을 마칠 때(또는 사용자가 "정리하자"라고 할 때) 반드시:**
+**감독층은 세션을 마칠 때(또는 사용자가 "정리하자"라고 할 때) 반드시:**
 1. **`STATE.md` 갱신**
 2. 구조가 바뀌었으면 **`docs/api-surface.md` 재생성**
 3. 마이그레이션을 추가했으면 **`docs/schema-current.sql` 재덤프**(migrations 전체를 인메모리 sqlite에 적용→`sqlite_master` 덤프)
 4. **commit & push**
 
-push하지 않으면 Claude Chat 쪽이 보는 코드가 낡는다. **push는 선택이 아니다.**
+push하지 않으면 raw 링크로 리포를 읽는 쪽(설계층 · 채팅 상의 · 다른 기기)이 낡은 코드를 본다. **push는 선택이 아니다.**

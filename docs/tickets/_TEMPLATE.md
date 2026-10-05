@@ -1,6 +1,6 @@
 # T-NN — 제목
 
-**발행** Cowork · YYYY-MM-DD · **담당** Codex CLI / Claude Code · **상태** ⬜ 대기
+**발행** 설계층 · YYYY-MM-DD · **담당** 감독층 / 구현층 · **상태** ⬜ 대기
 
 ---
 
@@ -54,6 +54,7 @@ typecheck 통과 · smoke 213 → 21N · front 167 → 1NN · 실패 0
 
 ```
 티켓: T-NN
+층 · 도구:
 바꾼 파일:
 기준선: typecheck 통과 · smoke A → B · front C → D · 실패 0
 설계와 어긋난 점:
