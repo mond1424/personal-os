@@ -10,6 +10,7 @@ Cloudflare Worker (Hono / TS) + D1 + `[assets]` 정적 서빙.
 - 파일명은 `_v0.9`지만 **§6.4와 §8은 v1.0으로 개정됐다**(2026-07-29, 네이티브 전환). 나머지 v1.0 백로그는 연기 중.
 - **8월 Guard v1은 `APP-PLAN.md`(무엇을·어떤 순서로) · `APP-ADR.md`(왜·기각한 대안) · `APP-BUILD.md`(진행 상태) · `GUARD-DEV-LOOP.md`(빌드·권한 절차)** 를 따른다. ADR은 설계문서를 대체하지 않고 그 아래에 놓인다.
 사용자용 안내는 `사용설명서0722.md`. 리팩토링 검토 기록은 `REFACTOR-PLAN.md`.
+새 앱으로 갈아타는 안을 검토한 기록(pOS Lite, 2026-10-04)은 `docs/pos-lite-design.md` — 위계 밖의 참고 자료다.
 파일 지도(어느 파일을 고칠지)는 `docs/api-surface.md`, 스키마 스냅샷은 `docs/schema-current.sql`.
 작업 시작 시 STATE.md를 먼저 읽는다. 마이그레이션 적용 여부·배포 상태·미해결 항목은 반드시 STATE.md 기준으로 판단하고, 기억이나 과거 문서 사본으로 단정하지 않는다.
 
