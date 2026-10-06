@@ -16,7 +16,12 @@ Cloudflare Worker (Hono / TS) + D1 + `[assets]` 정적 서빙 + Capacitor Androi
 
 ```powershell
 $hit = foreach ($p in 'GEMINI.md','AGENTS.override.md','.agent','.agents','~/GEMINI.md','~/.agents','~/.gemini/GEMINI.md','~/.gemini/AGENTS.md','~/.codex/AGENTS.md','~/.codex/AGENTS.override.md') {
-  if (Test-Path $p) { $n = (Get-ChildItem $p -Recurse -File -Force | Measure-Object Length -Sum).Sum; if ($n -gt 0) { "$p : $n B" } }
+  try {
+    if (Test-Path $p -PathType Leaf) { $n = (Get-Item $p -Force -ErrorAction Stop).Length }
+    elseif (Test-Path $p -PathType Container) { $n = (Get-ChildItem $p -Recurse -File -Force -ErrorAction Stop | Measure-Object Length -Sum).Sum }
+    else { $n = 0 }
+    if ($n -gt 0) { "$p : $n B" }
+  } catch { "$p : 읽을 수 없음" }
 }
 $size = (Get-Item AGENTS.md).Length
 if ($hit) { $hit; '→ 멈추고 보고한다' } elseif ($size -ge 24576) { "AGENTS.md $size B → 멈추고 보고한다" } else { "통과 · AGENTS.md $size B" }
@@ -40,9 +45,15 @@ if ($hit) { $hit; '→ 멈추고 보고한다' } elseif ($size -ge 24576) { "AGE
 - `~/.gemini` · `~/.codex` 디렉터리 자체는 있어도 된다(도구 설치 · 상태). 그 안의 위 파일만 본다.
 - `.gitignore`는 리포 안의 자리만 막는다. 홈의 자리는 이 확인만 막는다.
 - **크기 상한**: Codex는 지시 파일을 합쳐 32 KiB에서 자르고, 잘라도 알리지 않는다. 늘릴 내용은 `CONVENTIONS.md`로 보낸다.
-- **확인법은 돌려 본 것만 적는다.** 위 명령은 PowerShell 7에서 알려진 경우 일곱을 먹여 확인했다 —
-  통과 셋(아무것도 없음 · 빈 전역 파일 · 빈 파일만 든 폴더), 멈춤 넷(내용 있는 전역 파일 · 내용 있는 폴더 ·
-  리포와 홈의 `GEMINI.md` · 24576 B인 이 파일). 문서에서 읽고 옮긴 명령(`agy inspect`)이 실제로는 없었던 적이 있다 —
+- **파일과 폴더를 따로 잰다.** Windows PowerShell 5.1(Codex의 기본 셸)에서 `Get-ChildItem <파일> -Recurse`는
+  그 파일 하나가 아니라 **같은 이름을 상위 폴더 아래 전체에서** 찾는다 — 빈 `~/.codex/AGENTS.md`가 플러그인 폴더의
+  `AGENTS.md` 셋을 더해 100571 B로 잡혔다. 그래서 파일은 `Get-Item`으로, 폴더만 `Get-ChildItem`으로 잰다.
+- **읽지 못한 자리는 '없다'가 아니라 '못 봤다'다**(`CONVENTIONS.md` 함정 18). 그래서 통과가 아니라 멈춤으로 센다.
+- **확인법은 돌려 본 것만 적는다.** 위 명령은 PowerShell 7에서 알려진 경우 아홉을 먹여 확인했다 —
+  통과 넷(아무것도 없음 · 빈 전역 파일 · 빈 전역 파일 아래 하위 폴더의 `AGENTS.md` · 빈 파일만 든 폴더),
+  멈춤 다섯(내용 있는 전역 파일 · 내용 있는 폴더 · 리포와 홈의 `GEMINI.md` · 24576 B인 이 파일 · 읽을 수 없는 폴더).
+  5.1에서는 같은 구조(파일 `Get-Item` · 폴더 `Get-ChildItem`)의 확인이 맞는 값을 냈다(T-89 §보고).
+  문서에서 읽고 옮긴 명령(`agy inspect`)이 실제로는 없었던 적이 있다 —
   적힌 확인법이 안 돌면 그 절은 거짓말을 한다(`CONVENTIONS.md` §사람이 하는 것의 상태).
 
 ---
