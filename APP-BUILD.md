@@ -24,7 +24,7 @@
 ## 락 — 지금 누가 무엇을 들고 있나
 
 ```
-WIP: T-88 과제 재촉 — ① 커밋 · 배포 대기 · 그 뒤 ② APK (claude-code, 10-02)
+WIP: T-88 과제 재촉 — ① 커밋 · 배포 대기 · 그 뒤 ② APK (감독층, 10-02)
 ```
 
 > 최근 이력(새 것부터) — 전부 커밋 직전 해제:
@@ -61,7 +61,7 @@ WIP: T-88 과제 재촉 — ① 커밋 · 배포 대기 · 그 뒤 ② APK (clau
 > **T-03** L4 검증 서버 (claude-code, 07-30) · **T-02** 스키마 라벨 (claude-code, 07-30) ·
 > **T-01** Education 폼 (codex, 07-30)
 
-> 형식: `WIP: T-07 (codex, 07-30 14:20) — public/app.js, public/index.html`
+> 형식: `WIP: T-07 (감독층 · codex, 07-30 14:20) — public/app.js, public/index.html`
 > 비어 있으면 아무도 안 들고 있다는 뜻. **같은 리포에 실행 에이전트를 둘 동시에 붙이지 않는다.**
 > 규약은 `AGENT-CHAIN.md`.
 

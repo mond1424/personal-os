@@ -174,7 +174,7 @@ export async function status(env: Env, t: TimeCtx) {
  *
  * ★★ **`accept` 가 부르는 자리인 이유** — `createTask` 안에서 다듬으면 **손으로 만든 task 까지**
  *    바뀐다. 다듬는 근거는 *"수집한 마감에서 왔다"* 하나이므로 **수집분만**이다(T-83 §금지).
- *    그리고 두 title 은 자유 변경 칸이라(`CLAUDE.md` §아키텍처 원칙 — id 불변 / title 자유)
+ *    그리고 두 title 은 자유 변경 칸이라(`CONVENTIONS.md` §아키텍처 원칙 — id 불변 / title 자유)
  *    만들 때 한 번 다듬는 것은 **되돌릴 수 있는 해석**이다.
  */
 const DEADLINE_SUFFIX = "기한";

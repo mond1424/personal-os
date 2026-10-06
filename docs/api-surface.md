@@ -1,7 +1,7 @@
 # API Surface — Personal OS Worker
 
 목적: **코드를 열지 않고 "어느 파일·함수를 고쳐야 하는지" 판단**하기 위한 시그니처 지도.
-구조가 바뀌면 세션 종료 시 재생성한다 (CLAUDE.md 규칙). 코드 본문은 옮기지 않는다 — 시그니처만.
+구조가 바뀌면 세션 종료 시 재생성한다 (CONVENTIONS.md 규칙). 코드 본문은 옮기지 않는다 — 시그니처만.
 
 계층 흐름: **HTTP(`src/index.ts`) → 서비스(`src/services/*.ts`) → DB(`src/db/index.ts`)**. 시간·id·AI 중계는 `src/lib/`.
 공통 인자 `env`(=`{DB, API_TOKEN?, ANTHROPIC_API_KEY?}`), `t`(=요청 시간 컨텍스트 `TimeCtx {d, now, compact, boundary, offsetMin}`).
@@ -268,7 +268,7 @@
 - `finalizeIgnored(env, t)` → `{ignored, unasked, cutoff}` · **루프의 닫는 쪽**(ADR-025). 반응 없이 `GRACE_H`(36시간)를
   넘긴 발동을 확정한다. ★ **`ignored`와 `unasked`로 갈리고, 가르는 것은 레벨이 아니라 `asked`다**(T-70 · ADR-047 §정정) —
   `level == 2`는 *지금 우연히 맞는* 대응이라 T-71이 L2에 반응 자리를 주면 거짓이 되는데, **그 APK가 언제 깔렸는지는
-  이 층이 모른다**(CLAUDE.md §사람이 하는 것의 상태). `asked`는 발동과 함께 와서 그 물음이 안 생긴다.
+  이 층이 모른다**(CONVENTIONS.md §사람이 하는 것의 상태). `asked`는 발동과 함께 와서 그 물음이 안 생긴다.
   ⚠️ `asked`가 `NULL`(옛 APK)이어도 `ignored`로 **확정하지 않는다** — 확정은 *"물었는데 안 했다"* 는 주장이다. 유예가 긴 이유는 오프라인 큐다 — 기기가 발동과 반응을 **함께** 나중에
   올리므로(ADR-023) 서버가 먼저 박으면 트리거가 진짜 반응을 막고 소급 복구가 안 된다.
   `autoClose`가 부르고, 거기서 던지면 자동 마감이 통째로 멈추므로 `.catch`로 격리돼 있다

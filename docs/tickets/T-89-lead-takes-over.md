@@ -105,12 +105,202 @@ CLAUDE.md 남은 곳: 5의 셋 안에서만 (파일별 개수)
 
 ```
 티켓: T-89
-층 · 도구:
-바꾼 파일:
-시작 전 확인:
-첫 verify (환경):
-기준선: typecheck 통과 · smoke 534 → 534 · front 526 → 526 · 실패 0
-CLAUDE.md 남은 곳:
-설계와 어긋난 점:
-막힌 것:
+층 · 도구: 감독층 · codex (GPT), 티켓 머리의 담당으로 확정
+바꾼 파일: STATE.md, APP-BUILD.md, README0722.md, docs/api-surface.md,
+  src/services/collected.ts, test/smoke.ts, test/runner-exit.mjs, test/front.mjs, 이 티켓의 §보고
+시작 전 확인: 통과 · AGENTS.md 10555 B
+첫 verify (환경): 샌드박스 밖(require_escalated)에서 typecheck 통과 · smoke 534 · front 526 · 실패 0 · exit 0
+  기본 환경(use_default)은 typecheck 통과 · smoke 534 · 실패 0 뒤, front 기동 중 EPERM으로 exit 1.
+둘째 verify (환경): 같은 샌드박스 밖 환경에서 typecheck 통과 · smoke 534 · front 526 · 실패 0 · exit 0
+기준선: typecheck 통과 · smoke 534 → 534 · front 526 → 526 · 실패 0 · verify exit 0 (변경 전·후 둘 다)
+CLAUDE.md 남은 곳: §할 일 5가 허용한 세 분류 안에서만 남았다. 아래 최종 훑기에 파일별 개수를 기록한다.
+설계와 어긋난 점: 동작 변경 없음. 기본 샌드박스의 EPERM이 재현돼 설계층에 실행 환경 판단을 올린다.
+막힌 것: 시작 검사의 오탐은 c2d48c3의 개정 명령으로 해소. verify는 샌드박스 밖에서 통과했다.
+  --add-dir를 별도로 적용한 새 세션은 측정하지 않았다. 리포 밖 설정은 바꾸지 않았다.
+작업 상태: 감독층 구현·1차 검증 완료. 설계층 최종 검토와 사용자 push 허락은 남아 있다.
 ```
+
+### 변경 범위와 판단
+
+- 재개 시 미커밋 변경은 앞선 이 티켓의 보고뿐이었다. 미커밋 코드는 없었다.
+- `CLAUDE.md` 참조는 지정된 문서와 코드 주석에서만 바꿨다. `STATE.md` 맨 위의 현행 확인법 안내 두 줄도
+  §할 일 5에 따라 바꿨다. 지난 항목과 닫힌 티켓의 이름은 기록으로 남긴다.
+- README 함정 16~18도 이번에 채우기로 했다. 19만 추가하고 중간 번호를 비우는 안은 원본과 요약의 대응을
+  계속 불완전하게 남기므로 택하지 않았다. 16~19 모두 CONVENTIONS 원본을 요약한다.
+- 소스 diff는 주석 여섯 줄의 파일명 치환뿐이다. API 구조와 스키마가 바뀌지 않아 지도 재생성·스키마 재덤프는 하지 않는다.
+- T-88의 락을 티켓이 정한 형식으로 잠시 인수했다. 커밋 직전에 T-88 대기 락으로 되돌렸다.
+
+### 검증 환경과 실행 기록
+
+기본 셸은 Windows PowerShell 5.1.26100.9587이다. `npm run verify`는 `npm.ps1` 실행 정책에 막혀
+검사 시작 전에 exit 1을 냈다. 같은 npm의 `npm.cmd run verify`로 실행했으며 실행 정책은 바꾸지 않았다.
+
+변경 전 기본 샌드박스 실행은 typecheck와 smoke 534/0까지 통과했으나, 아래 오류로 front는 시작하지 못했다.
+verify exit 1이며, 이 런을 front 실패 0으로 세지 않는다. 관련 출력 발췌(ANSI 색상 코드는 제거):
+
+```text
+[e2e] 오류: Error: dev 서버가 30초 안에 http://127.0.0.1:59621/api/health에 응답하지 않았다 (프로세스는 살아 있다).
+EPERM: operation not permitted, mkdtemp 'C:\dev\personal-os-worker\worker\.wrangler\tmp\dev-XXXXXX'
+The expression evaluated to a falsy value:
+    (this.#tmpDir)
+[e2e] 실패라 진단용으로 남겼다: C:\Users\LG\AppData\Local\Temp\personal-os-e2e-r89YTC
+[e2e] 실제 dev DB(.wrangler/state)는 그대로.
+```
+
+샌드박스 밖 실행은 처음 두 번 홈 디렉터리에서 시작해 `C:\Users\LG\package.json`의 ENOENT로 exit 1을 냈다.
+둘째 시도는 도구의 `workdir`를 지정했어도 같았다. 두 시도 모두 검사는 시작하지 못했다.
+명령 안에서 경로를 지정하고 `login: false`로 실행하자 통과했다.
+
+```powershell
+Set-Location -LiteralPath 'C:\dev\personal-os-worker\worker'
+npm.cmd run verify
+```
+
+- **변경 전 통과 런**: 샌드박스 밖 · typecheck 통과 · smoke 534/0 · front 526/0 · verify exit 0.
+  마이그레이션 17.0초 · front 174.3초 · 러너가 임시 DB 삭제 완료를 출력했다.
+- **변경 후 통과 런**: 같은 환경 · typecheck 통과 · smoke 534/0 · front 526/0 · verify exit 0.
+  마이그레이션 18.6초 · front 158.7초 · 러너가 임시 DB 삭제 완료를 출력했다.
+  두 통과 런에서 front 간헐 hang은 관측되지 않았다. 앞선 기본 환경의 기동 실패는 별도로 남긴다.
+- **설계층에 올릴 것**: 기본 샌드박스에서 T-06의 EPERM이 재현됐다. 통과한 환경을 바탕으로
+  AGENT-CHAIN.md §1.1의 여는 법을 판단해야 한다. `--add-dir` 효과는 이 세션에서 별도로 재지 않았다.
+- **범위 밖 발견 — 수정하지 않음**: `test/e2e.mjs`의 헬스 오류 문구는 "30초"지만, 루프는 120회이고
+  요청당 2초 타임아웃 뒤 250ms를 쉰다. 모든 요청이 타임아웃되면 대기 상한은 계산상 약 270초다.
+  이번에 경과 시간을 별도 계측한 값은 아니다.
+
+### 최종 훑기 (파일별 일치 행 수)
+
+명령은 `git grep -c "CLAUDE\.md"`다. `-c`는 문자열 출현 횟수가 아니라 일치한 **행 수**를 센다.
+양성 대조인 STATE의 지난 기록 41행과 APP-BUILD 이력 1행이 남아 있어, 빈 스캔을 통과로 읽지 않았다.
+나머지도 발행된 티켓·기록, 마이그레이션/덤프 주석, 이름 대응표 안에만 있다. 범위 밖의 새 잔여물은 없다.
+
+```text
+AGENT-CHAIN.md:1
+AGENTS.md:1
+APP-ADR.md:4
+APP-BUILD.md:1
+APP-PLAN.md:2
+BRIEF-AGENCY-0810.md:1
+REFACTOR-PLAN.md:6
+STATE.md:41
+docs/schema-current.sql:1
+docs/tickets/HANDOFF-0731.md:3
+docs/tickets/T-01-education-form.md:1
+docs/tickets/T-05-protect-ui.md:1
+docs/tickets/T-06-codex-front-env.md:2
+docs/tickets/T-07-ai-used-semantics.md:2
+docs/tickets/T-09-goals-dday-nav.md:1
+docs/tickets/T-10-mode-downgrade.md:1
+docs/tickets/T-11-exit-cost.md:1
+docs/tickets/T-12-front-date-checks.md:1
+docs/tickets/T-16-memo-origin.md:1
+docs/tickets/T-17-visual-feedback.md:1
+docs/tickets/T-18-history-and-memory.md:1
+docs/tickets/T-20-calendar-perf.md:1
+docs/tickets/T-21-calendar-panes.md:1
+docs/tickets/T-22-guard-memory-daily.md:1
+docs/tickets/T-23-loadtime-once.md:1
+docs/tickets/T-25-gesture-edge.md:1
+docs/tickets/T-26-schedule-clock.md:1
+docs/tickets/T-31-precedent-observability.md:1
+docs/tickets/T-36-smoke-relative-dates.md:1
+docs/tickets/T-37-nested-timeout-order.md:1
+docs/tickets/T-40-flush-lost-update.md:1
+docs/tickets/T-47-no-dead-end-defer.md:1
+docs/tickets/T-50-ai-fields-append-only.md:1
+docs/tickets/T-55-cal-list-empty.md:1
+docs/tickets/T-57-fetch-has-a-ceiling.md:1
+docs/tickets/T-60-l2-says-something.md:1
+docs/tickets/T-61-wake-not-class.md:1
+docs/tickets/T-67-runner-keeps-the-summary.md:2
+docs/tickets/T-68-accept-remembers.md:1
+docs/tickets/T-69-two-numbers-disagree.md:3
+docs/tickets/T-70-unasked-is-not-ignored.md:6
+docs/tickets/T-72-clean-clone-brings-crlf.md:2
+docs/tickets/T-73-compose-spike-calendar.md:1
+docs/tickets/T-76-the-window-end-says-nothing.md:1
+docs/tickets/T-77-level-3-knows-less.md:2
+docs/tickets/T-78-accepted-homework-becomes-a-task.md:1
+docs/tickets/T-79-today-asks-less.md:3
+docs/tickets/T-80-the-deadline-becomes-the-plan.md:1
+docs/tickets/T-81-the-calendar-loses-the-gesture.md:1
+docs/tickets/T-82-wait-for-what-is-visible.md:1
+docs/tickets/T-83-a-task-has-a-tasks-name.md:1
+docs/tickets/T-84-one-task-one-line.md:1
+docs/tickets/T-86-deadline-suffix-off-the-screen.md:1
+docs/tickets/T-88-nudge-rings-and-ends-with-one-tap.md:1
+docs/tickets/T-89-lead-takes-over.md:8
+docs/tickets/T-90-schema-dump-in-repo.md:1
+migrations/0023_guard_asked.sql:1
+migrations/0024_collected_categories.sql:1
+```
+
+### 재개 시 시작 전 확인 (2026-10-06 · c2d48c3의 AGENTS.md §0 원문 명령)
+
+사용자 지시로 AGENTS.md를 다시 읽고, 기본 셸 Windows PowerShell 5.1에서 개정 명령을 그대로 실행했다.
+exit 0이며 출력은 다음과 같다. 아래의 앞선 원출력과 대체 확인 기록은 보존한다.
+
+```text
+통과 · AGENTS.md 10555 B
+```
+
+### 시작 전 확인 원출력 (2026-10-06 · AGENTS.md §0 원문 명령)
+
+```text
+Get-ChildItem : 'C:\Users\LG\.codex\.sandbox-secrets' 경로에 대한 액세스가 거부되었습니다.
+위치 줄:3 문자:29
++ ... (Test-Path $p) { $n = (Get-ChildItem $p -Recurse -File -Force | Measu ...
++                            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : PermissionDenied: (C:\Users\LG\.codex\.sandbox-secrets:String) [Get-ChildItem], Unauth
+   orizedAccessException
+    + FullyQualifiedErrorId : DirUnauthorizedAccessError,Microsoft.PowerShell.Commands.GetChildItemCommand
+
+Get-ChildItem : 'C:\Users\LG\.codex\app-server-control' 경로에 대한 액세스가 거부되었습니다.
+위치 줄:3 문자:29
++ ... (Test-Path $p) { $n = (Get-ChildItem $p -Recurse -File -Force | Measu ...
++                            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : PermissionDenied: (C:\Users\LG\.codex\app-server-control:String) [Get-ChildItem], Unauth
+   orizedAccessException
+    + FullyQualifiedErrorId : DirUnauthorizedAccessError,Microsoft.PowerShell.Commands.GetChildItemCommand
+
+Get-ChildItem : 'C:\Users\LG\.codex\app-server-daemon' 경로에 대한 액세스가 거부되었습니다.
+위치 줄:3 문자:29
++ ... (Test-Path $p) { $n = (Get-ChildItem $p -Recurse -File -Force | Measu ...
++                            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : PermissionDenied: (C:\Users\LG\.codex\app-server-daemon:String) [Get-ChildItem], Unautho
+   rizedAccessException
+    + FullyQualifiedErrorId : DirUnauthorizedAccessError,Microsoft.PowerShell.Commands.GetChildItemCommand
+
+~/.codex/AGENTS.md : 100571 B
+→ 멈추고 보고한다
+```
+
+### 지정된 자리만 별도로 확인한 결과
+
+파일과 디렉터리를 `Get-Item -LiteralPath`의 `PSIsContainer`로 나누고, 파일은 `Length`를 읽었다.
+디렉터리일 때만 `Get-ChildItem -LiteralPath ... -Recurse -File -Force -ErrorAction Stop`으로 합산한다.
+이 확인은 원문 명령의 통과로 간주하지 않았다.
+
+```text
+Path                        Exists Bytes
+----                        ------ -----
+GEMINI.md                    False     0
+AGENTS.override.md           False     0
+.agent                       False     0
+.agents                      False     0
+~/GEMINI.md                  False     0
+~/.agents                    False     0
+~/.gemini/GEMINI.md           False     0
+~/.gemini/AGENTS.md           False     0
+~/.codex/AGENTS.md             True     0
+~/.codex/AGENTS.override.md   False     0
+AGENTS.md: 9566 B
+```
+
+`Get-Command pwsh`와 아래 세 경로에서 PowerShell 7 실행 파일을 찾지 못했다.
+
+- `C:\Program Files\PowerShell\7\pwsh.exe`
+- `C:\Program Files\PowerShell\7-preview\pwsh.exe`
+- `$env:LOCALAPPDATA\Microsoft\PowerShell\7\pwsh.exe`
+
+첫 응답 첫 줄은 층 표시 형식을 지키지 못했다. 현재 리포의 개정된 AGENTS.md와 티켓 담당을 읽은 뒤
+`층: 감독층 (T-89 담당)`으로 정정했다. 새 세션의 진입 확인(OPERATIONS.md §8-5)은 미실시다.

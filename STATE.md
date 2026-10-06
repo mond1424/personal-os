@@ -1,16 +1,18 @@
-# STATE — 최종 갱신 2026-10-01
+# STATE — 최종 갱신 2026-10-06
 
 ## 저장소
 
+- **2026-10-06 · T-89 감독층 인수** — 도구 배정은 `AGENT-CHAIN.md` §1.1을 따른다. 첫 verify는 기본 샌드박스의 EPERM 뒤 **샌드박스 밖에서 통과**했고, 변경 후에도 같은 기준선을 확인했다(실행 명령·환경은 [T-89 보고](docs/tickets/T-89-lead-takes-over.md#보고-담당이-채운다)). T-88 대기 락을 인수했다가 복원했다. ② APK는 착수하지 않았다.
+
 > ### ⚠️ 아래 배포·마이그레이션 줄은 **이력이다. 지금의 사실이 아니다.**
 >
-> **규칙의 자리는 `CLAUDE.md` §사람이 하는 것의 상태 하나다**(2026-08-14 신설) —
+> **규칙의 자리는 `CONVENTIONS.md` §사람이 하는 것의 상태 하나다**(2026-08-14 신설) —
 > 배포·`--remote`·APK 설치는 사용자가 하고 이 층은 모른다. **하는 층과 적는 층이 다르면 반드시 낡는다.**
 > 여기 적힌 것은 **쓰인 시점의 관측**이고, 읽을 때는 **다시 확인한다.**
 > **네 번 물렸다** — "모드 하향은 라이브에 없다" · T-07의 "deploy 대기" · T-26·T-27의 "아직 배포 전" ·
 > **T-33의 "아직 라이브가 아니다"가 한 시간 만에 거짓이 된 것**(2026-08-11 19:56 → 20:59 배포).
 >
-> **이 리포에만 있는 확인법**(명령 셋은 `CLAUDE.md`에 있다): 라이브 자산을 직접 집으면
+> **이 리포에만 있는 확인법**(명령 셋은 `CONVENTIONS.md`에 있다): 라이브 자산을 직접 집으면
 > **어느 커밋이 올라갔는지까지** 말해 준다 — 그 티켓만 가진 문자열을 고른다.
 > ```bash
 > curl -s https://personal-os.mai-pos.workers.dev/app.js | grep -c "function handleBack"   # T-34
@@ -2629,13 +2631,16 @@ Get-ChildItem migrations\*.sql | Select-Object -Last 1 Name   # 여기서 +1
 
 추가 시 `test/smoke.ts`의 하드코딩 스키마 목록에도 파일명을 넣는다(`e2e.mjs`는 자동).
 
-## raw 링크 (Chat이 직접 읽는 주소)
+## raw 링크 (채팅이 직접 읽는 주소)
 - 설계문서(권위) https://raw.githubusercontent.com/mond1424/personal-os/main/personal-agent-design_v0.9.md
 - APP-PLAN      https://raw.githubusercontent.com/mond1424/personal-os/main/APP-PLAN.md
 - APP-ADR       https://raw.githubusercontent.com/mond1424/personal-os/main/APP-ADR.md
 - APP-BUILD     https://raw.githubusercontent.com/mond1424/personal-os/main/APP-BUILD.md
 - GUARD-DEV-LOOP https://raw.githubusercontent.com/mond1424/personal-os/main/GUARD-DEV-LOOP.md
-- CLAUDE.md      https://raw.githubusercontent.com/mond1424/personal-os/main/CLAUDE.md
+- CONVENTIONS.md https://raw.githubusercontent.com/mond1424/personal-os/main/CONVENTIONS.md
+- AGENTS.md      https://raw.githubusercontent.com/mond1424/personal-os/main/AGENTS.md
+- AGENT-CHAIN.md https://raw.githubusercontent.com/mond1424/personal-os/main/AGENT-CHAIN.md
+- OPERATIONS.md  https://raw.githubusercontent.com/mond1424/personal-os/main/OPERATIONS.md
 - README0722     https://raw.githubusercontent.com/mond1424/personal-os/main/README0722.md
 - 사용설명서0722 https://raw.githubusercontent.com/mond1424/personal-os/main/사용설명서0722.md
 - REFACTOR-PLAN  https://raw.githubusercontent.com/mond1424/personal-os/main/REFACTOR-PLAN.md
@@ -2666,6 +2671,7 @@ Get-ChildItem migrations\*.sql | Select-Object -Last 1 Name   # 여기서 +1
 
 ## 기준선
 typecheck 통과 / **smoke 534** / **front 526** / 실패 0 / verify exit 0
+**재확인: 2026-10-06 · T-89 · 감독층 codex(GPT)** — 샌드박스 밖에서 변경 전·후 두 번 모두 위 기준선과 같았다.
 **2026-10-02 (T-88 ① — smoke 529 → 534 · front 526 그대로).**
 smoke +5 는 ①의 넷(정각 1시간은 안 합친다 · 마감 이후·같은 시각의 점이 없다 · 수집 마감을 고치면 깃발 + 재촉이 새 마감을 따른다 ·
 손 일정은 깃발 없음)과 티켓 밖 하나(수집 마감이라도 **제목만** 고치면 깃발 없음 — *"달라졌는가"* 를 보는 근거).
