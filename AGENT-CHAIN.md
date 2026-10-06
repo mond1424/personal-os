@@ -42,7 +42,7 @@
 | 층 | 도구 | 모델 계열 | 여는 법 (리포 폴더의 PowerShell) |
 |---|---|---|---|
 | 설계층 | Antigravity | Gemini | 데스크톱 앱에서 리포 폴더를 연다. 또는 `agy` |
-| 감독층 | Codex CLI | GPT | `codex --sandbox workspace-write --add-dir "$PWD\.wrangler"` |
+| 감독층 | Codex (앱 또는 CLI) | GPT | 앱에서 리포 폴더를 연다. 또는 `codex` |
 | 구현층 | Antigravity CLI | Gemini | `agy` |
 
 **검토는 계열을 건넌다.** 구현층의 결과를 감독층이, 감독층의 결과를 설계층이 보는데 그 경계마다 계열이 바뀐다.
@@ -61,10 +61,15 @@
    〔판단 — 한도는 요금제마다 다르고 바뀐다. 바뀌면 이 표를 다시 본다〕.
 3. **구현층은 Antigravity가 맡아 온 자리다.** 위임 절차와 시작 전 확인을 그대로 쓴다.
 
-⚠️ **Codex의 Windows 샌드박스는 `npm run front`를 막은 적이 있다**(`STATE.md` T-06 — 기본 환경에서
-`.wrangler\tmp`의 `mkdtemp`가 EPERM, 권한을 더한 환경에서 통과). 위 명령의 `--add-dir`는 그 자리를 열려는 것이고,
-**효과는 T-89가 처음 잰다.** 그래도 EPERM이나 헬스 대기 실패가 나면 그 명령을 샌드박스 밖에서 돌린다
-(Codex가 승인을 요청한다).
+⚠️ **Codex의 기본 샌드박스에서는 `npm run front`가 죽는다** — `.wrangler\tmp`의 `mkdtemp`가 EPERM이다
+(`STATE.md` T-06, T-89에서 재현). **verify는 샌드박스 밖 실행으로 돌린다**(Codex가 승인을 요청한다).
+샌드박스 밖 명령은 홈 폴더에서 시작할 수 있으므로, 명령 안에서 리포로 옮긴다(T-89):
+
+```powershell
+Set-Location -LiteralPath 'C:\dev\personal-os-worker\worker'; npm.cmd run verify
+```
+
+`--add-dir <리포>\.wrangler`로 기본 샌드박스에서 통과하는지는 재지 않았다 — 재면 이 절을 고친다.
 **push는 사용자가 대화에서 허락한 뒤에만 한다.** 샌드박스 승인 창은 push 허락이 아니다 —
 Codex 설정(`approvals_reviewer`)에 따라 그 승인을 사용자 대신 자동 검토가 내릴 수 있다.
 

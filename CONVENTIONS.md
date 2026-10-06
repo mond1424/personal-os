@@ -56,6 +56,9 @@ Cloudflare Worker (Hono / TS) + D1 + `[assets]` 정적 서빙.
 | `npm run front` | 격리 러너 `e2e.mjs`(임시 D1 + jsdom). 실 DB 불변 |
 | `npm run verify` | 위 셋을 한 번에 |
 
+Windows PowerShell에서 `npm`이 실행 정책에 막히면(`npm.ps1`) `npm.cmd`로 부른다 — `npm.cmd run verify`.
+실행 정책은 바꾸지 않는다.
+
 ## 사람이 하는 것의 상태는 적지 않는다
 
 **배포 여부 · `--remote` 적용 여부 · APK 설치 여부**는 사용자가 하고 이 층은 모른다.
