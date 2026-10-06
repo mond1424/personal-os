@@ -280,6 +280,7 @@ npm run deploy
 1. **`STATE.md` 갱신**
 2. 구조가 바뀌었으면 **`docs/api-surface.md` 재생성**
 3. 마이그레이션을 추가했으면 **`docs/schema-current.sql` 재덤프**(migrations 전체를 인메모리 sqlite에 적용→`sqlite_master` 덤프)
-4. **commit & push**
+4. **commit → 사용자에게 push 허락을 받고 push**
 
-push하지 않으면 raw 링크로 리포를 읽는 쪽(설계층 · 채팅 상의 · 다른 기기)이 낡은 코드를 본다. **push는 선택이 아니다.**
+push하지 않으면 raw 링크로 리포를 읽는 쪽(채팅 상의 · 다른 기기)이 낡은 코드를 본다. **push는 선택이 아니다** —
+허락을 묻는 것을 빠뜨리지 않는다. 샌드박스 승인 창은 그 허락이 아니다(`AGENT-CHAIN.md` §1.1).

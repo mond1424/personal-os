@@ -10,16 +10,19 @@ Cloudflare Worker (Hono / TS) + D1 + `[assets]` 정적 서빙 + Capacitor Androi
 
 ## 0. 시작 전 확인
 
-규약은 이 파일 한 벌이다. 도구마다 따로 읽는 자리가 있어서, 거기에 무엇이 생기면 규약이 두 벌이 되고
+규약은 이 파일 한 벌이다. 도구마다 따로 읽는 자리가 있어서, 거기에 내용이 생기면 규약이 두 벌이 되고
 갈라지는 순간 어느 쪽이 이겼는지 로그에 안 남는다. 도구는 무엇을 읽었는지 말해 주지 않으므로
-**자리를 직접 센다.** 결정론적이고 모델을 부르지 않는다.
+**자리를 직접 센다.** 결정론적이고 모델을 부르지 않는다. 리포 폴더에서 아래를 그대로 돌린다.
 
 ```powershell
-# 하나라도 True면 작업을 시작하지 말고 보고한다
-Test-Path GEMINI.md, AGENTS.override.md, .agent, .agents, ~/GEMINI.md, ~/.agents, ~/.gemini/GEMINI.md, ~/.gemini/AGENTS.md, ~/.codex/AGENTS.md, ~/.codex/AGENTS.override.md
-# 이 파일의 바이트 수 — 24576 미만이어야 한다
-(Get-Item AGENTS.md).Length
+$hit = foreach ($p in 'GEMINI.md','AGENTS.override.md','.agent','.agents','~/GEMINI.md','~/.agents','~/.gemini/GEMINI.md','~/.gemini/AGENTS.md','~/.codex/AGENTS.md','~/.codex/AGENTS.override.md') {
+  if (Test-Path $p) { $n = (Get-ChildItem $p -Recurse -File -Force | Measure-Object Length -Sum).Sum; if ($n -gt 0) { "$p : $n B" } }
+}
+$size = (Get-Item AGENTS.md).Length
+if ($hit) { $hit; '→ 멈추고 보고한다' } elseif ($size -ge 24576) { "AGENTS.md $size B → 멈추고 보고한다" } else { "통과 · AGENTS.md $size B" }
 ```
+
+**`통과`가 아니면 작업을 시작하지 않고 출력을 그대로 보고한다.**
 
 | 자리 | 읽는 도구 | 두지 않는 이유 |
 |---|---|---|
@@ -28,15 +31,23 @@ Test-Path GEMINI.md, AGENTS.override.md, .agent, .agents, ~/GEMINI.md, ~/.agents
 | `.agent/` · `.agents/` | Antigravity (규칙 · 스킬) | 규약 조각이 흩어진다 |
 | 홈(`~`) 아래의 나머지 | 전역 — 모든 리포에 붙는다 | 리포 밖이라 커밋도 검토도 못 본다. 적는 층과 지키는 층이 달라 반드시 낡는다 |
 
+- **세는 것은 '있다'가 아니라 '내용이 있다'다.** 빈 파일 · 빈 폴더는 어느 도구에도 아무것도 더하지 않는다
+  (Codex는 비어 있지 않은 첫 파일만 쓴다). 도구가 설치 때 빈 `~/.codex/AGENTS.md`를 만들어 두기도 하므로,
+  있기만 한 것을 세면 그 빈 파일에 멈춘다.
+- **걸렸을 때**: 그 파일을 열어 본다. 이 리포의 규칙이 적혀 있으면 리포 문서로 옮길 것을 설계층에 올린다.
+  다른 리포에도 쓰는 개인 기본값(말투 · 언어)이면 §5와 겹치는지 적어 보고한다.
+  **비우거나 지우는 것은 사용자가 한다** — 리포 밖이다.
 - `~/.gemini` · `~/.codex` 디렉터리 자체는 있어도 된다(도구 설치 · 상태). 그 안의 위 파일만 본다.
 - `.gitignore`는 리포 안의 자리만 막는다. 홈의 자리는 이 확인만 막는다.
 - **크기 상한**: Codex는 지시 파일을 합쳐 32 KiB에서 자르고, 잘라도 알리지 않는다. 늘릴 내용은 `CONVENTIONS.md`로 보낸다.
-- **확인법은 돌려 본 것만 적는다.** 문서에서 읽고 옮긴 명령(`agy inspect`)이 실제로는 없었다 —
+- **확인법은 돌려 본 것만 적는다.** 위 명령은 PowerShell 7에서 알려진 경우 일곱을 먹여 확인했다 —
+  통과 셋(아무것도 없음 · 빈 전역 파일 · 빈 파일만 든 폴더), 멈춤 넷(내용 있는 전역 파일 · 내용 있는 폴더 ·
+  리포와 홈의 `GEMINI.md` · 24576 B인 이 파일). 문서에서 읽고 옮긴 명령(`agy inspect`)이 실제로는 없었던 적이 있다 —
   적힌 확인법이 안 돌면 그 절은 거짓말을 한다(`CONVENTIONS.md` §사람이 하는 것의 상태).
 
 ---
 
-## 1. 너의 층 — 세션의 첫 문장이 정한다
+## 1. 너의 층
 
 | 층 | 하는 일 | 하지 않는 것 |
 |---|---|---|
@@ -44,7 +55,14 @@ Test-Path GEMINI.md, AGENTS.override.md, .agent, .agents, ~/GEMINI.md, ~/.agents
 | 감독층 | 회귀 민감 영역 구현 · 하위 티켓 분해 · `npm run verify` · 1차 검토 · `STATE.md` · 커밋 | 설계 문서 · `APP-PLAN` · `APP-ADR` 수정(읽기만) |
 | 구현층 | 티켓 범위의 구현 · 티켓 §보고 채우기 | 범위 밖 파일 · 설계·상태 문서 · 마이그레이션 · git |
 
-- **첫 문장에 층이 없으면 아무것도 고치지 않고 어느 층인지 묻는다.** 한 세션은 한 층만 맡는다.
+**층은 이 순서로 정한다. 정한 층과 근거를 첫 응답의 첫 줄에 쓴다** — 예: `층: 감독층 (T-89 담당)`.
+
+1. 세션 첫 문장이 층을 말하면 그 층
+2. 아니면, 티켓을 **수행**하라는 요청이고 그 티켓 머리의 **담당**이 한 층이면 그 층(검토 요청에는 쓰지 않는다)
+3. 아니면, 이 도구가 `AGENT-CHAIN.md` §1.1 표에서 한 층만 맡으면 그 층
+4. 그래도 안 정해지면 아무것도 고치지 않고 묻는다
+
+- 한 세션은 한 층만 맡는다. 다른 층의 일은 새 세션에서 한다.
 - 권한 · 파일 소유권 · 위임 금지 · 멈추는 순간은 `AGENT-CHAIN.md` §2~§7. **자기 층 절을 읽고 시작한다.**
 - 한 칸씩만 오간다. 아래층은 판단을 대신하지 않고, 위층은 아래층의 파일을 고치지 않는다.
 - 기록 속 옛 이름(`Cowork` · `Claude Code` · `CLAUDE.md` 등)은 `AGENT-CHAIN.md` §1.2 표로 읽는다.
@@ -64,6 +82,7 @@ Test-Path GEMINI.md, AGENTS.override.md, .agent, .agents, ~/GEMINI.md, ~/.agents
   다시 읽을 때는 필요한 구간만.
 - 마이그레이션 적용 · 배포 · APK 설치 여부는 기억이나 문서로 단정하지 않는다.
   `CONVENTIONS.md` §사람이 하는 것의 상태의 확인법으로만 안다.
+- 도구의 메모리(지난 대화에서 쌓인 기억)는 근거가 아니다. 기억과 리포 파일이 다르면 리포 파일이 이긴다 — 층 · 권한 · 상태 모두.
 - 이 프로젝트는 가치가 코드보다 **결정 기록**에 몰려 있다(`APP-ADR.md` · 설계 문서 · 닫힌 티켓의 §검토).
   결정이 걸린 일은 해당 ADR부터 찾는다 — 모르고 짜면 이미 기각된 대안을 다시 짠다.
 
