@@ -73,11 +73,104 @@ npm run schema -- --check  → 지금 커밋된 docs/schema-current.sql(70행만
 
 ```
 티켓: T-90
-층 · 도구:
-바꾼 파일:
-기준선: typecheck 통과 · smoke 534 → 534 · front 526 → 526 · 실패 0
---check: 지금 파일과 같음 · 빨간불 대조 둘
-verify에 넣을지 의견:
-설계와 어긋난 점:
-막힌 것:
+층 · 도구: 감독층 · codex (GPT)
+바꾼 파일: scripts/dump-schema.mjs, package.json, docs/schema-current.sql,
+  STATE.md, 이 티켓의 §보고. APP-BUILD.md는 작업 중 락만 변경했고 복원해 커밋 diff는 없다.
+시작 전 확인: 통과 · AGENTS.md 10555 B
+기준선: typecheck 통과 · smoke 534 → 532 (실패 0 → 2) · front 526 → 526 (실패 0, 단독 실행) · verify exit 1
+--check: 지금 파일과 같음 · exit 0 · 빨간불 대조 둘 모두 exit 1 (아래 기록)
+verify에 넣을지 의견: 추가에 찬성한다. 마이그레이션 뒤 재덤프 누락을 잡고 실 D1에 기대지 않는다.
+  검사 구성은 설계층이 결정하므로 이번에는 verify 명령을 바꾸지 않았다.
+설계와 어긋난 점: 생성 결과는 현재 본문과 같다. 기존 머리말 53행의 sqlite_sequence 설명은 본문과 다르다(아래).
+막힌 것: 기존 T-71 smoke 검사 2·7 실패. test/smoke.ts는 이 티켓 범위 밖이라 고치지 않았다.
+판정: 덤프 기능과 대조 검증 완료. 전체 verify 완료 조건은 미충족이며 티켓을 닫지 않는다.
 ```
+
+### 구현과 범위
+
+- T-89의 닫힘과 깨끗한 작업 트리를 확인한 뒤 시작했다. T-88 ②는 대기 상태로 두고 T-90 작업 락을 걸었다.
+  범위 안 구현과 보고를 커밋하기 전에 T-88 대기 락으로 복원했다. T-90의 전체 검증 보류는 STATE와 이 보고에 남긴다.
+- 마이그레이션 파일을 이름순으로 인메모리 `DatabaseSync`에 적용한다. `sqlite_master`에서 SQL이 있는
+  객체만 읽고, 테이블 → 뷰 → 인덱스 → 트리거 안에서 이름순으로 출력한다. 실 `.wrangler/`는 읽지 않는다.
+- 첫 `-- ====` 줄 앞은 사람이 쓴 머리말로 보존한다. 읽기·비교·쓰기는 CR을 제거한 LF 기준이다.
+  `--check`는 쓰지 않고 첫 다른 행의 번호·현재 줄·생성 줄을 출력하며 exit 1로 끝난다.
+- `docs/schema-current.sql`의 커밋 대비 diff는 70행의 규약 파일명 한 곳뿐이다. 본문을 손으로 고치지 않았다.
+  API 구조와 마이그레이션은 그대로이므로 api-surface 재생성과 새 마이그레이션은 없다.
+
+### 덤프 검사 (2026-10-07 · Node v24.14.1 · 기본 샌드박스)
+
+PowerShell 실행 정책은 바꾸지 않고 `npm.cmd`를 썼다.
+
+| 실행 | 실제 결과 |
+|---|---|
+| `npm.cmd run schema -- --check` | 마이그레이션 26개 · 객체 71개 일치 · exit 0 |
+| 본문 75행을 `CREATE TABLE analyses_probe (`로 변경 후 check | 첫 차이 75행 · exit 1 · 변경한 파일의 SHA256 불변(쓰기 없음) |
+| `migrations/9999_probe.sql`에 `CREATE TABLE probe(x);`를 둔 뒤 check | 첫 차이 295행 · exit 1 · 스냅샷 SHA256 불변 |
+| 두 변이 복원 뒤 check | 26개 · 71개 일치 · exit 0 · 스냅샷 원본 SHA256 복원 · 임시 마이그레이션 제거 |
+| 머리말에 대조 주석을 넣고 CRLF로 저장한 뒤 check | exit 0 · CRLF 파일 SHA256 불변(쓰기 없음) |
+| 그 CRLF 파일을 `npm.cmd run schema`로 생성 | exit 0 · 대조 머리말 보존 · LF 변환 · 기대 문자열과 정확히 일치 |
+| 같은 파일을 한 번 더 생성 | exit 0 · 첫 생성과 SHA256 일치 |
+| 원본 바이트 복원 후 최종 생성·check | 모두 exit 0 · 최종 생성 전후 SHA256 일치 |
+
+빨간불 원출력의 핵심 줄:
+
+```text
+[schema] docs/schema-current.sql: 첫 차이 75행
+현재: "CREATE TABLE analyses_probe ("
+생성: "CREATE TABLE analyses ("
+
+[schema] docs/schema-current.sql: 첫 차이 295행
+현재: "CREATE TABLE schedule_entries ("
+생성: "CREATE TABLE probe(x);"
+```
+
+임시 변이는 `try/finally`로 복원했다. 종료 후 임시 파일이 없고 원본 바이트가 돌아왔는지를 별도로 확인했다.
+
+### 전체 검사에서 발견한 기존 실패 — 범위 밖, 수정하지 않음
+
+`AGENT-CHAIN.md` §1.1에 따라 샌드박스 밖에서 다음 명령으로 실행했다.
+
+```powershell
+Set-Location -LiteralPath 'C:\dev\personal-os-worker\worker'
+npm.cmd run verify
+```
+
+typecheck는 통과했다. smoke는 총 534건 중 **532 통과 · 2 실패**로 끝나 verify exit 1이며,
+`&&` 뒤의 front는 이 실행에서 시작하지 않았다. 실패는 다음 둘이다.
+
+```text
+✗ FAIL 2 ★ protect_prep_min 이 붙은 칸에도 실린다 — 그 값만큼 (ADR-047 ① 회귀) — 간격=NaN(기대 95) 설정합=60
+✗ FAIL 7 ★ 예약이 전제하는 기상과 문구가 말할 기상이 같다 — 한쪽만 침묵하지 않는다 (전수) — 선언만=true 값붙음=false 갈린칸=없음
+통과 532 · 실패 2
+```
+
+이후 같은 샌드박스 밖 환경에서 `npm.cmd run front`를 따로 실행했다.
+**526 통과 · 실패 0 · exit 0**, 마이그레이션 20.0초 · front 170.1초 · 임시 DB 정리 완료를 확인했다.
+이 결과를 verify exit 0으로 읽지 않는다.
+
+**확인한 원인:** 두 검사가 공유하는 T-71 픽스처가 항상 그날의 가장 이른 일정인 것은 아니다.
+
+- T-80의 미래 마감은 `atPlus(20 * DAY)`로 만든다(`test/smoke.ts:2617`).
+- T-71의 값 붙은 일정은 귀속일 `D + 21`에 만들고, 기존 일정보다 한 시간 이르게 잡되
+  `Math.max(60, first - 60)`으로 01:00보다 이르게 만들지 못한다(`test/smoke.ts:4125`).
+- 자정 뒤 귀속일 경계 전에는 두 날짜가 겹친다. 기존 마감이 00:30이면 새 일정은 01:00이 되어,
+  `wakePoints`가 올바르게 더 이른 **보호 없는 마감**을 고른다. 그러면 `leaveBy`가 없고 2·7이 실패한다.
+- `git diff -- src test migrations public`는 비어 있었다. verify 명령도 그대로이며 새 schema 명령을 호출하지 않는다.
+
+기존 `makeD1`, `loadTime`, `events.create/setProtect`, `guard.schedule`을 호출하는 최소 재현을
+별도 인메모리 DB에서 실행했다. 시스템 시계나 리포 파일을 바꾸지 않고 각 시각을 `loadTime`에 주입했다.
+
+| 주입 시각(KST) | 귀속일 D | T-80 마감 | T-71 일정 | 실제 선택 / 기상 간격 |
+|---|---|---|---|---|
+| 2026-10-07 00:30 | 10-06 | 10-27 00:30 | 10-27 01:00 | T-80 · leaveBy 없음 · NaN |
+| 2026-10-07 02:30 | 10-06 | 10-27 02:30 | 10-27 01:30 | T-71 · 95분 |
+| 2026-10-07 12:30 | 10-07 | 10-27 12:30 | 10-28 11:00 | T-71 · 95분 |
+
+세 경우가 예상대로 갈리는 것을 단언해 exit 0을 확인했다. 이 최소 재현의 통과를 전체 smoke 통과로 세지 않는다.
+수정하려면 T-71 픽스처가 가장 이른 일정이 될 수 있는 날짜·시각을 고르도록 해야 한다. 이 티켓에서는 변경하지 않았다.
+
+### 기존 머리말의 불일치 — 수정하지 않음
+
+스냅샷 53행은 `sqlite_sequence`가 SQL이 NULL이라 덤프에 없다고 설명하지만,
+321행에는 `CREATE TABLE sqlite_sequence(name,seq);`가 있고 이번 26개 마이그레이션 재생성에도 포함된다.
+이번 범위는 머리말 70행만 고치도록 했으므로 53행은 보존하고 설계층에 올린다.
