@@ -104,7 +104,7 @@ if ($hit) { $hit; '→ 멈추고 보고한다' } elseif ($size -ge 24576) { "AGE
 1. `npx wrangler deploy` · `npm run deploy` · `wrangler secret put` · `--remote` 마이그레이션 — 사용자만 한다
 2. `wrangler.toml`의 `database_id` 수정
 3. 파생값 저장 — Todo/Done/Missed · 이월 횟수 · 대기 일수 · 달성률 · '지금'은 조회 시 계산한다
-4. 락 없이 코드 착수 — `APP-BUILD.md` 맨 위 `WIP:` 줄이 비어 있을 때만 건다. 같은 리포에 실행 에이전트 둘을 동시에 붙이지 않는다
+4. 락 없이 코드 착수 — `APP-BUILD.md` 맨 위 `WIP:` 줄이 비어 있을 때만 건다(커밋된 채 남은 줄은 `AGENT-CHAIN.md` §3 락). 같은 리포에 실행 에이전트 둘을 동시에 붙이지 않는다
 5. 미커밋 코드가 남은 채 다음 티켓 착수
 6. 개인정보 커밋 — **이 리포는 공개다.** 토큰 · iCal 주소 · API 키는 Worker secret이나 앱 설정(D1)에만 둔다
 7. 확신 없이 범위 넓히기 — 멈추고 묻는다(구현층은 감독층에, 감독층은 설계층이나 사용자에게).
