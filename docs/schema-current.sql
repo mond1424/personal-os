@@ -50,7 +50,7 @@
 --   ⚠️ `*_frozen_*` 트리거를 두지 않는다 — 늦게 도착한 관측은 **사람이 그날을 마감한 뒤에
 --   오는 것이 정상**이라, `logs`에 뒀으면 `logs_frozen_ins`가 삽입 자체를 막아 409로 죽었다(함정 6).
 --   ⚠️ place_visits.place_id는 ON DELETE CASCADE다 — 이름이 사라진 전이는 읽을 수 없는 기록이다.
---   AUTOINCREMENT라 `sqlite_sequence`가 생기는데, sql이 NULL이라 이 덤프에는 안 실린다.
+--   AUTOINCREMENT라 `sqlite_sequence`가 생기며, sql이 있어 이 덤프에도 실린다.
 -- 0023 = guard_events 재작성(T-70 · ADR-047 §정정 — 안 물은 것을 안 했다고 적지 않는다).
 --   ★ **표를 다시 쓴 것은 0010 이후 처음이다** — reaction CHECK에 'unasked'가 필요한데
 --   SQLite는 CHECK를 변경할 수 없다. 0010 때는 행이 없었고 **지금은 40일치가 있다.**
