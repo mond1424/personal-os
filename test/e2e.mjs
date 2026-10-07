@@ -196,26 +196,34 @@ try {
 
   // 3) 헬스 대기 (최대 ~30초)
   //
-  // ⚠️ **매 시도에 상한이 있어야 이 루프가 실제로 30초로 끝난다.**
-  // 전엔 `fetch`에 상한이 없어서, 서버가 포트는 열었는데 응답을 안 주면(연결은 되고
-  // 대기만 하는 상태) 그 한 번의 `fetch`가 영원히 걸렸다 — 반복 횟수로 감싼 상한이
-  // 상한이 아니게 된다. 러너가 아무 말 없이 바깥 제한 시간까지 도는 자리 중 하나였다.
+  // 매 요청의 상한만으로는 전체 대기를 못 잰다 — 120회 × (2초 + 250ms)는 약 270초다.
+  // 시스템 시각 변경에 흔들리지 않는 단조 시계로 전체 30초를 재고, 요청과 쉼도
+  // 남은 시간 안에서 끝낸다. 요청 하나가 응답 없이 걸려도 전체 상한을 넘기지 않는다.
+  const HEALTH_TIMEOUT_MS = 30_000;
+  const startedHealth = performance.now();
+  const healthDeadline = startedHealth + HEALTH_TIMEOUT_MS;
   let up = false;
-  for (let i = 0; i < 120; i++) {
+  while (performance.now() < healthDeadline) {
     if (devExit) {
       throw new Error(
         `wrangler dev가 기동 중 종료됐다 (code ${devExit.code}, signal ${devExit.signal}).${devTail()}`,
       );
     }
+    const remainingMs = Math.ceil(healthDeadline - performance.now());
+    if (remainingMs <= 0) break;
     try {
-      const r = await fetch(base + "/api/health", { signal: AbortSignal.timeout(2000) });
-      if (r.ok) { up = true; break; }
+      const r = await fetch(base + "/api/health", {
+        signal: AbortSignal.timeout(Math.min(2000, remainingMs)),
+      });
+      if (r.ok && performance.now() < healthDeadline) { up = true; break; }
     } catch { /* 아직 준비 안 됨 — 타임아웃도 여기로 온다 */ }
-    await sleep(250);
+    const restMs = healthDeadline - performance.now();
+    if (restMs > 0) await sleep(Math.min(250, restMs));
   }
   if (!up) {
     throw new Error(
-      `dev 서버가 30초 안에 ${base}/api/health에 응답하지 않았다 (프로세스는 살아 있다).`
+      `dev 서버가 ${((performance.now() - startedHealth) / 1000).toFixed(1)}초 동안 `
+      + `${base}/api/health에 응답하지 않았다 (상한 ${HEALTH_TIMEOUT_MS / 1000}초 · 프로세스는 살아 있다).`
       + devTail(),
     );
   }
