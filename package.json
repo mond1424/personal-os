@@ -10,7 +10,7 @@
     "front": "node test/e2e.mjs",
     "front:manual": "node test/front.mjs",
     "schema": "node scripts/dump-schema.mjs",
-    "verify": "npm run typecheck && npm run smoke && npm run front"
+    "verify": "npm run typecheck && npm run smoke && npm run front && npm run schema -- --check"
   },
   "dependencies": {
     "@capacitor/android": "^8.4.2",

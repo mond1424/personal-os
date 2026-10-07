@@ -2,6 +2,8 @@
 
 ## 저장소
 
+- **2026-10-07 · T-93 — 🟨 구현 완료 · 설계층 검토 대기** — `package.json`의 verify 끝에 `schema -- --check`를 추가했다. 추가 권한 환경의 정상 전체 실행은 typecheck 통과·smoke 537·front 526·실패 0·schema 26개 마이그레이션/71개 객체 일치·exit 0. 스냅샷 본문 한 줄을 바꾼 전체 대조는 같은 smoke/front 숫자 뒤 마지막 schema가 첫 차이 73행을 출력하고 exit 1이었다. 원문 바이트 복원·SHA256 동일·복원 후 schema 일치·exit 0을 확인했다. 기본 샌드박스의 최초 Worker 기동 EPERM과 재시도 셸의 ENOENT도 [T-93 보고](docs/tickets/T-93-verify-checks-schema.md#보고-담당이-채운다)에 남겼다. 마이그레이션·배포 없음. `CONVENTIONS.md` 명령 표는 설계층이 갱신한다.
+
 - **2026-10-07 · T-92 — ✅ 닫힘 (설계층 최종 검토 합격)** — T-71 픽스처가 기존 일정·수업보다 먼저 들어갈 수 있는 날을 고르고, 생성 후 가장 이른 약속이라는 전제를 세 일정 각각 검사한다. 주입한 00:30·02:30·05:59·12:30에서 모두 통과했고, 수정 전 00:30의 검사 2·7 실패와 새 전제 검사의 빨간불 대조를 확인했다. 실제 시계의 전체 verify는 typecheck 통과·smoke 537·front 526·실패 0·exit 0. [T-92 보고·검토](docs/tickets/T-92-t71-fixture-any-hour.md#보고-담당이-채운다)에 입력·숫자·범위와 `a69e6bc`의 최종 검토 합격을 기록했다. 검토 후 후속은 문서 종료 처리뿐이며 코드 수정·검사 재실행 조건은 없다. T-88의 남은 배포 후 APK 착수 조건은 아래 기존 기록에 있으며, 커밋된 WIP 대기 표시만 먼저 비웠다(`e1811ce`).
 
 - **2026-10-07 · T-90 스키마 덤프 명령 — ✅ 닫힘** — `npm run schema`로 재생성하고 `npm run schema -- --check`로 비교한다. 설계층 검토 `7990342`에 따라 14:04 KST에 전체 verify를 재실행해 typecheck 통과·smoke 534·front 526·실패 0·exit 0을 확인했다. 머리말 53행의 sqlite_sequence 설명을 바로잡고 schema 대조도 26개 마이그레이션·71개 객체 일치·exit 0이었다. 최초 실패와 대조 기록은 [T-90 보고](docs/tickets/T-90-schema-dump-in-repo.md#보고-담당이-채운다)에 보존했다. 새벽 시각 의존 픽스처는 T-92, verify에 schema 대조 추가는 T-93으로 남는다.
@@ -2674,7 +2676,8 @@ Get-ChildItem migrations\*.sql | Select-Object -Last 1 Name   # 여기서 +1
 - style.css      https://raw.githubusercontent.com/mond1424/personal-os/main/public/style.css
 
 ## 기준선
-typecheck 통과 / **smoke 537** / **front 526** / 실패 0 / verify exit 0
+typecheck 통과 / **smoke 537** / **front 526** / 실패 0 / schema 일치(마이그레이션 26개 · 객체 71개) / verify exit 0
+**재확인: 2026-10-07 · T-93 · 감독층 codex(GPT)** — 추가 권한 환경에서 실제 시계로 전체 verify를 실행했다. smoke 537 → 537·front 526 → 526·실패 0 뒤 마지막 schema 대조도 일치·exit 0이었다. 스냅샷 본문 한 줄의 빨간불 전체 대조는 같은 smoke/front 숫자 뒤 schema 첫 차이 73행·verify exit 1. 원문 바이트 복원과 SHA256 동일·복원 후 schema 일치/exit 0을 확인했다. 최초 기본 샌드박스 실행은 Worker 기동 EPERM으로 front 본문 전에 실패했으며 성공으로 세지 않는다. 원출력과 재시도 환경은 T-93 보고에 있다.
 **재확인: 2026-10-07 15:59 KST · T-92 · 감독층 codex(GPT)** — 샌드박스 밖에서 실제 시계로 전체 verify를 실행했다. smoke 534 → 537은 T-71의 세 일정 각각에 추가한 가장 이른 약속 전제 검사 +3이며, front 526은 그대로다. 주입 시각 넷은 별도 인메모리 대조에서 각각 T-71 절 11 통과·실패 0이었다. 수정 전 00:30의 6 통과·실패 2와 전제 변이의 3 통과·실패 8도 T-92 보고에 보존했다.
 **재확인: 2026-10-07 14:04 KST · T-90 닫기 전 · 감독층 codex(GPT)** — 설계층 검토 `7990342`에 따라 00시대 밖에서 전체 verify를 실행해 당시 기준선과 같고 exit 0이었다. schema 대조도 마이그레이션 26개·객체 71개 일치·exit 0. 아래 새벽 실패 기록은 보존하며 시각 의존 문제는 T-92에서 다룬다.
 **2026-10-07 · T-90 재확인 실패(기준선 유지)** — typecheck 통과 · smoke **532 통과 / 2 실패**(T-71 2·7) · verify exit 1. front는 단독 실행으로 **526 통과 / 실패 0 / exit 0**. `D + 21`의 T-71 픽스처가 새벽에는 T-80의 `now + 20일` 마감보다 늦어지는 최소 재현을 확인했다. 원인·시각별 대조와 덤프 검증은 T-90 보고에 있으며, 전체 검사 통과로 간주하지 않는다.
