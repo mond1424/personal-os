@@ -4113,33 +4113,50 @@ const T71_C = 35, T71_P = 25, T71_OWN = 95;
 await api("PUT", "/api/settings/wake_commute_min", { value: String(T71_C) });
 await api("PUT", "/api/settings/wake_prep_min", { value: String(T71_P) });
 
-/** 그 날 **가장 이른 약속**이어야 wake 칸에 실린다. 시각은 달력에서 **상대로** 잡는다(함정 12). */
-const t71Slot = async (date: string) => {
-  // ⚠️ `/api/calendar`가 아니라 `days/:date`다 — T-82 ③이 캘린더 응답에서 `classes`를 뺐다.
-  //    ★ 여기서 안 옮기면 그 날 수업보다 **늦은** 시각이 잡혀 이 일정이 '가장 이른 약속'을 잃는다.
-  const cal = (await api("GET", `/api/days/${date}`)).json;
-  const hm = (s: string) => Number(s.slice(0, 2)) * 60 + Number(s.slice(3, 5));
-  const first = Math.min(12 * 60,
-    ...(cal.classes ?? []).map((c: any) => hm(c.start_time)),
-    ...(cal.events ?? []).filter((e: any) => e.time).map((e: any) => hm(e.time)));
-  const at = Math.max(60, first - 60);
-  return `${String(Math.floor(at / 60)).padStart(2, "0")}:${String(at % 60).padStart(2, "0")}`;
+/** 그 날 **가장 이른 약속**이어야 wake 칸에 실린다. 날짜·시각 모두 상대로 잡는다(함정 12). */
+const T71_LAST_D = addDays(D, 29); // guard/schedule의 기본 조회 창 안에서만 고른다.
+const t71Slot = async (from: string) => {
+  for (let date = from; ; date = addDays(date, 1)) {
+    // ⚠️ `/api/calendar`가 아니라 `days/:date`다 — T-82 ③ 이후 수업은 여기서 읽는다.
+    const cal = (await api("GET", `/api/days/${date}`)).json;
+    const hm = (s: string) => Number(s.slice(0, 2)) * 60 + Number(s.slice(3, 5));
+    const first = Math.min(12 * 60,
+      ...(cal.classes ?? []).map((c: any) => hm(c.start_time)),
+      ...(cal.events ?? []).filter((e: any) => e.time).map((e: any) => hm(e.time)));
+    const at = Math.max(60, first - 60);
+    const time = `${String(Math.floor(at / 60)).padStart(2, "0")}:${String(at % 60).padStart(2, "0")}`;
+    // T-80의 now+20일 마감이 00시대면 D+21에서 앞설 수 없다. 다음 날에서 다시 고른다.
+    // 창 끝까지 자리가 없으면 아래 전제 검사가 이름을 붙여 실패하게 한다(요약을 잃는 throw 금지).
+    if (at < first || date >= T71_LAST_D) return { date, time };
+  }
 };
-const t71Make = async (date: string, title: string, protect: object | null) => {
-  const id = (await api("POST", "/api/events", { title, date, time: await t71Slot(date) })).json.id as string;
+const t71Make = async (from: string, title: string, protect: object | null) => {
+  const { date, time } = await t71Slot(from);
+  const id = (await api("POST", "/api/events", { title, date, time })).json.id as string;
   if (protect) {
     await api("PUT", `/api/events/${id}/protect`,
       { protect_from: "-1d 00:00", protect_level: 4, ...protect });
   }
-  return id;
+  // 선택 함수의 분 계산을 정답으로 쓰지 않는다. 생성 후 원본 응답의 HH:MM을 직접 견준다.
+  const cal = (await api("GET", `/api/days/${date}`)).json;
+  const own = (cal.events ?? []).find((e: any) => e.id === id);
+  const earlier = [
+    ...(cal.classes ?? []).map((c: any) => c.start_time),
+    ...(cal.events ?? []).filter((e: any) => e.id !== id && e.time).map((e: any) => e.time),
+  ].filter((hm: string) => hm <= time);
+  ok(`T-92 전제 — ${title}이 그날 가장 이른 약속이다`,
+    date <= T71_LAST_D && !!own && own.time === time && earlier.length === 0,
+    `전제 깨짐: 날짜=${date} 시각=${time} 먼저·같은 약속=${earlier.join(",") || "없음"}`);
+  return { id, date };
 };
 
 /* 셋을 **서로 다른 날**에 둔다 — 한 날의 wake 칸은 하나뿐이라(가장 이른 약속) 섞으면 둘이 사라진다. */
-const T71_OWN_D = addDays(D, 21), T71_DECL_D = addDays(D, 22), T71_PLAIN_D = addDays(D, 23);
 const T71_PLAIN_TITLE = "T-71 그냥 일정 — 갈 곳을 모른다";
-const t71OwnId = await t71Make(T71_OWN_D, "T-71 값이 붙은 보호 일정", { protect_prep_min: T71_OWN });
-const t71DeclId = await t71Make(T71_DECL_D, "T-71 선언만 한 보호 일정", {});
-await t71Make(T71_PLAIN_D, T71_PLAIN_TITLE, null);
+const { id: t71OwnId, date: T71_OWN_D } =
+  await t71Make(addDays(D, 21), "T-71 값이 붙은 보호 일정", { protect_prep_min: T71_OWN });
+const { id: t71DeclId, date: T71_DECL_D } =
+  await t71Make(addDays(T71_OWN_D, 1), "T-71 선언만 한 보호 일정", {});
+const { date: T71_PLAIN_D } = await t71Make(addDays(T71_DECL_D, 1), T71_PLAIN_TITLE, null);
 
 const t71Sched = (await api("GET", "/api/guard/schedule")).json;
 const t71Wake = (d: string) => (t71Sched.wake as any[]).find((w) => w.date === d);
