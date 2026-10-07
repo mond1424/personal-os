@@ -54,7 +54,8 @@ Cloudflare Worker (Hono / TS) + D1 + `[assets]` 정적 서빙.
 | `npm run typecheck` | `tsc --noEmit` |
 | `npm run smoke` | HTTP 계층 서버 검사 (node:sqlite 셰임) |
 | `npm run front` | 격리 러너 `e2e.mjs`(임시 D1 + jsdom). 실 DB 불변 |
-| `npm run verify` | 위 셋을 한 번에 |
+| `npm run schema -- --check` | 마이그레이션 전체를 인메모리 SQLite에 적용해 스키마 스냅샷 본문 대조. 실 D1·파일 쓰기 없음 |
+| `npm run verify` | typecheck → smoke → front → schema 대조 순서. 어느 단계든 실패하면 중단 |
 
 Windows PowerShell에서 `npm`이 실행 정책에 막히면(`npm.ps1`) `npm.cmd`로 부른다 — `npm.cmd run verify`.
 실행 정책은 바꾸지 않는다.

@@ -57,7 +57,7 @@ npx wrangler dev            # http://localhost:8787
 | `npm run smoke` | HTTP 계층까지 통째로 태우는 서버 검사 (node:sqlite 셰임, 서버 불필요) |
 | `npm run front` | **격리 러너 `e2e.mjs`** — 임시 D1로 dev 서버를 띄우고 jsdom으로 렌더 검증. 실 DB 불변 |
 | `npm run front:manual <base>` | 외부(반드시 버릴/격리) 서버에 직접 붙는 옛 방식 |
-| `npm run verify` | 위 셋을 한 번에 |
+| `npm run verify` | typecheck → smoke → front → schema 대조 순서 |
 | `npm run dev` · `deploy` | wrangler dev · deploy |
 
 **현재 기준선: typecheck 통과 · smoke 124 · front 145 · 실패 0.**

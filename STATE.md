@@ -2,7 +2,7 @@
 
 ## 저장소
 
-- **2026-10-07 · T-93 — 🟨 구현 완료 · 설계층 검토 대기** — `package.json`의 verify 끝에 `schema -- --check`를 추가했다. 추가 권한 환경의 정상 전체 실행은 typecheck 통과·smoke 537·front 526·실패 0·schema 26개 마이그레이션/71개 객체 일치·exit 0. 스냅샷 본문 한 줄을 바꾼 전체 대조는 같은 smoke/front 숫자 뒤 마지막 schema가 첫 차이 73행을 출력하고 exit 1이었다. 원문 바이트 복원·SHA256 동일·복원 후 schema 일치·exit 0을 확인했다. 기본 샌드박스의 최초 Worker 기동 EPERM과 재시도 셸의 ENOENT도 [T-93 보고](docs/tickets/T-93-verify-checks-schema.md#보고-담당이-채운다)에 남겼다. 마이그레이션·배포 없음. `CONVENTIONS.md` 명령 표는 설계층이 갱신한다.
+- **2026-10-07 · T-93 — ✅ 닫힘 (설계층 최종 검토 합격)** — `package.json`의 verify 끝에 `schema -- --check`를 추가했다. 추가 권한 환경의 정상 전체 실행은 typecheck 통과·smoke 537·front 526·실패 0·schema 26개 마이그레이션/71개 객체 일치·exit 0. 스냅샷 본문 한 줄을 바꾼 전체 대조는 같은 smoke/front 숫자 뒤 마지막 schema가 첫 차이 73행을 출력하고 exit 1이었다. 원문 바이트 복원·SHA256 동일·복원 후 schema 일치·exit 0을 확인했다. 기본 샌드박스의 최초 Worker 기동 EPERM과 재시도 셸의 ENOENT도 [T-93 보고·검토](docs/tickets/T-93-verify-checks-schema.md#보고-담당이-채운다)에 보존했다. `b20d125`의 최종 검토 합격을 반영하고, 설계층의 `CONVENTIONS.md` 명령 표 변경과 감독층의 README verify 설명 갱신을 함께 커밋한다. 후속은 문서 종료 처리뿐이며 추가 검사 조건은 없다. 마이그레이션·배포 없음. 사용자가 닫힘 후 push를 승인했다.
 
 - **2026-10-07 · T-92 — ✅ 닫힘 (설계층 최종 검토 합격)** — T-71 픽스처가 기존 일정·수업보다 먼저 들어갈 수 있는 날을 고르고, 생성 후 가장 이른 약속이라는 전제를 세 일정 각각 검사한다. 주입한 00:30·02:30·05:59·12:30에서 모두 통과했고, 수정 전 00:30의 검사 2·7 실패와 새 전제 검사의 빨간불 대조를 확인했다. 실제 시계의 전체 verify는 typecheck 통과·smoke 537·front 526·실패 0·exit 0. [T-92 보고·검토](docs/tickets/T-92-t71-fixture-any-hour.md#보고-담당이-채운다)에 입력·숫자·범위와 `a69e6bc`의 최종 검토 합격을 기록했다. 검토 후 후속은 문서 종료 처리뿐이며 코드 수정·검사 재실행 조건은 없다. T-88의 남은 배포 후 APK 착수 조건은 아래 기존 기록에 있으며, 커밋된 WIP 대기 표시만 먼저 비웠다(`e1811ce`).
 
