@@ -45,6 +45,10 @@
 | 감독층 | Codex | GPT | 리포 폴더의 PowerShell에서 `codex` (CLI) |
 | 구현층 | 비워 둔다 | — | 쓸 때만 `codex` 새 세션 — 아래 고른 이유 3 |
 
+**리포 폴더는 `C:\dev\personal-os-worker\worker`다** — `.git`과 `AGENTS.md`가 있는 곳. Codex는 `.git`이 있는 폴더부터
+작업 폴더까지만 `AGENTS.md`를 찾으므로, 상위 폴더(`C:\dev` · `C:\dev\personal-os-worker`)에서 열면 규약 없이 돈다
+(2026-10-07 실측 — `C:\dev`에서 연 앱 세션은 `OPERATIONS.md` §8의 첫 줄 확인에 실패했고, 리포 폴더로 옮기자 통과했다).
+
 **한 도구가 두 층을 맡는다. 층은 도구가 아니라 첫 문장과 티켓의 담당이 정한다**(`AGENTS.md` §1) —
 설계층 세션은 "너는 설계층이다"로 열고, 감독층에는 "T-NN 수행해라"면 된다(`OPERATIONS.md` §2).
 앱과 CLI는 사용자가 정한 여는 곳이다. 바꿔 열어도 층은 첫 문장을 따른다.
