@@ -114,10 +114,12 @@ if ($hit) { $hit; '→ 멈추고 보고한다' } elseif ($size -ge 24576) { "AGE
 
 ## 4. 검사와 보고
 
-끝내기 전에 `npm run verify`(typecheck · smoke · front). 명령과 규칙은 `CONVENTIONS.md` §기준선 보고 규칙,
+끝내기 전에 `npm run verify`(typecheck · smoke · front · schema 대조). 명령과 규칙은 `CONVENTIONS.md` §기준선 보고 규칙,
 현재 숫자는 `STATE.md` §기준선. 구현층은 보고용으로 돌리고, 기준선 숫자는 감독층이 만든다. 설계층은 돌리지 않는다.
 
 보고는 티켓 §보고 칸에 `AGENT-CHAIN.md` §6 형식으로 쓴다.
+기준선 줄은 `typecheck 통과 · smoke A → B · front C → D · 실패 0 · schema 일치 · verify exit 0`까지 적는다.
+실패·미실행은 실제 결과대로 쓴다(`AGENT-CHAIN.md` §6).
 
 - **"통과했습니다"는 보고가 아니다.** 숫자 앞뒤를 쓴다 — `smoke 534 → 536`
 - 숫자가 안 맞으면 원인을 찾기 전에 끝내지 않는다

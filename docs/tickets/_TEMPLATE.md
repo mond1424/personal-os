@@ -35,7 +35,7 @@ test/front.mjs
 ## 완료 조건
 
 ```
-typecheck 통과 · smoke 213 → 21N · front 167 → 1NN · 실패 0
+typecheck 통과 · smoke 213 → 21N · front 167 → 1NN · 실패 0 · schema 일치 · verify exit 0
 ```
 
 검사를 추가한다면 무엇을 지키는 검사인지 한 줄로 적는다.
@@ -56,7 +56,7 @@ typecheck 통과 · smoke 213 → 21N · front 167 → 1NN · 실패 0
 티켓: T-NN
 층 · 도구:
 바꾼 파일:
-기준선: typecheck 통과 · smoke A → B · front C → D · 실패 0
+기준선: typecheck 통과 · smoke A → B · front C → D · 실패 0 · schema 일치 · verify exit 0
 설계와 어긋난 점:
 막힌 것:
 ```

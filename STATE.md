@@ -2,6 +2,8 @@
 
 ## 저장소
 
+- **2026-10-07 · 설계층 문서 발행분 반영** — `AGENTS.md`·`AGENT-CHAIN.md`·`OPERATIONS.md`·`docs/tickets/_TEMPLATE.md`의 변경을 확인했다. 보고 형식에 schema 결과·verify 종료 코드를 추가하고, 티켓 없는 설계층 문서도 감독층이 커밋하는 절차를 명시했다. 시작 전 확인은 `통과 · AGENTS.md 10874 B`, `git diff --check` 통과. 추가 권한 환경에서 `Set-Location`으로 리포를 지정한 뒤 `npm.cmd run verify`를 실행해 typecheck 통과·smoke 537 → 537·front 526 → 526·실패 0·schema 일치(마이그레이션 26개·객체 71개)·verify exit 0을 확인했다. 마이그레이션 20.1초·front 본문 169.3초이며 원출력은 OS 임시 폴더의 `personal-os-design-docs-verify.log`에 있다. 코드·API 구조·마이그레이션 변경이 없어 지도 재생성·스키마 재덤프는 없다. 설계층 발행분 문서 4개와 이 종료 기록을 함께 커밋하며, 사용자가 커밋과 push를 승인했다.
+
 - **2026-10-07 · T-91 — ✅ 닫힘 (설계층 최종 검토 합격)** — `test/e2e.mjs`의 헬스 대기를 단조 시계로 전체 30초까지 재고, 요청·쉼도 남은 시간 안으로 제한한다. 실패 문구는 실제 경과 초와 상한을 함께 말한다. 사본 러너의 응답 없는 서버는 30.012초(요청 14건 수신), 닫힌 포트는 30.014초(ECONNREFUSED 확인)에 오류를 냈고, 두 문구는 `30.0초`·상한 30초·exit 1이었다. 추가 권한 환경의 전체 verify는 typecheck 통과·smoke 537 → 537·front 526 → 526·실패 0·schema 26개 마이그레이션/71개 객체 일치·exit 0. 발행 당시 smoke 534와의 차이는 T-92의 +3이며 이번 검사 수 변화는 없다. [T-91 보고·검토](docs/tickets/T-91-health-wait-by-clock.md#보고-담당이-채운다)에 실행·사본 대조·원본 SHA256 동일과 일회용 파일 삭제를 기록했다. `2f15640`의 최종 검토 합격과 티켓 닫힘을 설계층 검토와 함께 커밋한다. 검토 후 후속은 문서 종료 처리뿐이며 추가 코드 수정·검사 재실행 조건은 없다. 마이그레이션·배포 없음. 사용자가 판정 반영과 닫힘 후 push를 승인했다.
 
 - **2026-10-07 · T-93 — ✅ 닫힘 (설계층 최종 검토 합격)** — `package.json`의 verify 끝에 `schema -- --check`를 추가했다. 추가 권한 환경의 정상 전체 실행은 typecheck 통과·smoke 537·front 526·실패 0·schema 26개 마이그레이션/71개 객체 일치·exit 0. 스냅샷 본문 한 줄을 바꾼 전체 대조는 같은 smoke/front 숫자 뒤 마지막 schema가 첫 차이 73행을 출력하고 exit 1이었다. 원문 바이트 복원·SHA256 동일·복원 후 schema 일치·exit 0을 확인했다. 기본 샌드박스의 최초 Worker 기동 EPERM과 재시도 셸의 ENOENT도 [T-93 보고·검토](docs/tickets/T-93-verify-checks-schema.md#보고-담당이-채운다)에 보존했다. `b20d125`의 최종 검토 합격을 반영하고, 설계층의 `CONVENTIONS.md` 명령 표 변경과 감독층의 README verify 설명 갱신을 함께 커밋한다. 후속은 문서 종료 처리뿐이며 추가 검사 조건은 없다. 마이그레이션·배포 없음. 사용자가 닫힘 후 push를 승인했다.
@@ -2679,6 +2681,7 @@ Get-ChildItem migrations\*.sql | Select-Object -Last 1 Name   # 여기서 +1
 
 ## 기준선
 typecheck 통과 / **smoke 537** / **front 526** / 실패 0 / schema 일치(마이그레이션 26개 · 객체 71개) / verify exit 0
+**재확인: 2026-10-07 19:49 KST · 설계층 문서 발행분 반영 · 감독층 codex(GPT)** — 추가 권한 환경에서 전체 verify 실행. typecheck 통과·smoke 537 → 537·front 526 → 526·실패 0·schema 일치(마이그레이션 26개·객체 71개)·verify exit 0. 마이그레이션 20.1초·front 본문 169.3초. 문서 변경만 반영했으며 기존 front 간헐 hang은 이번 실행에서 관측하지 않았다.
 **재확인: 2026-10-07 19:01 KST · T-91 · 감독층 codex(GPT)** — 추가 권한 환경에서 실제 시계로 전체 verify를 실행했다. typecheck 통과·smoke 537 → 537·front 526 → 526·실패 0·schema 일치·exit 0. 마이그레이션 17.6초·front 본문 158.8초. 두 헬스 실패 경로는 별도 사본 대조로 각각 약 30초·진단 문구·exit 1을 확인했으며, 검사 본문을 실행하지 않은 실패 대조를 기준선 숫자로 세지 않는다(T-91 보고).
 **재확인: 2026-10-07 · T-93 · 감독층 codex(GPT)** — 추가 권한 환경에서 실제 시계로 전체 verify를 실행했다. smoke 537 → 537·front 526 → 526·실패 0 뒤 마지막 schema 대조도 일치·exit 0이었다. 스냅샷 본문 한 줄의 빨간불 전체 대조는 같은 smoke/front 숫자 뒤 schema 첫 차이 73행·verify exit 1. 원문 바이트 복원과 SHA256 동일·복원 후 schema 일치/exit 0을 확인했다. 최초 기본 샌드박스 실행은 Worker 기동 EPERM으로 front 본문 전에 실패했으며 성공으로 세지 않는다. 원출력과 재시도 환경은 T-93 보고에 있다.
 **재확인: 2026-10-07 15:59 KST · T-92 · 감독층 codex(GPT)** — 샌드박스 밖에서 실제 시계로 전체 verify를 실행했다. smoke 534 → 537은 T-71의 세 일정 각각에 추가한 가장 이른 약속 전제 검사 +3이며, front 526은 그대로다. 주입 시각 넷은 별도 인메모리 대조에서 각각 T-71 절 11 통과·실패 0이었다. 수정 전 00:30의 6 통과·실패 2와 전제 변이의 3 통과·실패 8도 T-92 보고에 보존했다.
