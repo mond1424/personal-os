@@ -84,11 +84,11 @@
 | GET `/api/guard/pending-outcome` | — | outcome 미확정 rows(+`event_title`) · **`later_fires`**(같은 `on_date`의 더 뒤 발동 수 · 사실) · **`outcome_inferred`**(`"failure"\|null` · 뜻). ⚠️⚠️ **`reaction='unasked'`는 여기 안 들어온다**(T-70) — 반응할 자리가 없던 발동에 *"결과가 어땠나요?"* 를 묻는 것은 이 값이 없애려는 것과 같은 모양이다. ⚠️ **`outcome`은 안 건드린다** — 추론은 저장하지 않고 조회할 때 계산한다(ADR-044 · 원칙 1). 레벨로 안 거른다. ★★★ **`outcome_inferred`가 붙는 줄은 여기 안 온다**(T-79 ②) — 이 큐는 `outcome IS NULL`로 열리고 답이 **저장돼야** 닫히는데 추론은 원칙 1 때문에 저장될 수 없어 **구조적으로 큐를 못 떠난다**. ⚠️ 걸러내는 자리는 **`LIMIT` 밖**이다 — 안쪽에서 거르면 추론이 상한을 먹는 날 진짜 물음이 소리 없이 사라진다. 고치는 자리는 `/api/guard/events`(나 탭)다 | `guard.pendingOutcome` |
 | GET `/api/guard/l2-nag` | — | `{streak, threshold, ack, over}` — 감지 경로 Level 2(`cause LIKE 'watch:%'`)가 **연속으로 몇 번 무시됐나**. `reaction IS NULL`도 **`'unasked'`(T-70)도 세지도 끊지도 않는다** — 둘 다 *"사용자가 뭘 했는지 모른다"* 다. ★ 끊게 하면 더 나쁘다: 아무도 응답한 적 없는데 카드가 *"응답했다"* 를 근거로 침묵한다. **컬럼이 아니라 조회다**(원칙 1 · T-60) | `guard.l2Nag` |
 | POST `/api/guard/l2-nag/ack` | — | `{...l2Nag, ack: streak, over: false}` — *"끄기"*·*"그대로"* 둘 다 지난다. 같은 숫자로 다시 묻지 않기 위해서다 | `guard.ackL2Nag` |
-| GET `/api/collected/pending` | — | `[{id, source, summary, title, course, starts_at, categories}]` · ★ **`course`는 과목명**(T-87 ① · `lib/course.ts` — 첫 `" ("` 앞 · 없으면 `null`). 규칙은 서버 한 곳에 유지한다(T-94). ★ **`title`은 표시용 이름**(T-86 ③ · `collected.titleOf` — 끝의 `기한` 하나를 뗀 것)이고 시트는 이것을 쓴다. ⚠️ **`summary`는 원문 그대로다** — 프런트에 같은 규칙을 다시 짜지 않으려고 서버가 싣는다 · **`state='new'`이고 `starts_at`이 `[t.now, +7일]`인 것만**(T-42 결정 ①). 창 밖·과거·`dismissed`·`starts_at IS NULL`은 안 준다. **`description`은 안 싣는다** — 카드가 원문 한 줄만 쓴다. ★ **`categories`(0024 · T-74)는 싣는다 — 과목을 아는 유일한 칸이다**(`summary`는 교수가 짓는 이름이라 틀린다). **원문 그대로 나간다** — 괄호 안(학기·코드)을 뗀 것은 `course` 칸이다(T-87 · 원문은 안 바꾼다) | `collected.pending` |
-| GET `/api/collected/list` | — | `pending`과 **같은 모양** · **창이 없다** — `state='new'` 전부(`starts_at` 오름차순). ★★ **밀어 주는 길(`pending` · 7일 창)과 갈라진 *길*이지 넓힌 창이 아니다**(T-75 · ADR-048). 창을 넓히면 11월 과제가 9월부터 매일 뜼다(ADR-047). ⚠️ **`pending`에 파라미터로 겸하지 않았다** — 두 뜻이 한 이름을 쓰면 어느 쪽을 검사했는지가 흐려진다(함정 15). ⚠️ **`starts_at IS NULL`은 여기도 안 준다** — `accept`가 `events` 행을 못 만들어 400으로 죽는다. **`t`를 안 받는다**(시계가 필요 없다는 것이 이 길의 뜻) | `collected.list` |
-| POST `/api/collected/:id/accept` | `{choice?}` | `{id, event_id, task_id, state:'accepted', duplicate}` · ★ **`events` 행 하나와 `tasks` 행 하나를 만든다**(T-78). `events`·`tasks`: `title` = ★★ **끝의 `기한` 하나를 뗀 것 — 둘 다 같은 함수 `collected.titleOf`**(T-83 ①이 할 일을, T-86 ②가 일정을 — *"기한"* 은 과목과 무관하게 전부 붙는 Moodle 의 꼬리다). ⚠️ **끝이 아니면 한 글자도 안 바꾸고**(*"기한 지난 과제"*), **떼면 비는 제목은 원문을 쓴다**. `date`·`time` = `starts_at`. ★ **`summary` 저장은 원문 그대로다**(T-74 — 원문은 원장에만). ⚠️ 이미 들어간 것은 **`0026`이 한 번 소급했다**(원문과 같은 제목만 · 마감된 날의 일정은 건너뛴다). ★ **`createTask`가 아니라 여기서 한다** — 거기서 다듬으면 손으로 만든 task까지 바뀐다 · ★★ **예정일 없음(대기)** — 마감일에 넣으면 *"마감일에 하라"*가 되고 그건 거짓이다. 날짜는 사용자가 정한다. **보호 규칙은 안 붙인다**. ⚠️ **멱등** — 이미 `accepted`면 **둘 다** 또 만들지 않고 `duplicate:true`로 있던 id를 준다(순차 한정). ⚠️ **가드는 `event_id`만 본다** — `task_id`까지 요구하면 T-78 이전 행이 문을 지나 **오늘 task 를 만든다**(소급 생성 금지) | `collected.accept` | ★★★★ **T-80 이 둘을 바꿨다.** ① **예정일 = 마감일**(`createTask` 에 `date` 를 넘긴다) — T-78 은 비웠고 *"앱이 고르면 해석이다"* 라고 적었는데, 2026-09-21 사용자가 그것을 **기본값으로 골랐다**. ⚠️ **시각은 안 넘긴다** — 마감 시각은 `events` 가 갖는다(예정은 날짜다). ② **그 시각이 이미 지났으면 묻는다**: `choice` 없이 부르면 `{needs_choice:true, summary, starts_at}` 를 돌려주고 **아무것도 안 만든다**. `choice`: `done`(event 만 · **task 는 안 만든다** — *하지 않은 것을 기록하지 않는다* · `task_id` 가 NULL 로 남아 구분을 진다) · `todo`(event + task · **예정일 = 오늘** — ⚠️ 지난 날짜는 `assertSchedulable` 이 400, 그 뒤 트리거가 409 · 함정 6) · `skip`(dismiss). ⚠️ **미래에 온 `choice` 는 무시한다** — 물은 적이 없으므로 답도 없다. ★ `todo` 응답은 `scheduled_for`(넣은 날 · 못 넣으면 `null`) · `waiting` 을 싫는다 — **넣는 날이 이미 닫힌 날이면 대기로 떨어뜨리고 응답이 그 사실을 말한다**(화면이 추측해 409 를 맞지 않게).
-| POST `/api/collected/:id/dismiss` | — | `{id, state:'dismissed'}` · **다시 묻지 않는다** — `last_modified`가 바뀌어도 그대로다(T-41의 touch가 `state`를 안 건드린다) | `collected.dismiss` |
-| GET `/api/collected/status` | — | `{configured, last_collect_at, last_result, last_error_at, last_seen_count, counts{new,accepted,dismissed}, next_earliest_at}` · **`pending`과 가른 이유는 시야가 다르기 때문**(7일 창 vs 원장 전체) — 섞으면 어느 쪽 0인지 못 읽는다. ★ **`last_seen_count`가 "돌았지만 0건"(=0)과 "한 번도 안 돌았다"(=null)를 가른다**(T-43). ⚠️ **URL·토큰은 안 나간다** — `configured`는 있다/없다만 | `collected.status` |
+| GET `/api/collected/pending` | — | 200 + `[]`. T-97 종료 호환 배열. 원장 변경 없음 | `collected.pending` |
+| GET `/api/collected/list` | — | 200 + `[]`. 새 수락 후보를 제공하지 않음 | `collected.list` |
+| POST `/api/collected/:id/accept` | 선택 JSON(옛 `choice` 포함) | 410 + `{error:"과제는 Tasks.org에서 관리해요. pOS는 새 과제를 받지 않으며 기존 기록은 남아요."}`. id·상태·시각·choice·재시도 무관. 생성·연결·상태 변경 없음. 인증·공통 파싱 유지 | `collected.accept` |
+| POST `/api/collected/:id/dismiss` | — | 같은 410 종료 오류. 원장 상태 변경 없음 | `collected.dismiss` |
+| GET `/api/collected/status` | — | `{configured, last_collect_at, last_result, last_error_at, last_seen_count, counts{new,accepted,dismissed}, next_earliest_at}`. 실제 원장·수집 관측 유지. 건수는 수락 후보 수가 아니다. 0건 성공과 미실행(null)을 구분하고 URL·토큰은 노출하지 않음 | `collected.status` |
 | GET `/api/guard/modes` | — | `{modes[]+downgrade, active, protecting}` · 판정을 **조회 시 계산**해 싣는다(T-19) | `guard.modes` |
 | PUT `/api/guard/modes/active` | `{key, reason?}` | `{active, downgrade, reason}` · 하향은 보호 중 409 · 사유 없으면 400 | `guard.setMode` |
 | GET `/api/guard/watch-apps?source` | — | rows | `guard.listWatchApps` |
@@ -146,6 +146,14 @@
 - `create(env, t, input)` → `{id, ...}` · 마감된 날에도 추가 가능(불변)
 - `update(env, t, id, input)` → `{...}` · 마감일 트리거 409
 - `remove(env, id)` → `{id, deleted}` · 마감일 트리거 409
+
+### collected.ts — 수집 수락 종료 (T-97)
+
+- `collected.pending(env,t)` · `list(env)` → 빈 배열. DB를 읽거나 쓰지 않는다.
+- `collected.accept(env,t,id,choice?)` · `dismiss(env,id)` → `ApiError(410, 종료 안내)`. 내부 생성 경로도 제거했다.
+- `collected.status(env,t)` → 실제 수집 상태·원장 건수. `titleOf(summary)` 순수 이름 함수는 이력과 검사에 남긴다.
+- 기존 DB 후보·수락·거절 헬퍼는 범위 밖 청소를 하지 않아 남아 있지만 위 서비스는 호출하지 않는다.
+- 새 웹은 상태 조회만 사용한다. Today/Works 입구·수락 시트·전용 API 래퍼를 제거하고 Me에 종료 안내를 표시한다.
 
 ### timetable.ts — 시간표 (0021 · ADR-045 · T-58 · T-85)
 - **규칙을 저장하고 날짜는 조회 시 전개한다.** 인스턴스는 **어디에도 저장되지 않는다**(원칙 1)
@@ -359,5 +367,5 @@ python -c "import io,re;S=io.open('src/db/index.ts',encoding='utf-8').read();D=i
   - **`loadTime`을 부르는 곳은 진입 계층 둘뿐이다**(T-23): `index.ts`의 `/api/*` 미들웨어와 `scheduled()`.
     서비스는 `t`를 **인자로 받는다** — smoke `[11]`이 그 0건을 양성 대조와 함께 지킨다
 - **`lib/id.ts`** — `nextId(env, table, compact)` → `'YYYYMMDD-NNN'`. 테이블 화이트리스트.
-- **`lib/course.ts`** — `courseOf(categories)` → 과목명 | `null` (T-87 ① · T-94 보존). 첫 `" ("` 앞까지. 규칙은 여기 하나이며 `collected.pending`·`list`가 표시용 과목명을 싣는다. 원문·저장 제목은 바꾸지 않는다.
+- **`lib/course.ts`** — `courseOf(categories)` → 과목명 | `null` (T-87 ① · T-94 보존). 첫 `" ("` 앞까지. T-97 뒤에는 후보 응답에 사용하지 않으며 순수 함수와 이력은 보존한다. 원문·저장 제목은 바꾸지 않는다.
 - **`lib/ai.ts`** — `PROVIDERS` · `aiConfig(env)` · `callModel(env, call)`(=`callClaude`) · `testConnection(env, which)` · `splitModel` · `parseModelJson`. 제공자별 요청 형식 흡수.

@@ -2203,329 +2203,40 @@ ok("4 ★ 앞 줄의 추론이 다음 줄에 안 남는다 (없는 것을 세는
 
 await ev(`(async()=>{ Api.guardPending = window.__t56.old[0]; Api.guardOutcome = window.__t56.old[1]; })()`);
 
-console.log("\n[수집 제안 카드 — 곧 닥치는 것만, 원문 그대로]");
-// T-33의 카드와 **같은 모양**이라 검사도 같은 모양이다. ③(none)과 ④(error)가 화면에서
-// 똑같이 안 보이므로, 여기서도 **둘을 가르는 것이 짝**이다 — 그 자리를 네 번 물렸다.
-const t42Bar = $("#td-coll");
-const t42Rows = [
-  { id: "t42-a", source: "uclass", summary: "5주차 과제 (~9/3 23:00) 기한", title: "5주차 과제 (~9/3 23:00)", starts_at: "2026-09-03T23:00:00+09:00" },
-  { id: "t42-b", source: "uclass", summary: "실험2 결과보고서", title: "실험2 결과보고서", starts_at: "2026-09-05T18:00:00+09:00" },
-];
+console.log("\n[T-97] 수집 입구 종료 · 옛 웹의 오류 호환");
+const T97_MSG = "과제는 Tasks.org에서 관리해요. pOS는 새 과제를 받지 않으며 기존 기록은 남아요.";
+ok("T97 새 웹은 수락 전용 API 래퍼를 제공하지 않는다",
+  ev('["collectedPending","collectedList","collectedAccept","collectedDismiss"].every(k => !(k in Api))')
+  && ev('typeof Api.collectedStatus === "function"'));
 await ev(`(async()=>{
-  window.__t42 = { pending: ${JSON.stringify(t42Rows)}, sent: [],
-                   old: [Api.collectedPending, Api.collectedAccept, Api.collectedDismiss] };
-  Api.collectedPending = async () => window.__t42.pending;
-  Api.collectedAccept = async (id) => {
-    window.__t42.sent.push("add:" + id);
-    window.__t42.pending = window.__t42.pending.filter((r) => r.id !== id);
-    return { event_id: "ev-" + id };
-  };
-  Api.collectedDismiss = async (id) => {
-    window.__t42.sent.push("skip:" + id);
-    window.__t42.pending = window.__t42.pending.filter((r) => r.id !== id);
-    return {};
-  };
-  await loadCollected();
-})()`);
-ok("① 대기가 있으면 카드가 뜬다 · state='ask' · 건수가 문구에 든다",
-  t42Bar.dataset.state === "ask" && t42Bar.style.display === "flex"
-  && txt("#td-coll-text").includes("2건"),
-  `${t42Bar.dataset.state} / ${txt("#td-coll-text")}`);
-/* ★ 결정 ②는 **문자열로만** 확인된다 — 우리가 뜻을 붙이지 않는다.
- * ⚠️⚠️ **"원문이 그대로 나온다" 는 T-86이 뒤집었다** (2026-10-01 · 수는 그대로). 시트는 이제 서버가 준
- *    이름(`title`)을 쓰고, 그 명제는 `[T-86]` 4가 진다. ★ 여기는 **이름이 원문의 앞부분**이라
- *    *"원문을 그대로 보여 주는"* 변이에서도 참이다 — **일부러 그렇게 뒀다.** 같은 명제를 두 곳이 세면
- *    변이 하나가 둘을 죽인다(`AGENT-CHAIN` §8). 여기 남은 것은 *"그 줄이 뜬다 · 뜻을 안 붙인다"* 다. */
-$("#td-coll-open").click();
-await sleep(120);
-ok("② 시트에 그 줄이 나온다 · '마감'·'제출'을 우리가 붙이지 않는다 (원문 → 이름은 T-86 4)",
-  txt("#coll-list").includes("5주차 과제 (~9/3 23:00)")
-  && !txt("#td-coll-text").includes("마감") && !txt("#td-coll-text").includes("제출"),
-  txt("#coll-list").slice(0, 80));
-// "전부 추가"가 없다 — 첫 수집에 무엇이 오는지 아직 못 봤다(§금지 3행).
-ok("③ '전부 추가' 버튼이 없다",
-  !/전부|모두/.test($("#sh-coll").textContent || ""), $("#sh-coll").textContent?.slice(0, 60));
-
-// ⚠️ **여기는 두 번 고쳤다.** 처음엔 고정 200ms였고(바쁜 기계에서 4번 중 3번 빨간불),
-//    다음엔 `until`이었다. `until`도 부족했다 — 문구는 `refreshToday()` **도중에** 바뀌므로
-//    이 줄을 통과한 뒤에도 **핸들러는 아직 날고 있다.** 그 잔여가 아래 ★ 검사의 스파이에
-//    섞여 `invalidate|render`가 두 벌로 찍혔다(T-54 변이 배터리가 그것을 드러냈다).
-//    `onclick()`은 `run(...)`의 프라미스를 그대로 주므로 **끝난 것을 직접 안다** — 시계가 없다.
-/* T-79 ④ — **토스트를 DOM에서 읽지 않는다.** 위 ★ 검사의 주석이 적어 둔 그대로,
- * `refreshToday()` 도중에 화면이 바뀌므로 DOM 관측은 남의 것을 자기 것으로 셀 수 있다.
- * **부르는 자리를 센다** — `toast(...)`가 무엇을 받았는가가 계약이다(함정 14).
- * ⚠️ **기대 문자열을 구현에서 읽어 오지 않는다**(함정 15) — 여기 적힌 것이 계약이고,
- *    구현이 그것과 갈라지면 갈라진 쪽이 틀린 것이다. */
-await ev(`(async()=>{
-  window.__t42.toasts = [];
-  window.__t42.oldToast = toast;
-  toast = (msg, kind) => { window.__t42.toasts.push(String(msg)); return window.__t42.oldToast(msg, kind); };
-})()`);
-await $("#coll-list [data-cid='t42-a'] [data-act='add']").onclick();
-const t79Toast = ev(`window.__t42.toasts.join("|")`);
-await ev(`toast = window.__t42.oldToast`);
-ok("④ 하나를 처리하면 남은 수가 준다 — 카드가 1건으로",
-  ev(`window.__t42.sent.join("|")`) === "add:t42-a" && txt("#td-coll-text").includes("1건"),
-  `${ev(`window.__t42.sent.join("|")`)} / ${txt("#td-coll-text")}`);
-/* ★ T-79 ④ — **[추가]는 둘을 만든다**(`services/collected.ts`: `events.create` + `tasks.createTask`).
- * *"캘린더에 넣었어요"* 는 **사실의 절반**이었고, 대기에 생긴 할 일을 사용자가 못 찾았다.
- * ⚠️ **둘 다 센다** — `대기`만 보면 캘린더를 잃은 문구가 통과하고, `캘린더`만 보면 옛 문구가 통과한다. */
-ok("★ [추가] 토스트가 캘린더와 대기를 둘 다 말한다 (T-79 ④ — T-78이 둘 다 만든다)",
-  t79Toast.includes("캘린더") && t79Toast.includes("대기"), t79Toast || "(토스트가 없었다)");
-// ★ **④는 처리 뒤의 캘린더 갱신을 안 본다** — 그래서 이 절은 T-42부터 `renderCal()`(없는
-//    함수)을 부르며 초록이었다. 던진 자리가 `refreshToday()` **뒤**라 건수는 이미 줄어 있고,
-//    ④는 그 앞에서 이미 만족된다.
-// ⚠️ **토스트로 보면 안 된다** — 실제로 그렇게 짰다가 변이(옛 `renderCal()`)에서도 초록이었다.
-//    `until`이 `refreshToday()`의 DOM 쓰기를 보고 먼저 빠져나와, 던지기 **전에** 토스트를 읽는다.
-//    그래서 **호출 자체**를 센다: 캐시를 버리고 다시 그렸는가. 순서까지 본다 —
-//    캐시를 안 버리면 방금 만든 event가 안 실린 채로 다시 그려진다(`calSyncNow`와 같은 짝).
-await ev(`(async()=>{
-  window.__t42.calls = [];
-  window.__t42.oldRC = renderCalendar;
-  window.__t42.oldIC = invalidateCalendarCache;
-  renderCalendar = async (...a) => { window.__t42.calls.push("render"); return window.__t42.oldRC(...a); };
-  invalidateCalendarCache = () => { window.__t42.calls.push("invalidate"); return window.__t42.oldIC(); };
-  S.cal = S.cal || { y: +S.today.date.slice(0,4), m: +S.today.date.slice(5,7) };
-})()`);
-// ⚠️ **시계를 아예 안 쓴다.** 처음엔 `click()` + `until(4초)`였는데 부하가 걸린 기계에서
-//    **이 절과 무관한 변이 셋(M2·M4·M7)에서 죽었다** — 처리 뒤 `refreshToday()`가 실 API를
-//    한 번 왕복하고 invalidate·render는 그 뒤에 온다. **20초로 늘려도 M4에서 또 죽었다:**
-//    대기를 늘리는 것은 경합을 없애는 것이 아니라 미루는 것이다.
-//    `onclick()`은 `run(...)`의 프라미스를 그대로 돌려주므로 **핸들러가 끝난 것을 직접 안다.**
-//    (`b`는 리스너 등록 때 클로저로 잡히므로 event 객체가 없어도 같은 경로다.)
-await $("#coll-list [data-cid='t42-b'] [data-act='add']").onclick();
-const t42Calls = ev(`window.__t42.calls.join("|")`);
-await ev(`(async()=>{
-  renderCalendar = window.__t42.oldRC; invalidateCalendarCache = window.__t42.oldIC;
-})()`);
-ok("★ [추가]가 조용히 실패하지 않는다 — 캐시를 버리고 캘린더를 다시 그린다 (T-53 진단)",
-  t42Calls === "invalidate|render", t42Calls || "(아무것도 안 불렸다)");
-
-await ev(`(async()=>{ window.__t42.pending = []; await loadCollected(); })()`);
-const t42None = { state: t42Bar.dataset.state, display: t42Bar.style.display };
-ok("⑤ 대기가 없으면 안 뜬다 · state='none'",
-  t42None.state === "none" && t42None.display === "none", JSON.stringify(t42None));
-
-await ev(`(async()=>{
-  Api.collectedPending = async () => { throw new Error("t42 boom"); };
-  await loadCollected();
-})()`);
-const t42Err = { state: t42Bar.dataset.state, display: t42Bar.style.display };
-ok("⑥ 조회가 실패해도 Today를 막지 않는다 · state='error'",
-  t42Err.state === "error" && t42Err.display === "none", JSON.stringify(t42Err));
-/* ★ ⑤와 ⑥의 짝 — **none과 error는 화면에서 같고 기록에서만 다르다.** 이게 없으면 조회가 항상
- *   실패해도 초록이다. ⚠️ **그런데 그 관계는 ⑤의 `none/none`과 ⑥의 `error/none`에서 연역된다** —
- *   둘이 참이면 반드시 참이고, 거짓이 되려면 둘 중 하나가 먼저 거짓이어야 한다.
- *   **혼자 죽을 수 없는 검사는 아무것도 안 센다**(T-65 · AGENT-CHAIN §8). 그래서 `ok()`에서 뺐다.
- *   위 T-33 자매와 **같은 모양·같은 판정**이다(변이도 같이 돌렸다: err를 flex로 → ⑥과 함께 죽는다).
- *   ⚠️ **되살릴 조건** — ⑤ 또는 ⑥에서 `display` 단언이 빠지면 이 관계를 아무도 안 센다. 그때 되돌린다. */
-// ── T-74 · 과목은 제목이 아니라 CATEGORIES 가 안다 ──────────────
-// 저장은 **원문 그대로**이고(0024), **쪼개기는 여기**다 — 괄호 안(학기·코드)은 사용자가 안 쓴다.
-// ⚠️ `renderCollected`를 직접 부른다 — API 를 갈아끼울 것이 없어 이 검사가 ③만 본다.
-// ★ 아래 제목은 실측이다: 이 과제의 과목은 **벡터대수학이 아니라 전자기및연습1**이다.
-const T74_CAT = "전자기및연습1 (2026-20, 45004_01_U)";
-const T74_TITLE = "벡터대수학 2주차 연습문제 제출 기한";
-/* ⚠️ **스텁에 `title` 을 실었다 — 서버 응답 모양이 T-86에서 바뀌었다.** 시트는 그 칸을 쓴다.
- *   아래 단언은 *이름*(끝의 기한 없이)을 보고, 이 검사의 명제(과목이 제목을 덮지 않는다)는 그대로다. */
-const T74_NAME = "벡터대수학 2주차 연습문제 제출";
-/* ⚠️⚠️ **스텁에 `course` 를 실었다 — 자르기가 T-87에서 서버로 올라갔다** (`lib/course.ts`).
- *   T-94 재촉 종료 뒤에도 규칙을 한 곳에 두고 서버가 표시용 과목명을 싣는다.
- *   ★ **값은 `categories` 를 잘라서는 못 만드는 것이다** — 프런트가 원문을 다시 자르면(규칙 두 벌)
- *     `전자기및연습1` 이 나와 여기서 죽는다. 자르기 규칙 자체는 smoke `[T-87]` 이 진다. */
-const T74_COURSE = "전자기및연습1 · 서버가 준 이름";
-await ev(`renderCollected([
-  { id: "t74-a", source: "uclass", summary: ${JSON.stringify(T74_TITLE)}, title: ${JSON.stringify(T74_NAME)},
-    course: ${JSON.stringify(T74_COURSE)}, starts_at: null, categories: ${JSON.stringify(T74_CAT)} },
-  { id: "t74-b", source: "uclass", summary: "개인 일정", title: "개인 일정", course: null,
-    starts_at: null, categories: null }
-])`);
-const t74A = $("#coll-list [data-cid='t74-a']");
-const t74B = $("#coll-list [data-cid='t74-b']");
-ok("★ 과목이 제목 위에 뜬다 — 서버가 준 과목 그대로 · 제목은 그대로 남는다 (T-87: 프런트가 다시 자르지 않는다)",
-  t74A?.querySelector(".ec")?.textContent === T74_COURSE
-  && (t74A?.textContent || "").includes(T74_NAME),
-  `${t74A?.querySelector(".ec")?.textContent} / ${(t74A?.textContent || "").slice(0, 50)}`);
-ok("★ 괄호 안(학기·코드)은 화면에 없다 — 저장은 원문, 표시는 과목명까지",
-  !!t74A && !t74A.textContent.includes("2026-20") && !t74A.textContent.includes("45004_01_U"),
-  (t74A?.textContent || "").slice(0, 60));
-// 짝. 개인 일정엔 CATEGORIES 가 아예 없다(코스 이벤트에만 실린다) — 빈 칸을 만들지 않는다.
-ok("★ 짝 — 과목이 없으면 그 줄이 아예 없다",
-  !t74B?.querySelector(".ec") && (t74B?.textContent || "").includes("개인 일정"),
-  (t74B?.outerHTML || "").slice(0, 90));
-
-/* ── T-86 · 들어온 것 시트는 서버가 준 이름을 쓴다 (③) ──────────────
- * ★ 스텁의 `title` 은 **규칙으로는 못 만드는 값**이다 — 프런트가 `summary` 에서 이름을 다시 만들면
- *   (규칙을 두 벌로 짜면) 그 값이 안 나와 여기서 죽는다. `summary` 를 그대로 보여 줘도 죽는다.
- *   ⚠️ 실제 서버라면 `"T-86 원문 제목"` 을 줬을 것이다 — **그 값을 쓰면 두 변이를 못 가른다.**
- * ⚠️ **서버가 그 칸을 싣는지는 smoke [T-86] 4가 진다** — 이 층은 스텁을 먹는다(층을 나눠야 변이가 읽힌다).
- * ★ 자기 id 로 묻는다 — `renderCollected` 가 목록을 통째로 갈지만, 남의 줄을 세지 않는 습관이다(§8 ③). */
-console.log("\n[T-86] 들어온 것 시트는 서버가 준 이름을 쓴다");
-const T86_RAW = "T-86 원문 제목 기한";
-const T86_NAME = "T-86 서버가 지은 이름";
-await ev(`renderCollected([{ id: "t86-a", source: "uclass", summary: ${JSON.stringify(T86_RAW)},
-  title: ${JSON.stringify(T86_NAME)}, starts_at: null, categories: null }])`);
-const t86Text = $("#coll-list [data-cid='t86-a'] .en")?.textContent || "";
-ok("4 ★ 시트가 서버가 준 이름(title)을 쓴다 — 원문도, 프런트가 만든 이름도 아니다",
-  t86Text.includes(T86_NAME) && !t86Text.includes("원문 제목"), `"${t86Text.slice(0, 60)}"`);
-
-await ev(`(async()=>{
-  Api.collectedPending = window.__t42.old[0];
-  Api.collectedAccept = window.__t42.old[1];
-  Api.collectedDismiss = window.__t42.old[2];
-  closeAll();
-})()`);
-
-/* ── T-75 ③ · 가서 보는 길의 입구 (Works · 대기 위) ────────────────────
- *
- * 위 카드는 **밀어 주는 길**이다(7일 창 · Today · 스스로 뜬다). 여기는 **가서 보는 길**:
- * 창이 없고, 사용자가 눌러야 열리고, **같은 시트**를 연다.
- * ⚠️ **고정 날짜를 안 쓴다**(함정 12) — `S.today.date`에서 상대로 잡는다.
- */
-console.log("\n[T-75] 가서 보는 길의 입구 — Works · 대기 위");
-const t75Day = ev(`S.today.date`);
-const t75Plus = (d) => ev(`addDaysStr(${JSON.stringify(t75Day)}, ${d})`);
-const t75Rows = [
-  { id: "t75-a", source: "uclass", summary: "중간고사대체과제 기한", title: "중간고사대체과제",
-    starts_at: `${await t75Plus(70)}T23:59:00+09:00`, categories: null },
-  { id: "t75-b", source: "uclass", summary: "학기과제 기한", title: "학기과제",
-    starts_at: `${await t75Plus(70)}T23:59:00+09:00`, categories: null },
-];
-const t75Entry = $("#coll-entry");
-const t75Load = async (rows) => {
-  await ev(`(async()=>{
-    window.__t75 = window.__t75 || { old: Api.collectedList };
-    Api.collectedList = async () => ${JSON.stringify(rows)};
+  window.__t97 = { calls: [], errors: [] };
+  for (const k of ["collectedPending","collectedList","collectedAccept","collectedDismiss"])
+    Api[k] = async () => { window.__t97.calls.push(k); return [{ id:"old-candidate",title:"옛 서버의 과제",starts_at: S.today.date+"T23:59:00+09:00" }]; };
+  try {
+    await refreshToday();
+    document.querySelector("#phone").dataset.tab = "works";
     await renderWorks();
-  })()`);
-};
-await ev(`switchTab("works")`);
-await t75Load(t75Rows);
-// 5 — ★ **수가 보이는 것이 ADR-048의 요구다.** "들어온 것"만으로는 존재를 모른다.
-ok("5 ★ Works 입구가 N 을 말한다 (대기 위 · N>0)",
-  t75Entry.dataset.state === "ask" && t75Entry.style.display === "flex"
-  && txt("#coll-entry").includes("2"),
-  `${t75Entry.dataset.state} / ${t75Entry.style.display} / ${txt("#coll-entry")}`);
-
-/* 7 — ★ 누르면 **기존 시트**가 열린다. ⚠️ *"새 DOM 을 안 만든다"* 까지 센다 —
- *   시트를 복제한 구현은 화면이 같아 보이고, 그 다음에 한쪽만 고쳐진다.
- *   ★ **중복 id 로 센다** — 함정 15의 `#cal-list`가 정확히 그 모양이었다. */
-/* ⚠️⚠️ **이 검사는 처음에 헛돌았다 — 변이 N7(입구가 시트를 안 연다)이 *아무것도 안 죽였다*.**
- *   두 조각이 **둘 다 저절로 참**이었다:
- *   ① `|| $("#sh-coll").style.display !== "none"` — 인라인 `display`가 빈 문자열이라 **늘 참**.
- *      **계약은 `classList.contains("on")` 하나다**(`openSheet`가 그것만 한다).
- *      ★ *"열렸나"* 를 **구현이 실제로 하는 일**로 물어야 한다. 넉넉하게 물으면 안 물은 것이다.
- *   ② 개수만 셌는데 `#coll-list`엔 **앞 블록(T-74)이 남긴 줄 둘**이 그대로 있었다 —
- *      **남의 렌더 결과가 내 검사를 통과시켰다.** 그래서 **내 id 로** 묻는다.
- *   ⚠️ 먼저 닫는다 — 이미 열려 있으면 *"열었다"* 가 아무 뜻이 없다. */
-await ev(`closeAll()`);
-t75Entry.onclick();
-const t75SheetOpen = $("#sh-coll").classList.contains("on");
-const t75Dup = {
-  sheet: w.document.querySelectorAll("#sh-coll").length,
-  list: w.document.querySelectorAll("#coll-list").length,
-};
-const t75Mine = ["t75-a", "t75-b"].every((id) => !!$(`#coll-list [data-cid='${id}']`));
-ok("7 ★ 입구를 누르면 기존 시트가 열린다 — 새 DOM 을 안 만든다 (중복 id 0)",
-  t75SheetOpen && t75Dup.sheet === 1 && t75Dup.list === 1 && t75Mine
-  && $("#coll-list").querySelectorAll("[data-cid]").length === 2,
-  `열림=${t75SheetOpen} ${JSON.stringify(t75Dup)} 내줄=${t75Mine} 줄=${$("#coll-list").querySelectorAll("[data-cid]").length}`);
-await ev(`closeAll()`);
-
-/* 6 — ★ 5의 짝. **0건이면 줄이 아예 없다.**
- *   ⚠️ 이게 없으면 5가 *"항상 띄운다"* 로도 통과한다 — T-79가 Today에서 방금 걷어낸 모양이다. */
-await t75Load([]);
-ok("6 ★ N=0 이면 그 줄이 없다 (5의 짝)",
-  t75Entry.dataset.state === "none" && t75Entry.style.display === "none",
-  `${t75Entry.dataset.state} / ${t75Entry.style.display}`);
-
-// ★ 짝의 뒤쪽 — 조회가 실패해도 Works를 막지 않는다. 화면은 0건과 같고 **기록만 다르다**(T-33).
-await ev(`(async()=>{ Api.collectedList = async () => { throw new Error("t75 boom"); }; await renderWorks(); })()`);
-ok("★ 입구 조회가 실패해도 Works 를 막지 않는다 · state='error' (0건과 화면은 같다)",
-  t75Entry.dataset.state === "error" && t75Entry.style.display === "none"
-  && $("#wait-list").innerHTML.length > 0,
-  `${t75Entry.dataset.state} / 대기목록=${$("#wait-list").innerHTML.length}`);
-await ev(`(async()=>{ Api.collectedList = window.__t75.old; await renderWorks(); })()`);
-
-/* ── T-80 · 마감일이 예정이 된다 · 지난 것은 묻는다 · 먼 것은 약하게 ──────────
- *
- * ★ **실 API 를 그대로 쓴다** — 이 러너의 오늘은 **열려 있다**(front 는 `daily/close` 를 안 부른다).
- *   그래서 smoke 가 못 재는 **정상 가지**(예정일 = 오늘)를 여기가 잰다.
- * ⚠️ **고정 날짜를 안 쓴다**(함정 12) — 전부 `S.today.date` 기준 상대.
- */
-console.log("\n[T-80] 마감일이 예정이 된다 — 지난 것은 묻고, 먼 것은 약하게");
-const t80Day = ev(`S.today.date`);
-const t80At = (d) => ev(`addDaysStr(${JSON.stringify(t80Day)}, ${d})`);
-/* ★ **여기가 세는 것은 화면 계약이다** — *"서버가 `needs_choice` 라고 하면 그 자리에서 묻고,
- *   누른 것을 그대로 보내고, 토스트는 서버가 준 사실만 말한다."*
- *   **서버 계약(무엇을 만드는가)은 smoke [T-80]이 진다** — 층을 나눠야 변이가 어디를 죽였는지 읽힌다.
- * ⚠️ 그래서 `Api.collectedAccept`를 갈아끼운다. 수집 원장에 넣는 왕복은 이 층의 것이 아니다. */
-const t80Rows = (startsAt) => [{ id: "t80-x", source: "uclass", summary: "T-80 과제", title: "T-80 과제", starts_at: startsAt, categories: null }];
-await ev(`(async()=>{
-  window.__t80 = { sent: [], old: [Api.collectedAccept, Api.collectedDismiss], reply: {} };
-  Api.collectedAccept = async (id, choice) => {
-    window.__t80.sent.push(id + ":" + (choice || "-"));
-    return window.__t80.reply[choice || "-"] || {};
-  };
-  Api.collectedDismiss = async (id) => { window.__t80.sent.push("dismiss:" + id); return {}; };
+  } finally {
+    for (const k of ["collectedPending","collectedList","collectedAccept","collectedDismiss"]) delete Api[k];
+  }
 })()`);
-const t80Toast = () => txt("#toast");
-const t80Reset = async (reply) => ev(`(async()=>{
-  window.__t80.sent = []; window.__t80.reply = ${JSON.stringify(reply)};
-  renderCollected(${JSON.stringify(t80Rows(`${t80Day}T23:59:00+09:00`))}); openSheet("sh-coll");
-})()`);
+ok("T97 옛 서버 후보 모형에서도 Today/Works 입구·시트·수락 버튼 없음",
+  !$("#td-coll") && !$("#coll-entry") && !$("#sh-coll") && !$("#coll-list")
+  && !$("[data-cid]") && ev("window.__t97.calls.length") === 0);
+ok("T97 제거된 함수를 호출하지 않고 Today·Works 본문을 렌더",
+  !!$("#td-events") && !!$("#w-sched") && !!$("#wait-list")
+  && ev('typeof loadCollected === "undefined" && typeof loadCollectedEntry === "undefined" && typeof renderCollected === "undefined" && typeof pastToast === "undefined"'));
+const t97OldErrors = await capped("T97 옛 웹 수락/거절 요청", ev(`Promise.all(["accept","dismiss"].map(async action => {
+  try { await _req("POST","/collected/cached-old-id/"+action,{choice:"todo"}); return null; }
+  catch(e) { return {status:e.status,message:e.message}; }
+}))`));
+ok("T97 실제 서버 410의 error를 옛 웹 공통 오류 파서가 읽는다",
+  t97OldErrors.every(e => e?.status === 410 && e.message === T97_MSG), JSON.stringify(t97OldErrors));
+await capped("T97 옛 웹 공통 토스트", ev('run(() => _req("POST","/collected/cached-old-id/accept",{choice:"done"}))'));
+ok("T97 옛 화면의 공통 오류 표시에 종료 안내가 나온다", txt("#toast").includes(T97_MSG));
 
-/* 3 — ★★ 서버가 `needs_choice` 라고 하면 **그 자리에서 묻는다.**
- *   ⚠️ 줄이 사라지면 안 된다 — 사라지면 물음이 장식이고 사용자는 답할 자리를 잃는다. */
-await t80Reset({ "-": { needs_choice: true } });
-await $("#coll-list [data-cid='t80-x'] [data-act='add']").onclick();
-const t80AskRow = $("#coll-list [data-cid='t80-x']");
-ok("3 ★★ 지난 마감을 [추가]하면 그 자리에서 묻는다 (줄이 안 사라진다 · 세 갈래가 다 있다)",
-  // ⚠️ 문구는 *"마감"* 이라고 안 한다 — `DTSTART`가 무엇인지 모른다(ADR-037 · 아래 §보고).
-  !!t80AskRow && /이미 지난 일정/.test(t80AskRow.textContent)
-  && ["done", "todo", "skip"].every((k) => !!t80AskRow.querySelector(`[data-past='${k}']`)),
-  `${!!t80AskRow} / ${t80AskRow?.textContent?.slice(0, 60)}`);
-
-/* 2 — ★ 미래엔 안 묻는다. ⚠️ 이게 없으면 *"항상 묻는"* 구현이 3만 보면 초록이다. */
-await t80Reset({ "-": { event_id: "ev1", task_id: "tk1" } });
-await $("#coll-list [data-cid='t80-x'] [data-act='add']").onclick();
-ok("2 ★ 미래 마감은 안 묻고 바로 들어간다 — 줄이 사라지고 토스트가 둘을 말한다",
-  !$("#coll-list [data-cid='t80-x']")
-  && t80Toast().includes("캘린더") && t80Toast().includes("대기"),
-  `줄남음=${!!$("#coll-list [data-cid='t80-x']")} 토스트=${t80Toast()}`);
-
-/* 4·5b·6 — 세 갈래가 **누른 것을 그대로 보내고**, 토스트가 **서버가 준 사실**을 말한다.
- * ★ 5b 는 smoke 가 못 재는 가지다: `scheduled_for` 가 오면 *"오늘 할 일"*, 없으면 *"대기"*. */
-const t80Pick = async (pick, reply) => {
-  await t80Reset({ "-": { needs_choice: true }, [pick]: reply });
-  await $("#coll-list [data-cid='t80-x'] [data-act='add']").onclick();
-  await $(`#coll-list [data-cid='t80-x'] [data-past='${pick}']`).onclick();
-  return ev(`window.__t80.sent.join("|")`);
-};
-const t80Done = await t80Pick("done", { event_id: "ev1", task_id: null });
-ok("4 ★ '이미 했어요' → done 을 보내고, 토스트가 '할 일은 안 만들었다'고 말한다",
-  t80Done === "t80-x:-|t80-x:done" && /달력에만/.test(t80Toast()) && /안 만들/.test(t80Toast()),
-  `${t80Done} / ${t80Toast()}`);
-
-const t80Todo = await t80Pick("todo", { event_id: "ev1", task_id: "tk1", scheduled_for: t80Day });
-ok("5b ★★ '아직 해야 해요' → 예정이 잡히면 토스트가 '오늘 할 일'이라고 말한다",
-  t80Todo === "t80-x:-|t80-x:todo" && /오늘 할 일/.test(t80Toast()),
-  `${t80Todo} / ${t80Toast()}`);
-
-/* ★ 5b 의 짝 — **오늘이 마감된 날이면 대기로 떨어지고 문구가 그 사실을 말한다**(함정 6).
- *   ⚠️ 화면이 추측하지 않는다 — `scheduled_for` 가 `null` 인 것을 읽고 말한다. */
-const t80Wait = await t80Pick("todo", { event_id: "ev1", task_id: "tk1", scheduled_for: null });
-ok("★ 5b의 짝 — 예정이 안 잡히면 '대기'라고 말한다 (마감된 날 · 화면이 추측하지 않는다)",
-  t80Wait === "t80-x:-|t80-x:todo" && /대기/.test(t80Toast()) && !/오늘 할 일/.test(t80Toast()),
-  `${t80Wait} / ${t80Toast()}`);
-
-const t80Skip = await t80Pick("skip", { state: "dismissed" });
-ok("6 ★ '안 할래요' → skip 을 보낸다 (dismiss 경로가 아니다 — 서버가 한 곳에서 정한다)",
-  t80Skip === "t80-x:-|t80-x:skip" && !$("#coll-list [data-cid='t80-x']"),
-  `${t80Skip} / 줄남음=${!!$("#coll-list [data-cid='t80-x']")}`);
-await ev(`(async()=>{
-  Api.collectedAccept = window.__t80.old[0]; Api.collectedDismiss = window.__t80.old[1]; closeAll();
-})()`);
-
+const t80Day = ev("S.today.date");
+const t80At = (d) => ev("addDaysStr(" + JSON.stringify(t80Day) + "," + d + ")");
 /* 9·10·11 — ④ 먼 예정은 약하게. **①의 첫째 확인 결과대로 회색 하나로 끝난다** —
  * 맨 아래는 `ORDER BY e.date` + 그룹 순서가 이미 한다.
  * ⚠️ **경계 상수를 검사가 하드코딩하지 않는다**(함정 15) — 넉넉히 넘기고 넉넉히 안쪽이다. */
@@ -2534,7 +2245,7 @@ await ev(`(async()=>{
  *   그래서 `await switchTab(...)`은 **기다릴 것이 없고**, 실 API 렌더가 내 스텁 렌더 *뒤에*
  *   내려앉아 `#w-sched`를 덮는다 — 9·10·11이 한 판 죽었다가 **고친 것 없이 다음 판에 통과했다.**
  *   ★★ **고치지 않고 통과하는 빨간불은 회귀가 아니라 경합이다**(함정 14).
- *   ⚠️ **대기를 넣어 미루지 않는다.** 탭은 위 T-75 블록이 이미 `works`로 두었고,
+ *   ⚠️ **대기를 넣어 미루지 않는다.** 탭은 위 T-97 블록이 이미 `works`로 두었고,
  *      여기서는 **스텁을 먼저 걸고 그 뒤 렌더를 `await`** 한다 — 기다릴 것이 실제로 생긴다. */
 const t80Sched = async (rows) => ev(`(async()=>{
   window.__t80w = window.__t80w || { old: Api.works };
@@ -2580,7 +2291,7 @@ ok("11 ★ 한 달 안쪽 예정은 전과 똑같다 (약한 표시가 안 붙�
 await ev(`(async()=>{ Api.works = window.__t80w.old; await renderWorks(); })()`);
 
 console.log("\n[수집 상태 한 줄 — 실패는 숨지 않는다]");
-// ★ **위 두 카드와 반대다.** T-33·T-42는 none과 error가 화면에서 **같아야** 했다 —
+// ★ 수집 상태는 신규 수락을 종료해도 유지한다. 과거 제안 카드는 none과 error가 화면에서 같았다 —
 //   사용자가 할 수 있는 일이 없으니 잔소리가 되기 때문이다. 여기는 할 일이 있다(토큰 재입력).
 //   그래서 검사도 반대 모양이다: **어느 상태에서도 줄이 사라지지 않는다**를 센다.
 // 시각은 **지금에서 상대로** 만든다 — 고정 날짜는 언젠가 반드시 현재가 된다(함정 12).
@@ -2590,6 +2301,16 @@ const t43Set = async (st) => ev(`(async()=>{
   Api.collectedStatus = ${st === null ? `async () => { throw new Error("t43 boom"); }` : `async () => (${JSON.stringify(st)})`};
   try { await renderMe(); } finally { Api.collectedStatus = old; }
 })()`);
+for (const [name, st] of [
+  ["성공",{configured:true,last_collect_at:new Date().toISOString(),last_result:"ok",last_seen_count:9,counts:{new:4}}],
+  ["미설정",{configured:false}],
+  ["수집 실패",{configured:true,last_result:"http_403"}],
+  ["조회 실패",null],
+]) {
+  await t43Set(st);
+  ok("T97 Me 종료 안내는 " + name + "에도 항상 표시", txt("#collect-retired") === T97_MSG
+    && w.document.querySelectorAll("#collect-retired").length === 1);
+}
 const t43Row = () => $("#set-collect");
 const t43 = () => {
   const r = t43Row();
@@ -2604,7 +2325,7 @@ await t43Set({ ...t43Base, last_collect_at: t43At(3), last_result: "ok", last_se
 const t43Ok = t43();
 ok("① 정상이면 조용한 한 줄 — 마지막 확인 시각과 건수",
   t43Ok.state === "ok" && t43Ok.text.includes("3시간 전 확인")
-  && t43Ok.text.includes("12건 중 새로 3건") && !t43Ok.alert, JSON.stringify(t43Ok));
+  && t43Ok.text.includes("최근 수집 12건 · 원장 미수락 보관 3건") && !t43Ok.alert, JSON.stringify(t43Ok));
 
 // ★ 이 티켓의 본체가 화면에서 갈리는 자리. **0건도 "확인했다"고 말한다.**
 await t43Set({ ...t43Base, counts: { new: 0, accepted: 0, dismissed: 0 },
@@ -2614,7 +2335,7 @@ await t43Set({ ...t43Base, counts: { new: 0, accepted: 0, dismissed: 0 },
   last_collect_at: null, last_result: null, last_seen_count: null });
 const t43Never = t43();
 ok("★② 돌았지만 0건과 한 번도 안 돌았음이 화면에서 다르다",
-  t43Zero.state === "ok" && t43Zero.text.includes("0건 중 새로 0건")
+  t43Zero.state === "ok" && t43Zero.text.includes("최근 수집 0건 · 원장 미수락 보관 0건")
   && t43Never.state === "never" && t43Never.text.includes("아직 확인 전")
   && t43Zero.text !== t43Never.text,
   `${t43Zero.text} vs ${t43Never.text}`);

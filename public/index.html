@@ -36,15 +36,6 @@
       <button class="go" id="td-guard-no" style="color:var(--sub)">못 했어요</button>
     </span>
   </div>
-  <!-- 수집한 학사 일정 제안 (T-42 · ADR-030). Guard 카드와 **같은 모양**을 쓴다 —
-       한 줄 · data-state로 ask/none/error · catch가 화면을 막지 않는다.
-       ⚠️ 문구에 "마감"·"제출"을 쓰지 않는다: DTSTART의 뜻을 아직 모른다(ADR-037). -->
-  <div class="guardbar" id="td-coll" style="display:none">
-    <span id="td-coll-text"></span>
-    <span style="margin-left:auto;display:flex;gap:10px;flex:none">
-      <button class="go" id="td-coll-open">보기</button>
-    </span>
-  </div>
   <!-- 폰 캘린더 상태 (T-53 ②) — 권한 없음 · 대상 미선택 · 동기화 실패가 **각자의 문구**로 뜬다.
        2026-08-28에 알림 권한을 껐을 때 Guard가 통째로 멈췄는데 앱이 아무 말도 안 했다.
        캘린더에서 같은 실패를 반복하면 일정이 조용히 사라지고, 그건 "넣을 게 없다"와
@@ -192,13 +183,6 @@
 
   <div class="wview" id="w-inbox">
     <div id="inbox-lock" class="lockbar" style="display:none">21일이 지났어요 — 일정을 정하거나 연장해야 나갈 수 있어요.</div>
-    <!-- 가서 보는 길의 입구 (T-75 ③ · ADR-048) — 밀어 주는 카드(7일 창)는 Today 에 그대로 있다.
-         ★ 자리가 여기인 근거는 T-78 이다: 수락하면 **대기에 들어간다.**
-           들어오는 것과 들어온 것이 같은 칸의 앞뒤여야 흐름이 한 줄로 읽힌다.
-         ⚠️ **0건이면 이 줄이 아예 없다** — "들어온 것 0개"는 매일 자리를 차지하면서
-            아무것도 말하지 않는다(T-79 가 방금 걷어낸 모양).
-         ⚠️ 새 목록을 만들지 않는다 — 누르면 **기존 시트(`sh-coll`)** 가 열린다. -->
-    <button type="button" class="card collentry" id="coll-entry" style="display:none"></button>
     <div class="card" style="padding:2px 14px;margin-top:14px" id="wait-list"></div>
     <p class="cap" style="margin-top:10px">대기 최대 3주(21일). 다가갈수록 일수 표시가 붉어지고(원색 아님 — 탁한 계열), 넘기면 앱 실행 시 결정 팝업이 떠요. 연장하면 21일이 다시 시작.</p>
   </div>
@@ -330,15 +314,6 @@
 </div>
 
 <!-- 빠른 추가 -->
-<!-- 수집한 일정 제안 (T-42). **"전부 추가"를 두지 않는다** — 첫 수집에 무엇이 오는지
-     아직 못 봤다. 지금 만들면 오수집을 한 번에 캘린더에 붓는 버튼이 된다. -->
-<div class="sheet" id="sh-coll">
-  <div class="grip"></div>
-  <div class="sh-t">새로 들어온 일정</div>
-  <div id="coll-list" style="margin-top:12px"></div>
-  <p class="cap" style="margin-top:10px">학사 캘린더에서 읽어 온 것이에요. 원문 그대로 보여드려요.</p>
-</div>
-
 <!-- 대상 캘린더 선택 (T-53 ③) — **전체 동기화는 잡동사니다.** 계정이 여럿이라
      (구글 다중·삼성) 고르지 않으면 광고·생일·공휴일이 그대로 일정이 된다.
      선택 전에는 아무것도 안 가져오고, 위 `#td-cal` 한 줄이 그 사실을 말한다. -->

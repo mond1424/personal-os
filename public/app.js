@@ -447,7 +447,6 @@ async function refreshToday() {
   loadNotice();
   loadGuardOutcome();
   loadGuardNag();    // 밤 개입이 연속으로 그냥 지나갔는가 (T-60 ③)
-  loadCollected();
   loadCalStatus();   // 폰 캘린더가 조용히 죽어 있지 않은가 (T-53 ②)
   loadPlaceStatus(); // 장소 관측이 조용히 멈춰 있지 않은가 (T-59 · ADR-046 ⑤)
   if (!S.staleShown && S.today.overdue.length) { S.staleShown = true; showStale(S.today.overdue[0]); }
@@ -723,162 +722,6 @@ async function loadGuardNag() {
     // 화면은 막지 않는다. 바뀐 것은 **이 실패가 이름을 갖는다**는 것뿐이다(T-33).
     set("error");
   }
-}
-
-/* 수집한 학사 일정 제안 (T-42 · ADR-030 본체 · ADR-037) ──────
- *
- * **T-33의 outcome 카드와 같은 모양이다** — 한 줄 · `data-state` 셋 · `catch`가 화면을 안 막는다.
- * 새 패턴을 만들지 않는다. `none`과 `error`가 화면에서 똑같이 안 보이는 것도 같고,
- * 그래서 **둘을 가르는 검사가 짝**이다(T-33에서 그것 때문에 조회 실패가 초록이었다).
- *
- * ★ **문구에 "마감"·"제출"을 쓰지 않는다.** `DTSTART`가 마감 시각인지 아직 모른다
- * (ADR-037 §실측). 이름을 믿는 순간 그것이 해석이고, 개강 첫날 틀린다 —
- * **서버가 준 이름(`title`)과 시각만** 보여준다 (T-86 ③).
- * ⚠️ **여기서 이름을 만들지 않는다** — 끝의 "기한"을 떼는 규칙은 서버 `titleOf` 하나다.
- *    프런트에 다시 짜면 두 벌이 되고 한쪽만 바뀐다. `summary`(원문)는 응답에 있어도 안 쓴다.
- *
- * **"전부 추가"를 두지 않는다.** 첫 수집에 무엇이 들어오는지 아직 아무도 못 봤다.
- * 지금 만들면 오수집을 한 번에 캘린더에 붓는 버튼이 된다 — 보고 나서 정한다.
- */
-async function loadCollected() {
-  const bar = $("#td-coll");
-  const set = (state) => {
-    bar.dataset.state = state;
-    bar.style.display = state === "ask" ? "flex" : "none";
-  };
-  try {
-    const rows = await Api.collectedPending();
-    if (!rows?.length) return void set("none");
-
-    $("#td-coll-text").innerHTML = `<b>새로 들어온 일정 ${rows.length}건</b> — 캘린더에 넣을까요?`;
-    $("#td-coll-open").onclick = () => { renderCollected(rows); openSheet("sh-coll"); };
-    set("ask");
-  } catch {
-    // Today를 막지 않는다 — 수집이 없는 상태에서도 화면은 떠야 한다(T-33 §금지 1행).
-    set("error");
-  }
-}
-
-/* 가서 보는 길의 입구 (T-75 ③ · ADR-048) ────────────────────
- *
- * **위 `loadCollected()`는 밀어 주는 길이다** — 7일 창 · Today · 스스로 뜬다. 그대로 둔다.
- * 여기는 **가서 보는 길**이다: 창이 없고, Works 대기 칸 위에 있고, **사용자가 눌러야 열린다.**
- *
- * ★★★ **새 목록을 만들지 않는다.** `renderCollected` + `openSheet("sh-coll")` —
- *   밀어 주는 길이 쓰는 **바로 그 시트**다. 복제하면 화면은 같아 보이고 한쪽만 고쳐진다
- *   (함정 15의 `#cal-list`가 정확히 그 모양이었다).
- *
- * ⚠️ **0건이면 줄이 아예 없다.** *"들어온 것 0개"* 는 매일 자리를 차지하면서 아무것도
- *    말하지 않는다 — T-79가 방금 Today에서 걷어낸 그것이다.
- * ⚠️ **조회가 실패해도 Works를 막지 않는다** — 입구가 없는 것과 같은 화면이 된다.
- *    ★ 그 둘을 화면에서 못 가르므로 **`data-state`가 기록으로 가른다**(T-33과 같은 자리).
- */
-async function loadCollectedEntry() {
-  const bar = $("#coll-entry");
-  const set = (state, n = 0) => {
-    bar.dataset.state = state;
-    bar.style.display = state === "ask" ? "flex" : "none";
-    bar.dataset.count = String(n);
-  };
-  try {
-    const rows = await Api.collectedList();
-    if (!rows?.length) return void set("none");
-    // ★ **수가 보이는 것이 ADR-048의 요구다** — "들어온 것"만으로는 존재를 모른다.
-    bar.innerHTML = `<span>들어온 것 <b>${rows.length}</b>개</span>`
-      + `<span class="collentry-go">보기</span>`;
-    bar.onclick = () => { renderCollected(rows); openSheet("sh-coll"); };
-    set("ask", rows.length);
-  } catch {
-    set("error");
-  }
-}
-
-/** 시트 본문 — 하나씩 [추가]/[무시]. 처리하면 그 줄만 빠지고 카드 수가 준다. */
-function renderCollected(rows) {
-  const body = $("#coll-list");
-  body.innerHTML = rows.map((r) => {
-    // `2026-09-03T23:00:00+09:00` → "9/3(수) 23:00". **원문은 그대로 붙인다.**
-    const when = r.starts_at ? `${md(r.starts_at.slice(0, 10))} ${r.starts_at.slice(11, 16)}` : "";
-    // ★ **과목은 얹기만 한다.** 이름은 서버가 준 `title` 그대로다 —
-    //   교수가 지은 이름이 틀렸어도 고치지 않는다(T-74 §금지). 서버가 떼는 것은 Moodle 의 꼬리 "기한" 뿐이다(T-86).
-    // ★★ **과목도 서버가 준 `course` 그대로다** (T-87 ①). T-74 땐 여기서 `categories`를 잘랐는데,
-    //   규칙은 서버(`lib/course.ts`) 한 곳에 유지한다(T-94) —
-    //   ⚠️ 여기서 다시 자르면 두 벌이 된다. `categories`(원문)는 응답에 그대로 있지만 화면은 안 쓴다.
-    const course = r.course || "";
-    // ★ 버튼 둘을 `.ev-act`로 감싼다 (T-80 ③) — 과거 시각이 지난 것이면 **그 칸만** 세 갈래로 바뀐다.
-    //   ⚠️ 줄 전체를 다시 그리지 않는다: 제목·과목은 그대로 두고 물음만 그 자리에 선다.
-    return `<div class="evrow" data-cid="${esc(r.id)}">
-      <span class="en" style="flex:1">${course ? `<b class="ec">${esc(course)}</b>` : ""}${esc(when)} · ${esc(r.title)}</span>
-      <span class="ev-act">
-        <button class="go" data-act="add">추가</button>
-        <button class="go" data-act="skip" style="color:var(--sub)">무시</button>
-      </span>
-    </div>`;
-  }).join("");
-
-  /* 처리 뒤 한 벌 — **세 갈래가 같은 뒤처리를 쓴다**(T-80 ③).
-   * ⚠️ 복사해서 넷을 만들면 한쪽만 고쳐지고, 그때 화면은 같아 보인다. */
-  const afterCollected = (row, msg) => run(async () => {
-    toast(msg);
-    row.remove();
-    if (!body.querySelector("[data-cid]")) closeSheet("sh-coll");
-    await refreshToday();       // 카드 수가 줄고, 없으면 카드가 사라진다
-    // 추가된 일정이 캘린더에 보이게. **캐시를 먼저 버린다** — 달 세그먼트가 캐시돼 있어
-    // 그냥 다시 그리면 방금 만든 event가 안 실린다(`calSyncNow`와 같은 짝).
-    if (S.cal) { invalidateCalendarCache(); await renderCalendar(); }
-    /* ★ Works에서 열렸으면 그 화면도 다시 그린다 (T-75 ③).
-     * **수락은 대기에 task를 만든다**(T-78) — 그런데 이 시트는 Works를 안 건드리고 있었다.
-     * 그러면 **방금 만든 할 일이 바로 뒤의 대기 목록에 안 보이고**, 입구의 수도 안 준다.
-     * ⚠️ **`await` 한다** — 안 그러면 부르는 쪽엔 기다릴 것이 없어 검사가 관측으로 돌아간다
-     *    (함정 14). 탭을 보고 거는 것은 위 `refreshToday` 짝들과 같은 꼴이다. */
-    if ($("#phone").dataset.tab === "works") await renderWorks();
-  });
-
-  /* ★★★ 시각이 이미 지난 것을 [추가]했을 때 (T-80 ③ · 2026-09-21 사용자).
-   *
-   * **그 줄 자리에서 묻는다** — 새 시트도, 새 목록도 만들지 않는다. 시트는 이미 열려 있다.
-   * ⚠️ **서버가 이미 `needs_choice`로 말했고 아무것도 안 만들었다** — 화면이 추측하지 않는다.
-   * ★ 세 갈래가 하는 일은 서버가 정한다. 여기서는 **누른 것을 그대로 보낸다.** */
-  const askPast = (row, id) => {
-    const ctl = row.querySelector(".ev-act");
-    ctl.innerHTML = `<span class="past-ask">이미 지난 일정이에요</span>`
-      + `<button class="go" data-past="done">이미 했어요</button>`
-      + `<button class="go" data-past="todo">아직 해야 해요</button>`
-      + `<button class="go" data-past="skip" style="color:var(--sub)">안 할래요</button>`;
-    ctl.querySelectorAll("[data-past]").forEach((pb) => {
-      pb.onclick = () => run(async () => {
-        const pick = pb.dataset.past;
-        const res = await Api.collectedAccept(id, pick);
-        return afterCollected(row, pastToast(pick, res));
-      });
-    });
-  };
-
-  body.querySelectorAll("button").forEach((b) => {
-    b.onclick = () => run(async () => {
-      const row = b.closest("[data-cid]");
-      const id = row.dataset.cid;
-      if (b.dataset.act !== "add") {
-        await Api.collectedDismiss(id);
-        return afterCollected(row, "안 묻을게요");
-      }
-      const res = await Api.collectedAccept(id);
-      // ★ **과거면 여기서 멈춘다** — 줄이 안 사라지고 그 자리에서 세 갈래가 뜬다.
-      if (res?.needs_choice) return void askPast(row, id);
-      // T-79 ④ — **T-78이 둘 다 만든다**(`events.create` + `tasks.createTask`).
-      // *"캘린더에 넣었어요"* 는 사실의 절반이었고, 대기에 생긴 할 일을 사용자가 못 찾았다.
-      return afterCollected(row, "캘린더와 대기에 넣었어요");
-    });
-  });
-}
-
-/** 지난 일정 세 갈래의 토스트 — **서버가 준 사실만 말한다**(T-80 ③). */
-function pastToast(pick, res) {
-  if (pick === "skip") return "안 묻을게요";
-  // ⚠️ 달력에만 넣었다 — 할 일은 안 만들었다. 그 차이를 문구가 말해야 화면과 원장이 맞는다.
-  if (pick === "done") return "달력에만 넣었어요 — 할 일은 안 만들었어요";
-  // ★ 오늘이 이미 닫힌 날이면 서버가 대기로 떨어뜨린다(함정 6). **추측하지 않고 응답을 읽는다.**
-  return res?.scheduled_for ? "오늘 할 일로 넣었어요" : "대기에 넣었어요 — 오늘은 이미 닫힌 날이에요";
 }
 
 /* 폰 캘린더 미러 (T-53 · ADR-029) ────────────────────────────
@@ -2534,7 +2377,6 @@ async function renderWorks() {
 
   // 대기
   $("#inbox-lock").style.display = waiting.some((w) => w.age > 21) ? "" : "none";
-  await loadCollectedEntry();
   $("#wait-list").innerHTML = waiting.map((w) =>
     `<div class="trow" onclick="openTask('${w.id}')" style="cursor:pointer"><span class="tk"></span>
       <span class="tbody"><span class="tt">${esc(w.title)}</span>
@@ -3297,6 +3139,7 @@ async function renderMe() {
   $("#set-list").innerHTML = rows.map(([k, v, key]) =>
     `<button class="srow" ${act(key)}>${k}<em>${esc(v)}</em></button>`).join("")
     + collectStatusRow(S.collectStatus)
+    + '<p class="cap" id="collect-retired">과제는 Tasks.org에서 관리해요. pOS는 새 과제를 받지 않으며 기존 기록은 남아요.</p>'
     + calStatusRow(S.calStatus)
     + placeStatusRow(S.placeStatus)
     // ★ 넷째 — **꺼진 것을 읽을 수 있는 유일한 자리다**(T-63). 앞 셋과 합치지 않는다:
@@ -3311,7 +3154,7 @@ async function renderMe() {
  * **수집 실패는 할 일이 있다 — 토큰을 다시 넣어야 한다.** 행동이 가능한 실패는 보인다.
  * 이 문단이 없으면 다음 사람이 T-33을 근거로 이 줄을 지운다.
  *
- * **그래서 여기는 안 숨는다.** 제안 카드(`#td-coll`)는 없으면 사라지는 것이 맞지만,
+ * **그래서 여기는 안 숨는다.** 신규 수락을 종료했어도
  * 이 줄이 사라지면 *"수집이 죽은 채로 학기가 지나간다"*가 그대로 돌아온다.
  * 정상일 때는 조용한 한 줄이고 **실패일 때만** 눈에 띈다(§금지 3행).
  *
@@ -3339,7 +3182,7 @@ function collectStatusLine(st) {
   // ★ **0건과 '안 돌았다'가 여기서 갈린다.** 0이면 그대로 "0건"이라 쓴다 — 방학의 정상이다.
   //   `null`은 T-43 이전에 수집한 것이라 건수 기록이 없는 경우다(있는 척하지 않는다).
   const seen = st.last_seen_count == null
-    ? "건수 기록 전" : `${st.last_seen_count}건 중 새로 ${st.counts?.new ?? 0}건`;
+    ? "건수 기록 전" : `최근 수집 ${st.last_seen_count}건 · 원장 미수락 보관 ${st.counts?.new ?? 0}건`;
   return { state: "ok", text: `${collectAgo(st.last_collect_at)} 확인 · ${seen}` };
 }
 
