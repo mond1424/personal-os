@@ -45,14 +45,15 @@ export async function createTask(
 export async function getTask(env: Env, t: TimeCtx, id: string) {
   const stats = await db.taskStats(env, id);
   if (!stats) throw new ApiError(404, "해당 task가 없어요");
-  const [entries, extensions] = await Promise.all([
+  const [entries, extensions, collectedRef] = await Promise.all([
     db.taskEntries(env, id),
     db.waitExtensions(env, id),
+    db.collectedTaskRef(env, id),
   ]);
   const age = stats.is_waiting
     ? diffDays(t.d, attributionOfIso(stats.wait_anchor_at, t.boundary)) + 1
     : null;
-  return { ...stats, wait_age: age, entries: entries.results, extensions: extensions.results };
+  return { ...stats, collected_ref: !!collectedRef, wait_age: age, entries: entries.results, extensions: extensions.results };
 }
 
 export async function updateTaskMeta(
@@ -207,6 +208,14 @@ const shortDate = (d: string) => `${+d.slice(5, 7)}/${+d.slice(8, 10)}`;
 export async function deleteTask(env: Env, id: string) {
   const task = await db.taskStats(env, id);
   if (!task) throw new ApiError(404, "해당 task가 없어요");
+
+  // 수집 연결은 마감·Guard보다 먼저 안내한다. FK 자체는 최종 방어선으로 유지한다.
+  if (await db.collectedTaskRef(env, id)) {
+    const action = task.state === "not_finished" ? "목록에서 빼려면 취소를 눌러 주세요."
+      : task.state === "finished" ? "완료 기록으로 남겨요." : "취소 기록으로 남겨요.";
+    throw new ApiError(409, "수집한 과제는 기록 연결 때문에 삭제할 수 없어요. " + action,
+      task.state === "not_finished" ? "cancel" : undefined);
+  }
 
   const [closed, guard] = await Promise.all([
     db.closedEntryDates(env, id),

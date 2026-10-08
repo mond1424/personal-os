@@ -469,6 +469,11 @@ export const diaryList = (env: Env, before: string, limit: number) => q(env, `
 export const taskStats = (env: Env, id: string) =>
   q(env, "SELECT * FROM v_task_stats WHERE id = ?").bind(id).first<TaskStats>();
 
+// 상태와 무관하게 FK가 남아 있는지 본다. 여러 원장 행이 같은 task를 참조해도 단건이다.
+export const collectedTaskRef = (env: Env, id: string) =>
+  q(env, "SELECT 1 AS found FROM collected_items WHERE task_id = ? LIMIT 1")
+    .bind(id).first<{ found: number }>();
+
 // 항목마다 '그 날이 마감됐는지'를 함께 준다 — 화면이 완료율을 열지 말지 판단하는 근거.
 // 없으면 프론트가 날짜만 보고 추측하게 되고, 추측은 트리거 거부(409)로 드러난다.
 export const taskEntries = (env: Env, id: string) =>

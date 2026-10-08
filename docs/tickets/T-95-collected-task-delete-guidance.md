@@ -82,11 +82,93 @@ typecheck 통과 · smoke A → B · front C → D · 실패 0 · schema 일치 
 
 ## 보고 (담당이 채운다)
 
+**2026-10-08 · 구현 완료 · 설계층 최종 검토 대기.**
+
 ```
 티켓: T-95
-층 · 도구:
-바꾼 파일:
-기준선: typecheck 통과 · smoke A → B · front C → D · 실패 0 · schema 일치 · verify exit 0
-설계와 어긋난 점:
-막힌 것:
+층 · 도구: 감독층 · codex
+바꾼 파일: src/db/index.ts, src/services/tasks.ts, public/app.js, public/index.html,
+           test/smoke.ts, test/front.mjs, docs/api-surface.md, STATE.md, 이 티켓의 §보고
+기준선: typecheck 통과 · smoke 536 → 550 · front 529 → 537 · 실패 0 · schema 일치(마이그레이션 26개 · 객체 71개) · verify exit 0
+설계와 어긋난 점: 없음
+막힌 것: 구현 없음. 기존 front의 캐시·Goals·일정 검사 간헐 실패/중단은 원인 미확정이며 아래에 보존한다.
 ```
+
+### 구현·보존 경계
+
+- `collectedTaskRef`는 `collected_items.task_id`의 존재를 `LIMIT 1`로 조회한다. state·제목·과목명으로 거르지 않는다.
+  `getTask`는 `collected_ref:boolean`을 조회 시 계산해 싣는다. DB 칼럼·마이그레이션은 추가하지 않았다.
+- DELETE는 task 존재 확인 뒤 수집 참조를 마감·Guard보다 먼저 확인하고, 기록 연결 때문에 삭제할 수 없다는 409를 반환한다.
+  미완료만 `suggest:"cancel"`과 취소 안내를 싣고, 완료·취소는 각 기록으로 남긴다고 안내하며 `suggest` 키가 없다.
+  참조 없는 task의 기존 마감·Guard 거절과 삭제 순서를 보존했다. FK·수집/task/event 연결을 해제하지 않았다.
+- 시트는 참조된 task의 삭제 버튼을 모든 상태에서 숨기고 가까운 설명 자리에 지정 문구를 표시한다.
+  미완료의 기존 취소, 취소된 일의 기존 취소 해제는 유지한다. 손 task를 이어 열면 삭제 버튼을 되돌리고 설명도 비운다.
+  옛 화면의 DELETE 오류는 서버의 cancel 힌트가 있을 때만 기존 `execCancel`로 연결하며, 힌트 없는 409는 오류로 표시한다.
+- 삭제·취소 핸들러는 기존 `run(...)` 프라미스를 반환하도록 해 검사가 실제 왕복의 끝을 기다린다(함정 14).
+  확인창·취소 API·성공 이후 동작은 보존했다. API 지도의 응답 필드·409 우선순위·DB 조회를 갱신했다.
+- Android·마이그레이션·wrangler 설정 무변경. 배포·APK 빌드/설치·원격 D1 변경·Tasks.org 접근 없음.
+  `%SystemDrive%/`는 제외해 보존한다. T-94 종료를 확인한 뒤 착수했고 T-97은 시작하지 않았다.
+
+### 검사 추가 내역
+
+기존 검사를 폐기·교체하지 않았다. **smoke 536 + 14 = 550**, **front 529 + 8 = 537**이다.
+
+- smoke 1·2는 각각 미완료/완료/취소 세 상태에 대해 실제 GET의 boolean 필드와 DELETE 409·상태별 문구·힌트를 본다(6개).
+  DELETE 전후 task·예정·연장·수집 원장·연결 event·Guard 기록 전체를 비교한다.
+- smoke 3~10(8개): 기존 취소 성공/연결 보존/열린 예정 제거, 같은 제목의 손 task false/삭제 성공,
+  복수 new/dismissed 참조의 단일 응답/거절, 수집 참조가 마감·Guard보다 먼저 안내,
+  참조 없는 task의 종전 마감 거절, 종전 Guard 거절, 없는 task의 GET/DELETE 404, 직접 DB 삭제의 FK 최종 방어.
+- front 1은 실제 손 task 생성·GET·시트로 `collected_ref=false` 필드와 삭제 표시를 본다.
+  front 2~5는 smoke의 실제 참조 응답 계약과 짝인 화면 픽스처로 미완료→손→취소→완료를 연달아 열어 버튼/설명을 본다.
+  수집 true의 실 HTTP 계약은 smoke 1 세 상태가 진다. 프론트 픽스처만으로 서버 필드 존재를 단정하지 않는다.
+- front 6~8은 필드 없는 옛 화면과 HTTP 409를 주입해 `Api._req`의 실제 오류 번역·삭제 핸들러를 지난다.
+  미완료만 대신 취소 확인 뒤 실제 기존 취소 API를 한 번 호출하고, 완료/취소는 취소 제안·호출 없이 보존 오류가 표시된다.
+  이 화면 검사의 409는 합성 응답이며 실제 서버의 상태별 409는 smoke 2 세 상태가 진다.
+
+### 실행·변이 대조
+
+시작 전 확인은 `통과 · AGENTS.md 11188 B`. 착수 기준은 STATE의 smoke 536·front 529이며,
+추가 권한 환경의 명령 안에서 `Set-Location -LiteralPath 'C:\dev\personal-os-worker\worker'` 후 실행했다.
+
+- 최초 `npm.cmd run typecheck` 통과, `npm.cmd run smoke`는 550·실패 0·exit 0.
+- 최초 `npm.cmd run front`는 새 픽스처의 `async () => {JSON 객체}`가 객체 반환식이 아니라 함수 본문으로 해석되어
+  `Unexpected token ':'`로 중단했다. 객체 반환 괄호를 task 픽스처와 409 JSON 픽스처 두 곳에 추가했다.
+  도중 요약은 **통과 520·실패 1·front exit 3**, 마지막은 T-95 front 1이며 전체 검사 통과로 세지 않는다.
+  같은 실행에서 종전 「옆 달 이동은 캐시에 없는 가장자리 한 달만 요청」이 실패했다.
+  실측 요청 범위는 `2027-01-01`~`2027-02-28` 두 달이다. 달력 코드·해당 검사는 바꾸지 않았으며 원인은 미확정이다.
+- 수정 후 `npm.cmd run front`는 **537·실패 0·exit 0**(본문 213.0초). 위 캐시 검사는 재현하지 않았다.
+  재실행 성공을 간헐 실패의 해결로 해석하지 않는다. 최초 중단/캐시 실패 로그를 보존했다.
+- 변이 전 DB·tasks·app 원본 바이트와 SHA256을 보관했다. 각 앵커가 한 곳인지와 적용 여부를 확인하고,
+  다음 변이 전에 세 파일을 원본 바이트로 복원한 뒤 SHA256 동일을 확인했다.
+- **M1 예상:** 참조 조회에 `AND 0`을 넣어 참조 판정을 무시하면 smoke 1·2의 세 상태, 5·6(8개)이 실패한다.
+  **실측:** **542 통과·8 실패·총계 550·exit 1**, 실패 이름도 예상과 같았다. FK 자체는 여전히 삭제를 막지만 명시 안내·필드가 사라진다.
+- **M2 예상:** 완료에도 cancel 힌트를 실으면 smoke 2-finished 하나가 실패한다.
+  **실측:** **549 통과·1 실패·총계 550·exit 1**, 실패는 2-finished 하나였다.
+- **M3 예상:** 삭제 버튼을 항상 표시하면 front 2·4·5(3개)가 실패한다.
+  **실측:** **534 통과·3 실패·총계 537·front exit 2**, 실패는 2·4·5였고 본문 160.2초였다.
+  새 검사 뒤의 부팅/복구·런타임 검사까지 모두 실행됐으며 변이가 러너를 중단시킨 것이 아니다.
+- M3 뒤 세 파일을 원본 바이트로 복원하고 SHA256 동일을 확인했다.
+- 최초 `npm.cmd run verify`는 typecheck·smoke 550/0 뒤 front의 기존 Goals 추가/디데이 검사 5개가 실패했다.
+  이후 `test/front.mjs:1328`의 일정 셀이 null인 채 `querySelector`를 호출해 **통과 180·실패 5·front/verify exit 3**으로 중단했다.
+  front 본문 164.6초, 마이그레이션 25.4초이며 schema 단계는 **미실행**이다. T-95 새 검사에는 도달하지 않았다.
+  Goals 저장은 `.click(); await sleep(700)` 뒤 검사하고, 이후 `await refreshGoals()` 다음에는 같은 항목이 확인됐다.
+  저장 핸들러의 프라미스를 버리는 검사 구조는 확인했지만 이것이 두 실패의 공통 원인인지는 확정하지 않았다.
+  캐시·Goals·일정의 구현/해당 검사 본문은 이번 티켓에서 수정하지 않았다. 범위 밖 결함으로 설계층에 올린다.
+  정상 front 537/0 및 M3 534/3 때 위 실패들은 없었다. 동일 트리 verify 재실행에서도 재현하지 않았지만,
+  재실행 성공을 원인 규명·간헐 해결로 쓰지 않는다.
+- **최종 정상 verify (2026-10-08 15:53 KST):** `npm.cmd run verify` → **typecheck 통과 · smoke 536 → 550 · front 529 → 537 · 실패 0 ·
+  schema 일치(마이그레이션 26개 · 객체 71개) · verify exit 0**. 마이그레이션 62.5초·front 본문 224.7초.
+  격리 러너는 임시 DB를 정리했고 실 dev DB는 건드리지 않았다. 스키마 변경이 없어 재덤프 없이 대조만 했다.
+  최종 실행 후에도 DB·tasks·app 원본 SHA256 동일을 확인했다. `git diff --check` 통과.
+  최초 중단·간헐 실패와 정상 기준선은 분리해 기록하며, 범위 밖 실패 후속은 STATE §미해결에 남겼다.
+
+원출력: OS 임시 폴더의 `personal-os-t95-smoke.log`, `personal-os-t95-front-first.log`,
+`personal-os-t95-front.log`, `personal-os-t95-m1-smoke.log`, `personal-os-t95-m2-smoke.log`, `personal-os-t95-m3-front.log`,
+`personal-os-t95-verify-first.log`, `personal-os-t95-verify.log`.
+최초 front의 격리 진단 DB는 러너가 보존한 `personal-os-e2e-CMCcBz`에 있으며 실 dev DB와 별개다.
+M3의 예상 실패 진단 DB는 `personal-os-e2e-MNwqPa`에 보존됐다.
+최초 verify 중단의 격리 진단 DB·Wrangler 로그는 `personal-os-e2e-FnRkzx`에 보존됐다.
+
+**후속:** 설계층 최종 검토 후 사용자가 서버/웹 배포와 티켓의 폰 확인 절차를 수행한다.
+폰 렌더·터치·라이브 삭제/취소 상태·Tasks.org 상태는 이 실행으로 확인하지 않았다.
+보고·STATE 기준선을 구현분과 함께 커밋하고 WIP를 직전에 해제한다. T-97은 T-95의 코드 커밋·설계 검토·종료 뒤 착수한다.

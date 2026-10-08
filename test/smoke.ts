@@ -4451,6 +4451,103 @@ const t94Residual = t94LiveFiles.filter((p) => t94Retired.test(readFileSync(join
 ok("16 ★ 재촉 전용 import·질의·호출·응답 신호 잔여 없음 · 삭제 전 예시 8개로 스캐너 확인",
   t94Probes.every((p) => t94Retired.test(p)) && t94Residual.length === 0, JSON.stringify(t94Residual));
 
+/* ── T-95 · 수집 원장의 task 참조는 삭제 대신 보존을 안내한다 ────────── */
+console.log("\n[T-95] 수집 task 참조 — 상태별 삭제 거절·기록 보존");
+const T95_REASON = "수집한 과제는 기록 연결 때문에 삭제할 수 없어요.";
+const t95Snapshot = (id: string) => JSON.stringify({
+  task: raw.prepare("SELECT * FROM tasks WHERE id=?").get(id),
+  entries: raw.prepare("SELECT * FROM schedule_entries WHERE task_id=? ORDER BY id").all(id),
+  extensions: raw.prepare("SELECT * FROM wait_extensions WHERE task_id=? ORDER BY id").all(id),
+  collected: raw.prepare("SELECT * FROM collected_items WHERE task_id=? ORDER BY id").all(id),
+  events: raw.prepare("SELECT * FROM events WHERE id IN (SELECT event_id FROM collected_items WHERE task_id=?) ORDER BY id").all(id),
+  guard: raw.prepare("SELECT * FROM guard_events WHERE task_id=? ORDER BY id").all(id),
+});
+const t95Accepted: Record<string, string> = {};
+for (const [state, ending] of [["not_finished", "목록에서 빼려면 취소를 눌러 주세요."],
+  ["finished", "완료 기록으로 남겨요."], ["cancelled", "취소 기록으로 남겨요."]] as const) {
+  const seed = await t94Accept("t95-" + state, "T-95 같은 제목 기한", addDays(D, 70));
+  const id = seed.response.json?.task_id ?? "";
+  t95Accepted[state] = id;
+  if (state === "finished") await api("POST", `/api/tasks/${id}/complete`);
+  if (state === "cancelled") await api("POST", `/api/tasks/${id}/cancel`);
+  const detail = await api("GET", `/api/tasks/${id}`);
+  ok(`1-${state} ★ 실제 GET은 상태와 무관한 collected_ref:boolean을 싣는다`,
+    seed.response.status === 200 && detail.status === 200 && detail.json?.state === state
+    && detail.json?.collected_ref === true, JSON.stringify(detail.json));
+  const before = t95Snapshot(id);
+  const denied = await api("DELETE", `/api/tasks/${id}`);
+  ok(`2-${state} ★ DELETE 409·보존 이유·미완료만 cancel 힌트 · 전체 원장 불변`,
+    denied.status === 409 && denied.json?.error === T95_REASON + " " + ending
+    && (state === "not_finished" ? denied.json?.suggest === "cancel" : !Object.hasOwn(denied.json ?? {}, "suggest"))
+    && before === t95Snapshot(id), JSON.stringify(denied));
+}
+const t95OpenId = t95Accepted.not_finished!;
+const t95LinksBefore = JSON.stringify(raw.prepare("SELECT * FROM collected_items WHERE task_id=?").all(t95OpenId));
+const t95EventBefore = raw.prepare("SELECT * FROM events WHERE id IN (SELECT event_id FROM collected_items WHERE task_id=?)").all(t95OpenId);
+const t95Cancelled = await api("POST", `/api/tasks/${t95OpenId}/cancel`, { reason: "기존 취소 API" });
+ok("3 미완료의 기존 취소 API 성공 · task·수집/event 연결 보존 · 열린 예정만 제거",
+  t95Cancelled.status === 200 && (await api("GET", `/api/tasks/${t95OpenId}`)).json?.state === "cancelled"
+  && t95LinksBefore === JSON.stringify(raw.prepare("SELECT * FROM collected_items WHERE task_id=?").all(t95OpenId))
+  && JSON.stringify(t95EventBefore) === JSON.stringify(raw.prepare("SELECT * FROM events WHERE id IN (SELECT event_id FROM collected_items WHERE task_id=?)").all(t95OpenId))
+  && raw.prepare("SELECT COUNT(*) AS n FROM schedule_entries WHERE task_id=?").get(t95OpenId)?.n === 0);
+
+const t95HandId = (await api("POST", "/api/tasks", { title: "T-95 같은 제목", date: addDays(D, 71) })).json?.id ?? "";
+const t95HandDetail = await api("GET", `/api/tasks/${t95HandId}`);
+const t95HandDelete = await api("DELETE", `/api/tasks/${t95HandId}`);
+ok("4 ★ 같은 제목의 손 task는 collected_ref=false · 기존 삭제 성공·이후 404",
+  t95HandDetail.json?.collected_ref === false && t95HandDelete.status === 200 && t95HandDelete.json?.deleted === true
+  && (await api("GET", `/api/tasks/${t95HandId}`)).status === 404);
+
+const t95MultiId = (await api("POST", "/api/tasks", { title: "T-95 상태 필터 금지" })).json?.id ?? "";
+for (const state of ["new", "dismissed"]) {
+  putCollected("t95-multi-" + state, "연결 보존", atPlus(72 * DAY), state);
+  raw.prepare("UPDATE collected_items SET task_id=? WHERE uid=?").run(t95MultiId, "t95-multi-" + state);
+}
+const t95MultiBefore = t95Snapshot(t95MultiId);
+const t95Multi = await api("GET", `/api/tasks/${t95MultiId}`);
+const t95MultiDelete = await api("DELETE", `/api/tasks/${t95MultiId}`);
+ok("5 ★ 복수 원장·new/dismissed 참조도 단일 task 응답·삭제 거절 · 상태 필터 없음",
+  !Array.isArray(t95Multi.json) && t95Multi.json?.id === t95MultiId && t95Multi.json?.collected_ref === true
+  && Array.isArray(t95Multi.json?.entries) && t95Multi.json.entries.length === 0
+  && t95MultiDelete.status === 409 && t95MultiDelete.json?.error?.startsWith(T95_REASON)
+  && t95MultiBefore === t95Snapshot(t95MultiId));
+
+// 같은 마감 기록과 Guard 기록이 있어도 수집 안내가 먼저다. 무관한 task의 종전 거절과 짝을 이룬다.
+const T95_CLOSED = addDays(D, 90);
+const t95PriorityId = (await api("POST", "/api/tasks", { title: "T-95 우선순위", date: T95_CLOSED })).json?.id ?? "";
+const t95ClosedHand = (await api("POST", "/api/tasks", { title: "T-95 일반 마감", date: T95_CLOSED })).json?.id ?? "";
+putCollected("t95-priority", "연결", atPlus(90 * DAY));
+raw.prepare("UPDATE collected_items SET task_id=? WHERE uid='t95-priority'").run(t95PriorityId);
+raw.prepare("INSERT INTO daily(date,status,closed_at,created_at) VALUES(?,'closed',?,?)").run(T95_CLOSED, t0.now, t0.now);
+const t95GuardHand = (await api("POST", "/api/tasks", { title: "T-95 일반 Guard" })).json?.id ?? "";
+for (const id of [t95PriorityId, t95GuardHand])
+  raw.prepare("INSERT INTO guard_events(id,fired_at,on_date,cause,level,task_id,created_at) VALUES(?,?,?,'test',1,?,?)")
+    .run("t95-guard-" + id, t0.now, D, id, t0.now);
+const t95PriorityBefore = t95Snapshot(t95PriorityId);
+const t95Priority = await api("DELETE", `/api/tasks/${t95PriorityId}`);
+ok("6 ★ 수집 참조는 마감·Guard보다 먼저 보존 안내 · 거절 전후 원장 불변",
+  t95Priority.status === 409 && t95Priority.json?.error?.startsWith(T95_REASON)
+  && t95Priority.json?.suggest === "cancel" && t95PriorityBefore === t95Snapshot(t95PriorityId));
+const t95ClosedBefore = t95Snapshot(t95ClosedHand);
+const t95ClosedDelete = await api("DELETE", `/api/tasks/${t95ClosedHand}`);
+ok("7 참조 없는 task의 기존 마감 거절·날짜 안내·cancel 힌트·원장 보존",
+  (await api("GET", `/api/tasks/${t95ClosedHand}`)).json?.collected_ref === false
+  && t95ClosedDelete.status === 409 && t95ClosedDelete.json?.error?.includes("마감된 날")
+  && t95ClosedDelete.json?.suggest === "cancel" && t95ClosedBefore === t95Snapshot(t95ClosedHand));
+const t95GuardBefore = t95Snapshot(t95GuardHand);
+const t95GuardDelete = await api("DELETE", `/api/tasks/${t95GuardHand}`);
+ok("8 참조 없는 task의 기존 Guard 거절·건수 안내·cancel 힌트·원장 보존",
+  (await api("GET", `/api/tasks/${t95GuardHand}`)).json?.collected_ref === false
+  && t95GuardDelete.status === 409 && t95GuardDelete.json?.error?.includes("Guard 개입 기록 1건")
+  && t95GuardDelete.json?.suggest === "cancel" && t95GuardBefore === t95Snapshot(t95GuardHand));
+ok("9 없는 task의 GET·DELETE는 기존 404",
+  (await api("GET", "/api/tasks/t95-missing")).status === 404 && (await api("DELETE", "/api/tasks/t95-missing")).status === 404);
+let t95FkBlocked = false;
+try { raw.prepare("DELETE FROM tasks WHERE id=?").run(t95MultiId); }
+catch (e) { t95FkBlocked = /FOREIGN KEY/.test(String(e)); }
+ok("10 ★ 서비스 분기를 우회해도 FK가 수집 참조를 막는다 · 원장 불변",
+  t95FkBlocked && t95MultiBefore === t95Snapshot(t95MultiId));
+
 // ── 결과 ─────────────────────────────────────────────────────
 console.log(`\n${"=".repeat(46)}\n통과 ${passN} · 실패 ${fails.length}`);
 if (fails.length) { console.log("실패:\n  - " + fails.join("\n  - ")); process.exit(1); }

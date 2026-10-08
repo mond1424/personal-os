@@ -28,7 +28,7 @@
 | POST `/api/memos` | `{date, ts?, text}` | `{id, date}` (201) | `memos.addMemo` |
 | GET `/api/works/:segment` | — | seg rows (scheduled·waiting·deferring·periods·done) | `tasks.segment` |
 | POST `/api/tasks` | `{title, period_id?, date?}` | `{id, title, waiting}` (201) | `tasks.createTask` |
-| GET `/api/tasks/:id` | — | stats + `{wait_age, entries, extensions}` | `tasks.getTask` |
+| GET `/api/tasks/:id` | — | stats + `{collected_ref:boolean, wait_age, entries, extensions}` | `tasks.getTask` |
 | PATCH `/api/tasks/:id` | `{title?, period_id?}` | `{id, title, period_id}` | `tasks.updateTaskMeta` |
 | POST `/api/tasks/:id/defer` | `{from, to, rate?, reason?}` | `{id, from, to, reassigned, rate, reason?}` | `tasks.deferTask` |
 | POST `/api/tasks/:id/schedule` | `{date}` | `{id, date}` | `tasks.scheduleTask` |
@@ -36,7 +36,7 @@
 | POST `/api/tasks/:id/complete` | — | `{id, finished_on, planned_on, rate_applied}` | `tasks.completeTask` |
 | POST `/api/tasks/:id/cancel` | `{reason?}` | `{id, cancelled_at, cancelled_on, kept_dates, cancel_reason}` | `tasks.cancelTask` |
 | POST `/api/tasks/:id/uncancel` | — | `{id, cancelled, waiting}` | `tasks.uncancelTask` |
-| DELETE `/api/tasks/:id` | — | `{id, deleted}` (마감·Guard 기록 있으면 409 `{suggest:"cancel"}`) | `tasks.deleteTask` |
+| DELETE `/api/tasks/:id` | — | `{id, deleted}` · 수집 참조는 우선 409(미완료만 `suggest:"cancel"`), 참조 없으면 종전 마감·Guard 409 유지 | `tasks.deleteTask` |
 | PUT `/api/tasks/:id/rate` | `{date, rate}` | `{id, date, rate}` | `tasks.setRate` |
 | GET `/api/periods` | — | 카드 rows(달성률·경과일 파생) | `periods.listPeriods` |
 | POST `/api/periods` | `{title, start_date, end_date, color, goals?}` | `{id}` (201) | `periods.createPeriod` |
@@ -123,7 +123,7 @@
 
 ### tasks.ts — task 생성·미루기·완료·Works
 - `createTask(env, t, {title?, period_id?, date?})` → `{id, title, waiting}`
-- `getTask(env, t, id)` → stats + `{wait_age, entries, extensions}`
+- `getTask(env, t, id)` → stats + `{collected_ref:boolean, wait_age, entries, extensions}` · 원장의 `task_id` 참조 존재를 상태와 무관하게 조회 시 계산
 - `updateTaskMeta(env, id, {title?, period_id?})` → `{id, title, period_id}`
 - `deferTask(env, t, id, from, to, rate?, reason?)` → `{id, from, to, reassigned, rate, reason?}` · **순서 stSetRate→stMarkDeferred→stInsertEntry→stSetDeferReason(도착지)**, 마감된 날은 재배정(insert-only, rate 무시). rate는 화면 입력에서 제거(2단계)되고 사유가 대신 저장됨
 - `scheduleTask(env, t, id, date)` → `{id, date}` · 대기→확정
@@ -131,7 +131,7 @@
 - `completeTask(env, t, id)` → `{id, finished_on, planned_on, rate_applied}` · live 항목 rate 100(마감된 날은 안 건드림)
 - `cancelTask(env, t, id, reason?)` → `{id, cancelled_at, cancelled_on, kept_dates, cancel_reason}` · 열린 날 예정만 비우고 마감된 날 항목은 보존(0008). state='cancelled'. 사유는 append-only(0009) — 500자 제한, 빈값 정규화
 - `uncancelTask(env, t, id)` → `{id, cancelled:false, waiting}` · 예정 복구 없이 대기로 복귀
-- `deleteTask(env, id)` → `{id, deleted}` · 마감·Guard 기록 있으면 409 `{suggest:"cancel"}`(사유 날짜로), 삭제 순서 연장이력→항목→task · ⚠️ **수집에서 온 할 일은 `collected_items.task_id` FK 로 409**(일반 문구 · `suggest` 없음 — T-87 실측)
+- `deleteTask(env, id)` → `{id, deleted}` · 수집 참조는 마감·Guard보다 먼저 409 「수집한 과제는 기록 연결 때문에 삭제할 수 없어요.」와 상태별 안내(미완료만 `suggest:"cancel"` · 완료/취소에는 없음). FK·원장 연결 보존. 참조 없으면 종전 마감·Guard 409 `{suggest:"cancel"}` 유지, 삭제 순서 연장이력→항목→task
 - `setRate(env, id, date, rate)` → `{id, date, rate}`
 - `segment(env, t, name)` → Works 세그먼트 rows
 
@@ -317,7 +317,7 @@
 **일정(event)** — `eventGet(env, id)` · `eventsAt(env, date)` · `eventsRange(env, start, end)` · `stInsertEvent(env, id, title, date, time, periodId, note, now)` · `stUpdateEvent(...)` · `stDeleteEvent(env, id)`
 **기간** — `periodCards(env)`(+달성률 뷰) · `getPeriod(env, id)` · `stInsertPeriod(env, p)` · `stUpdatePeriod(env, p)`
 **K. 일기 목록** — `diaryList(env, before, limit)`
-**엔티티 단건** — `taskStats(env, id)` · `taskEntries(env, id)`(+`day_status`) · `taskEntryAt(env, id, date)` · `waitExtensions(env, id)`
+**엔티티 단건** — `taskStats(env, id)` · `collectedTaskRef(env, id)`(상태 필터 없이 원장 `task_id` 참조 단건 확인) · `taskEntries(env, id)`(+`day_status`) · `taskEntryAt(env, id, date)` · `waitExtensions(env, id)`
 **삭제 가드/실행** — `closedEntryDates(env, taskId)`(막는 날짜 이름) · `guardEventCount(env, taskId)` · `stDeleteExtensions` · `stDeleteEntries` · `stDeleteTask(env, id)` · `stDeletePeriod(env, id)`
 **Me** — `meAll(env)` · `meGet(env, field)` · `stMeHistory(env, field, oldV, newV, source, now, reason?)` · `stMeUpsert(env, field, value, now)` · `meHistory(env, limit)`
 **collected_items(0018 · 0024 · 0025)** — ⚠️ `0026`은 스키마가 아니라 **이 원장에 이어진 `events`·`tasks` 제목의 일회 소급**이다(T-86 ④ · `summary`는 안 건드린다) · `collectedByUid(env, uid)`(UNIQUE가 diff 기준이자 멱등 키) · `collectedGet(env, id)` · `collectedList(env, limit)`(원장 전체 덤프 · 모든 state) · `collectedNewAll(env)`(**창 없이 `new` 전부** · `starts_at NOT NULL` · T-75 — ⚠️ 이름을 `collectedList`와 가른 이유는 **뜻이 다르기 때문**이다) · `collectedPending(env, from, to)`(`state='new'` + 창 안 + `starts_at NOT NULL`) · `stInsertCollected` · `stTouchCollected`(**`state`는 안 건드린다** · `categories`는 매번 갱신한다 — **옛 행이 다음 수집에서 채워지는 경로다**) · `stAcceptCollected(env, id, eventId, taskId)`(★ **수락의 산물 둘을 한 UPDATE로 잇는다**(0025 · T-78) — 나눠 쓰면 *"둘 중 하나만 이어진 행"*이 생긴다 · `AND state <> 'accepted'`로 멱등) · `stDismissCollected` · `collectedCountsByState(env)`(T-43 · **없는 state는 행이 안 나온다** — 0은 세는 쪽이 채운다)

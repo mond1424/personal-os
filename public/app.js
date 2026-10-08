@@ -2658,6 +2658,13 @@ async function openTask(id) {
     $("#tk-complete").style.display = cancelled ? "none" : "";
     $("#tk-cancel").style.display = (fin || cancelled) ? "none" : "";
     $("#tk-uncancel").style.display = cancelled ? "" : "none";
+    $("#tk-delete").style.display = t.collected_ref ? "none" : "";
+    const deleteNote = $("#tk-delete-note");
+    deleteNote.style.display = t.collected_ref ? "" : "none";
+    deleteNote.textContent = t.collected_ref
+      ? "수집한 과제는 기록 연결 때문에 삭제할 수 없어요. "
+        + (fin ? "완료 기록으로 남겨요." : cancelled ? "취소 기록으로 남겨요." : "목록에서 빼려면 취소를 눌러 주세요.")
+      : "";
     ["tk-defer", "tk-complete"].forEach((i) => {
       const b = $("#" + i);
       b.disabled = fin;
@@ -2685,7 +2692,7 @@ function bindTaskSheet() {
   $("#tk-cancel").onclick = () => {
     const t = S.sheetTask;
     if (!t) return;
-    run(async () => {
+    return run(async () => {
       // kept: 마감된 날 항목 수 — 무엇이 남는지 알아야 안심하고 누른다 (day_status는 getTask에 실려온다).
       const kept = t.entries.filter((e) => e.day_status === "closed").length;
       // 사유는 append-only(0009) — 그래서 placeholder에 '나중에 고칠 수 없다'를 밝힌다.
@@ -2713,7 +2720,7 @@ function bindTaskSheet() {
   $("#tk-delete").onclick = () => {
     const t = S.sheetTask;
     if (!t) return;
-    run(async () => {
+    return run(async () => {
       const n = t.defer_count || 0;
       const body = n > 0
         ? `“${esc(t.title)}”은(는) 이미 <b>${n}번 미룬</b> 일이에요.<br>삭제하면 기록도 미룬 흔적도 전부 사라져요 — 남기려면 '취소'를 쓰세요.`
@@ -2727,7 +2734,7 @@ function bindTaskSheet() {
         syncAll();
         if ($("#phone").dataset.tab === "cal") renderCalendar();
       } catch (e) {
-        // 마감·Guard 기록이 막으면(409 suggest:"cancel") 삭제 대신 취소를 원탭으로 권한다.
+        // 옛 화면의 수집 참조 또는 마감·Guard 거절: 서버가 실행 가능한 취소를 제안할 때만 권한다.
         if (e && e.suggest === "cancel") {
           if (await confirmAsk("삭제할 수 없어요", esc(e.message), "대신 취소하기") === "ok") await execCancel(t);
         } else throw e;

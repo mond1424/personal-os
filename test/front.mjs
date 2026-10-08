@@ -5406,6 +5406,83 @@ try {
     + 'if (window.__t94.prev === undefined) delete globalThis.Capacitor; else globalThis.Capacitor = window.__t94.prev;');
 }
 
+/* ── T-95 · task 시트의 삭제 대신 기록 보존 안내 ──────────────────
+ * 상태별 수집 응답은 smoke의 실제 HTTP 검사와 짝이다. 여기서는 화면 전환을 분리해 잰다.
+ * 실제 손 task GET도 사용해 서버가 필드를 누락하면 화면 픽스처만 초록이 되지 않게 한다.
+ * 확인·취소·삭제 핸들러가 돌려주는 프라미스로 완료를 기다린다(함정 14).
+ */
+console.log("\n[T-95] 수집 task — 상태별 보존 안내·옛 화면 오류");
+const t95Hand = await capped("T-95 실제 손 task 생성", ev('Api.createTask({title:"T-95 같은 제목"})'));
+const t95RealTask = await capped("T-95 실제 GET 필드", ev('Api.task(' + JSON.stringify(t95Hand?.id ?? "") + ')'));
+await capped("T-95 실제 손 task 시트", w.openTask(t95Hand?.id ?? ""));
+ok("1 ★ 실제 API collected_ref=false · 손 task는 삭제 보임·보존 설명 없음",
+  t95RealTask?.collected_ref === false && $("#tk-delete")?.style.display !== "none"
+  && $("#tk-delete-note")?.style.display === "none" && txt("#tk-delete-note") === "");
+ev('window.__t95 = { task:Api.task, fetch:window.fetch, confirm:confirmAsk, sync:syncAll,'
+  + 'calendar:renderCalendar, cancel:Api.cancelTask, calls:[], cancelled:[] };'
+  + 'syncAll = () => {}; renderCalendar = () => {};'
+  + 'confirmAsk = async (title,body,yes) => { window.__t95.calls.push({title,body,yes}); return "ok"; };'
+  + 'Api.cancelTask = async (...args) => { window.__t95.cancelled.push(args); return window.__t95.cancel(...args); };');
+const t95Open = async (state, collectedRef) => {
+  const task = { ...t95RealTask, state, collected_ref: collectedRef,
+    finished_on: state === "finished" ? ev("S.today.date") : null,
+    cancelled_on: state === "cancelled" ? ev("S.today.date") : null };
+  ev('Api.task = async () => (' + JSON.stringify(task) + ');');
+  await capped("T-95 " + state + " 시트", w.openTask(t95Hand?.id ?? ""));
+};
+const t95Note = () => txt("#tk-delete-note");
+const t95Base = "수집한 과제는 기록 연결 때문에 삭제할 수 없어요.";
+try {
+  await t95Open("not_finished", true);
+  ok("2 ★ 미완료 수집 task — 삭제 숨김·보존 이유와 취소 안내·기존 취소 버튼",
+    $("#tk-delete")?.style.display === "none" && $("#tk-delete-note")?.style.display !== "none"
+    && t95Note() === t95Base + " 목록에서 빼려면 취소를 눌러 주세요."
+    && $("#tk-cancel")?.style.display !== "none");
+  await t95Open("not_finished", false);
+  ok("3 ★ 수집→손 task 전환 — 삭제 복귀·안내 숨김·이전 설명 비움",
+    $("#tk-delete")?.style.display !== "none" && $("#tk-delete-note")?.style.display === "none" && t95Note() === "");
+  await t95Open("cancelled", true);
+  ok("4 ★ 손→취소된 수집 task — 삭제 숨김·취소 기록 설명·취소 권유 없음·해제 유지",
+    $("#tk-delete")?.style.display === "none" && $("#tk-delete-note")?.style.display !== "none"
+    && t95Note() === t95Base + " 취소 기록으로 남겨요."
+    && $("#tk-cancel")?.style.display === "none" && $("#tk-uncancel")?.style.display !== "none");
+  await t95Open("finished", true);
+  ok("5 ★ 완료 수집 task — 삭제 숨김·완료 기록 설명·취소 권유 없음",
+    $("#tk-delete")?.style.display === "none" && $("#tk-delete-note")?.style.display !== "none"
+    && t95Note() === t95Base + " 완료 기록으로 남겨요." && $("#tk-cancel")?.style.display === "none");
+
+  // 필드가 없는 옛 화면을 재현한다. HTTP 409를 Api._req의 실제 오류 번역에 통과시킨다.
+  const t95OldDelete = async (state, suggest) => {
+    await t95Open(state, undefined);
+    const error = { error: t95Base + (state === "not_finished" ? " 목록에서 빼려면 취소를 눌러 주세요."
+      : state === "finished" ? " 완료 기록으로 남겨요." : " 취소 기록으로 남겨요."), ...(suggest ? { suggest } : {}) };
+    ev('window.__t95.calls = []; window.__t95.cancelled = [];'
+      + 'window.fetch = (url,init) => init?.method === "DELETE" && String(url).endsWith(' + JSON.stringify("/tasks/" + t95Hand?.id) + ')'
+      + '? Promise.resolve({ok:false,status:409,json:async () => (' + JSON.stringify(error) + ')}) : window.__t95.fetch(url,init);');
+    await capped("T-95 옛 화면 삭제 " + state, $("#tk-delete")?.onclick?.());
+    return { calls: ev("window.__t95.calls"), cancelled: ev("window.__t95.cancelled"), toast: txt("#toast") };
+  };
+  const t95OldOpen = await t95OldDelete("not_finished", "cancel");
+  const t95AfterCancel = await capped("T-95 기존 취소 API 결과 조회", ev('window.__t95.task(' + JSON.stringify(t95Hand?.id ?? "") + ')'));
+  ok("6 ★ 옛 화면 미완료 409 — 이유 있는 대신 취소 확인·기존 API 한 번·삭제 성공으로 덮지 않음",
+    t95OldOpen.calls.length === 2 && t95OldOpen.calls[1]?.yes === "대신 취소하기"
+    && t95OldOpen.calls[1]?.body.includes(t95Base) && t95OldOpen.cancelled.length === 1
+    && t95OldOpen.cancelled[0]?.[0] === t95Hand?.id && t95AfterCancel?.state === "cancelled"
+    && !t95OldOpen.toast.includes("삭제했어요"));
+  const t95OldDone = await t95OldDelete("finished");
+  ok("7 옛 화면 완료 409 — 취소 제안/호출 없음·보존 오류 표시·삭제 성공 아님",
+    t95OldDone.calls.length === 1 && t95OldDone.cancelled.length === 0
+    && t95OldDone.toast === t95Base + " 완료 기록으로 남겨요.");
+  const t95OldCancelled = await t95OldDelete("cancelled");
+  ok("8 옛 화면 취소 409 — 취소 제안/호출 없음·보존 오류 표시·삭제 성공 아님",
+    t95OldCancelled.calls.length === 1 && t95OldCancelled.cancelled.length === 0
+    && t95OldCancelled.toast === t95Base + " 취소 기록으로 남겨요.");
+  ev('window.fetch = window.__t95.fetch;');
+} finally {
+  ev('Api.task = window.__t95.task; window.fetch = window.__t95.fetch; confirmAsk = window.__t95.confirm;'
+    + 'syncAll = window.__t95.sync; renderCalendar = window.__t95.calendar; Api.cancelTask = window.__t95.cancel; closeAll();');
+}
+
 console.log("\n[부팅 · 연결 실패 복구]");
 ok("로드 후 부팅 오버레이 닫힘", !$("#boot").classList.contains("on"));
 
