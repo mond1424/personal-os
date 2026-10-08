@@ -2,6 +2,21 @@
 
 ## 저장소
 
+- **2026-10-08 · T-94 — 구현 완료·설계층 최종 검토 대기 (감독층 · codex)** — 과제 재촉 설정 두 행·설명·편집 경로,
+  재촉 전용 모듈·DB 질의·계산·응답 신호와 웹 sync 처리를 제거했다. 옛 설정 키의 GET은 제외하고 PUT은 종료 안내와 410으로 거절한다.
+  기존 settings 값과 수집·task·event·예정·완료 기록은 보존하며, Guard의 `nudges: []` 호환 계약·보호 예약·wake·부팅 동기화는 유지한다.
+  신규 수락 종료는 T-97의 범위다. 추가 권한 환경에서 리포 `Set-Location` 후 `npm.cmd run verify`를 실행해
+  **typecheck 통과 · smoke 537 → 536 · front 526 → 529 · 실패 0 · schema 일치(마이그레이션 26개 · 객체 71개) · verify exit 0**을 확인했다.
+  마이그레이션 25.7초·front 본문 159.9초, 기존 front 간헐 hang은 이번 실행에서 관측하지 않았다.
+  smoke는 기존 T-87/T-88 20개를 새 종료 검사 16개와 보존 검사 3개로 교체해 −1, front는 신호 검사 2개를 종료/보존 검사 5개로 교체해 +3이다.
+  설정 행 20 → 18은 검사 건수 변화가 아니다. 미사용 모듈 복원 대조는 535·실패 1·exit 1,
+  기존 계산 복원 대조는 532·실패 4·exit 1로 각각 총계 536과 예상 실패를 확인했고 변이 복원·DB/Guard SHA256 동일을 확인했다.
+  [T-94 보고](docs/tickets/T-94-retire-pos-assignment-nudges.md#보고-담당이-채운다)에 최초 typecheck 실패·수정, 검사 내역·명령·원출력을 남겼다.
+  API 지도 갱신, 스키마 변경이 없어 재덤프 없음. 마이그레이션·APK 변경·배포·폰 실측 없음. 설계와 어긋난 점·막힌 것 없음.
+  보고 쓰기는 자동 승인 검토 사용량 한도로 한 번 미실행됐으며 사용자 재개 지시 후 기록했다.
+  사용자가 보고·기준선 기록과 커밋을 지시했다. WIP는 커밋 직전 비우고 `%SystemDrive%/`는 제외해 보존한다.
+  T-95는 T-94의 코드 커밋·설계 검토·종료 후에 착수한다. 라이브 종료·폰 알림 상태는 이 검증으로 확인하지 않았다.
+
 - **2026-10-08 · 설계층 발행분 7개·T-88 종결 후속 반영 (감독층 · codex)** — `AGENTS.md`·`APP-ADR.md`·T-88·T-94~T-97의 발행분을 반영한다. **T-88은 ① 서버 보정 구현 완료·② 기기 구현 취소로 닫혔다.** 과제 알림은 Tasks.org(uclass-tasks)가 맡으며 pOS의 신규 수락은 종료하고 기존 기록은 보존한다는 사용자 결정은 ADR-050 개정에 있다. **T-94·T-95는 사용자 승인·구현 대기, T-96은 취소·미착수 종결, T-97은 발행·대기**이며, 후속 구현은 T-94 → T-95 → T-97 순서로 앞 티켓의 코드 커밋·설계 검토·종료 후 진행한다. 현행 배포 후 T-88 ② 착수/대기 안내를 해제하고 과거 구현·배포·검사 이력은 보존한다. T-88 ①-d 첫째의 옛 일정 시각은 고치지 않으며 마감 불일치 해결로 세지 않는다. 둘째의 삭제 안내는 T-95로 넘긴다. 이 발행 작업에서 후속 코드를 구현하지 않았으므로 재촉 설정·계산 및 신규 수락 경로의 실제 종료로 읽지 않는다. APK 구현·빌드·설치·폰 알림 실측은 하지 않았다. 시작 전 확인은 `통과 · AGENTS.md 11188 B`, `git diff --check` 통과. 추가 권한 환경에서 `Set-Location -LiteralPath 'C:\dev\personal-os-worker\worker'` 후 `npm.cmd run verify`를 실행해 typecheck 통과 · smoke 537 → 537 · front 526 → 526 · 실패 0 · schema 일치(마이그레이션 26개 · 객체 71개) · verify exit 0을 확인했다. 마이그레이션 17.0초·front 본문 157.4초이며 원출력은 OS 임시 폴더의 `personal-os-design-docs-20261008-verify.log`에 있다. 기존 front 간헐 hang은 이번 실행에서 관측하지 않았다. 설계와 어긋난 점·막힌 것 없음. API 구조·마이그레이션 변경이 없어 지도 재생성·스키마 재덤프는 없다. 사용자 지시에 따라 설계층 발행분 7개와 STATE 후속 기록을 커밋·push하며, `%SystemDrive%/`는 제외하고 보존한다. WIP는 작업 중에만 걸고 커밋 직전에 비우며 대기로 다시 걸지 않는다.
 
 - **2026-10-07 · 설계층 문서 발행분 반영** — `AGENTS.md`·`AGENT-CHAIN.md`·`OPERATIONS.md`·`docs/tickets/_TEMPLATE.md`의 변경을 확인했다. 보고 형식에 schema 결과·verify 종료 코드를 추가하고, 티켓 없는 설계층 문서도 감독층이 커밋하는 절차를 명시했다. 시작 전 확인은 `통과 · AGENTS.md 10874 B`, `git diff --check` 통과. 추가 권한 환경에서 `Set-Location`으로 리포를 지정한 뒤 `npm.cmd run verify`를 실행해 typecheck 통과·smoke 537 → 537·front 526 → 526·실패 0·schema 일치(마이그레이션 26개·객체 71개)·verify exit 0을 확인했다. 마이그레이션 20.1초·front 본문 169.3초이며 원출력은 OS 임시 폴더의 `personal-os-design-docs-verify.log`에 있다. 코드·API 구조·마이그레이션 변경이 없어 지도 재생성·스키마 재덤프는 없다. 설계층 발행분 문서 4개와 이 종료 기록을 함께 커밋하며, 사용자가 커밋과 push를 승인했다.
@@ -2682,7 +2697,8 @@ Get-ChildItem migrations\*.sql | Select-Object -Last 1 Name   # 여기서 +1
 - style.css      https://raw.githubusercontent.com/mond1424/personal-os/main/public/style.css
 
 ## 기준선
-typecheck 통과 / **smoke 537** / **front 526** / 실패 0 / schema 일치(마이그레이션 26개 · 객체 71개) / verify exit 0
+typecheck 통과 / **smoke 536** / **front 529** / 실패 0 / schema 일치(마이그레이션 26개 · 객체 71개) / verify exit 0
+**재확인: 2026-10-08 10:48 KST · T-94 · 감독층 codex(GPT)** — 추가 권한 환경에서 전체 verify 실행. typecheck 통과 · smoke 537 → 536 · front 526 → 529 · 실패 0 · schema 일치(마이그레이션 26개 · 객체 71개) · verify exit 0. 재촉 종료 계약으로 검사 교체(smoke −1·front +3), 마이그레이션 25.7초·front 본문 159.9초. 기존 front 간헐 hang은 이번 실행에서 관측하지 않았다. 변이 대조는 실패 수를 포함해 총계 536을 유지했으며 기준선에 합산하지 않는다.
 **재확인: 2026-10-08 09:13 KST · 설계층 발행분 7개·T-88 STATE 후속 · 감독층 codex(GPT)** — 추가 권한 환경에서 전체 verify 실행. typecheck 통과 · smoke 537 → 537 · front 526 → 526 · 실패 0 · schema 일치(마이그레이션 26개 · 객체 71개) · verify exit 0. 마이그레이션 17.0초·front 본문 157.4초. 문서 발행·STATE 후속만 반영했으며 기존 front 간헐 hang은 이번 실행에서 관측하지 않았다.
 **재확인: 2026-10-07 19:49 KST · 설계층 문서 발행분 반영 · 감독층 codex(GPT)** — 추가 권한 환경에서 전체 verify 실행. typecheck 통과·smoke 537 → 537·front 526 → 526·실패 0·schema 일치(마이그레이션 26개·객체 71개)·verify exit 0. 마이그레이션 20.1초·front 본문 169.3초. 문서 변경만 반영했으며 기존 front 간헐 hang은 이번 실행에서 관측하지 않았다.
 **재확인: 2026-10-07 19:01 KST · T-91 · 감독층 codex(GPT)** — 추가 권한 환경에서 실제 시계로 전체 verify를 실행했다. typecheck 통과·smoke 537 → 537·front 526 → 526·실패 0·schema 일치·exit 0. 마이그레이션 17.6초·front 본문 158.8초. 두 헬스 실패 경로는 별도 사본 대조로 각각 약 30초·진단 문구·exit 1을 확인했으며, 검사 본문을 실행하지 않은 실패 대조를 기준선 숫자로 세지 않는다(T-91 보고).

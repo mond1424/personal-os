@@ -802,7 +802,7 @@ function renderCollected(rows) {
     // ★ **과목은 얹기만 한다.** 이름은 서버가 준 `title` 그대로다 —
     //   교수가 지은 이름이 틀렸어도 고치지 않는다(T-74 §금지). 서버가 떼는 것은 Moodle 의 꼬리 "기한" 뿐이다(T-86).
     // ★★ **과목도 서버가 준 `course` 그대로다** (T-87 ①). T-74 땐 여기서 `categories`를 잘랐는데,
-    //   과제 재촉 알림도 과목을 말하게 되어 **규칙이 서버(`lib/course.ts`) 하나로 올라갔다** —
+    //   규칙은 서버(`lib/course.ts`) 한 곳에 유지한다(T-94) —
     //   ⚠️ 여기서 다시 자르면 두 벌이 된다. `categories`(원문)는 응답에 그대로 있지만 화면은 안 쓴다.
     const course = r.course || "";
     // ★ 버튼 둘을 `.ev-act`로 감싼다 (T-80 ③) — 과거 시각이 지난 것이면 **그 칸만** 세 갈래로 바뀐다.
@@ -3271,9 +3271,6 @@ async function renderMe() {
     //   숫자의 자리는 서버 상수 하나뿐이고, 안 적힌 값은 "미설정"으로 말한다.
     ["아침 — 이동 시간", `${S.settings.wake_commute_min ? S.settings.wake_commute_min + "분" : "미설정"} ›`, "wake_commute_min"],
     ["아침 — 준비 시간", `${S.settings.wake_prep_min ? S.settings.wake_prep_min + "분" : "미설정"} ›`, "wake_prep_min"],
-    // ★ 과제 재촉의 두 시각 (ADR-050 ② · T-87). 위와 같다 — **기본값을 여기 적지 않는다**(서버 상수 하나).
-    ["과제 재촉 — 전날 저녁", `${S.settings.nudge_evening || "미설정"} ›`, "nudge_evening"],
-    ["과제 재촉 — 당일 아침", `${S.settings.nudge_morning || "미설정"} ›`, "nudge_morning"],
     ["Feelings 필드 구성", `${ff} ›`, "feelings_fields"],
     ["테마", `${theme} ›`, "theme"],
     ["시간표 — 붙여넣기", `${S.tt && S.tt.rules.length ? S.tt.rules.length + "칸" : "없음"} ›`, "timetable"],
@@ -3950,8 +3947,6 @@ const SET_DESC = {
   ai_provider: "어느 회사의 모델을 쓸지 골라요. 바꾸면 모델 후보도 그 회사 것으로 바뀌어요.",
   wake_commute_min: "집에서 첫 약속 장소까지 걸리는 시간(분)이에요. 준비 시간과 함께 약속 시각에서 빼서 기상 시각을 잡고, 밤에 Guard가 '지금 자면 몇 시간'을 그 기상 시각까지로 말해요. 학교에서 자고 가는 날처럼 이동이 없으면 0.",
   wake_prep_min: "일어나서 나가기까지 걸리는 시간(분)이에요. 이동 시간과 함께 기상 시각을 정해요. 비워 두면 서버 기본값을 써요.",
-  nudge_evening: "수락한 과제의 마감 전날, 이 시각에 재촉해요(HH:MM — 예: 22:30). 하루 경계 전의 새벽 마감은 그 전날의 일로 셉니다. 할 일을 완료하면 남은 재촉은 오지 않아요. 비워 두면 서버 기본값을 써요.",
-  nudge_morning: "수락한 과제의 마감 당일, 이 시각에 재촉해요(HH:MM — 예: 08:30). 마감보다 늦은 시각이면 그날은 건너뛰어요. 비워 두면 서버 기본값을 써요.",
   ai_api_key: "본인 계정의 AI 키를 넣으면 이 앱이 그 키로 모델을 불러요. 서버에 저장되고, 화면에는 다시 보이지 않아요(설정 여부만 표시). 비워 두면 서버에 등록된 키를 써요.",
 };
 let stCtx = null;
@@ -3961,8 +3956,7 @@ function openSetting(key) {
     { day_boundary: "하루 경계 시각", utc_offset: "표준시 오프셋", feelings_fields: "Feelings 필드",
       model_low: "모델 — Low", model_high: "모델 — High", api_token: "앱 접근 토큰",
       ai_provider: "AI 제공자", ai_api_key: "AI 키", theme: "테마",
-      wake_commute_min: "아침 — 이동 시간", wake_prep_min: "아침 — 준비 시간",
-      nudge_evening: "과제 재촉 — 전날 저녁", nudge_morning: "과제 재촉 — 당일 아침" }[key] || key;
+      wake_commute_min: "아침 — 이동 시간", wake_prep_min: "아침 — 준비 시간" }[key] || key;
   $("#st-desc").textContent = SET_DESC[key] || "";
   const opts = key === "theme" ? ["auto", "light", "dark"]
     : key === "ai_provider" ? Object.keys(S.providers || {})

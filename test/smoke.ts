@@ -4294,294 +4294,162 @@ ok("3 ★ 같은 task 를 가리키는 수집 행이 둘이어도 entries 는 �
     ?.collected_event_id === t84Acc.event_id,
   `그 task 의 줄 수=${t84DupN}`);
 
-/* ── T-87 · 과제 재촉 ① 서버 — 마감에서 재촉 시각을 계산해 싣는다 (ADR-050) ─────────────
- *
- * ★★ **재촉 시각은 저장하지 않는다** — 마감(일정의 시각)과 설정에서 요청마다 계산한다(원칙 1).
- * ⚠️ **픽스처는 전부 `D` 기준 상대다**(함정 12). 시각(`23:59` 따위)은 **마감의 하루 안 위치**이지 날짜가 아니다.
- * ⚠️ **이 블록은 파일 끝에 있다** — 수락이 할 일·일정을 만들어 앞의 개수 검사들을 흔들지 않게.
- * ⚠️ **저녁·아침 기본값을 검사에 적지 않는다**(함정 15 · 티켓 11 ⚠️). 기본값에 기대는 검사는
- *    *"그날 어딘가에 하나"* 만 보고, 시각을 보는 검사(3 · 11)는 **설정을 직접 넣고** 본다.
- * ★ 기준점은 **응답이 준 점**이다(T-26) — 2는 1의 응답에서 시계를 고른다. 역산식을 여기 다시 짜지 않는다.
- * ⚠️ DB 는 앞의 검사들과 공유한다 — 재촉 묶음은 **task_id 로만** 집는다(남의 과제가 섞여 있다).
+/* ── T-94 · 과제 재촉 종료 — 설정·예약·응답 신호를 남기지 않는다 ───────────────────
+ * 실제 수락 과제를 만든다. 빈 DB의 빈 배열로 종료를 검증하지 않는다.
+ * T-87의 과목명·기기 소비 키·guard_events 불변 검사는 유지한다.
  */
-console.log("\n[T-87] 과제 재촉 — 마감에서 재촉 시각을 계산해 싣는다");
-const T87_SFX = isoNow(0, t0.offsetMin).slice(19);                       // '+09:00'
-const t87Ms = (date: string, hm: string) => Date.parse(`${date}T${hm}:00${T87_SFX}`);
-const t87Day = (ms: number) => isoNow(ms, t0.offsetMin).slice(0, 10);     // 로컬 달력 날짜
-const t87GuardN = () => (raw.prepare("SELECT COUNT(*) AS n FROM guard_events").get() as any).n as number;
-const t87GuardBefore = t87GuardN();
-
-/** 수집 원장에 넣고 [추가] — 실제 수락 경로를 탄다(event + task + 잇는 칸). */
-const t87Accept = async (uid: string, summary: string, date: string, hm: string, categories: string | null = null) => {
-  putCollected(uid, summary, `${date}T${hm}:00${T87_SFX}`);
-  if (categories) raw.prepare("UPDATE collected_items SET categories=? WHERE uid=?").run(categories, uid);
-  const id = (raw.prepare("SELECT id AS i FROM collected_items WHERE uid=?").get(uid) as any)?.i ?? "";
-  return (await api("POST", `/api/collected/${id}/accept`)).json;
+console.log("\n[T-94] 과제 재촉 종료 — 기록·보호 예약·wake는 유지");
+const T94_MSG = "과제 알림은 Tasks.org에서 관리해요. pOS 재촉 설정은 종료됐어요.";
+const T94_SFX = isoNow(0, t0.offsetMin).slice(19);
+const t94NoSignal = (r: any) => !!r && !Object.hasOwn(r, "nudge_changed");
+const t94RawSetting = (key: string) => (raw.prepare("SELECT value FROM settings WHERE key=?").get(key) as any)?.value;
+const t94SeedSettings = (evening: string, morning: string) => {
+  for (const [key, value] of [["nudge_evening", evening], ["nudge_morning", morning]] as const)
+    raw.prepare("INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(key, value);
 };
-/** 시계 없이 부르면 실제 라우트 · 시계를 주면 그 시각을 주입한 같은 함수(T-26의 `planAt`과 같은 모양). */
-const t87Sched = async (nowMs?: number) => nowMs === undefined
-  ? (await api("GET", "/api/guard/schedule")).json
-  : await guard.schedule(env, {
-    ...t0, now: isoNow(nowMs, t0.offsetMin), d: attributionDate(nowMs, t0.offsetMin, t0.boundary),
-  });
-const t87Bundles = (sched: any, taskId: string | null) =>
-  ((sched?.nudges ?? []) as any[]).filter((b) => ((b?.items ?? []) as any[]).some((i) => i?.task_id === taskId));
-const t87Ats = (sched: any, taskId: string | null) =>
-  t87Bundles(sched, taskId).map((b) => Date.parse(b.at)).sort((a, b) => a - b);
-const t87Show = (ats: number[]) => JSON.stringify(ats.map((ms) => isoNow(ms, t0.offsetMin).slice(5, 16)));
-const t87SetOff = () => raw.prepare("DELETE FROM settings WHERE key IN ('nudge_evening','nudge_morning')").run();
+const t94GuardN = () => (raw.prepare("SELECT COUNT(*) AS n FROM guard_events").get() as any).n;
+const t94GuardBefore = t94GuardN();
+t94SeedSettings("19:40", "07:20");
+raw.prepare("UPDATE settings SET value=? WHERE key='ai_api_key'").run("sk-t94-fake-key");
+const t94Settings = (await api("GET", "/api/settings")).json as any[];
+ok("1 ★ 옛 재촉 설정은 D1에 있어도 GET에 없고 일반 설정·개인 키 마스킹은 남는다",
+  !t94Settings.some((r) => ["nudge_evening", "nudge_morning"].includes(r.key))
+  && t94Settings.some((r) => r.key === "day_boundary" && r.value === t0.boundary)
+  && t94Settings.some((r) => r.key === "ai_api_key" && r.value === "설정됨"));
 
-/* 1 ★ 본체 — 수락한 과제(미래 마감)에 점 넷이 실린다.
- *   ⚠️ 저녁·아침은 **날만** 본다(기본값을 안 적는다). 시각까지 보는 것은 11 이다. */
-const T87_A_DATE = addDays(D, 3);
-const t87A = await t87Accept("t87-a", "T-87 본체 과제 기한", T87_A_DATE, "23:59", "전자기및연습1 (2026-20, 45004_01_U)");
-const t87ADue = t87Ms(T87_A_DATE, "23:59");
-const t87S1 = await t87Sched();
-const t87A1 = t87Ats(t87S1, t87A.task_id ?? null);
-const t87AItem = (t87Bundles(t87S1, t87A.task_id ?? null)[0]?.items ?? []).find((i: any) => i?.task_id === t87A.task_id);
-const t87ATitle = (raw.prepare("SELECT title AS t FROM tasks WHERE id=?").get(t87A.task_id ?? null) as any)?.t;
-ok("1 ★ 수락한 과제(미래 마감)에 재촉 점 넷이 실린다 — 전날 · 당일 · 3시간 전 · 1시간 전 · 과목·이름·마감을 싣는다",
-  t87A1.length === 4
-  && t87A1.includes(t87ADue - 3 * HOUR) && t87A1.includes(t87ADue - HOUR)
-  && t87A1.some((ms) => t87Day(ms) === addDays(T87_A_DATE, -1))
-  && t87A1.some((ms) => t87Day(ms) === T87_A_DATE && ms < t87ADue - 3 * HOUR)
-  && t87AItem?.course === "전자기및연습1" && !!t87ATitle && t87AItem?.title === t87ATitle
-  && t87AItem?.due === new Date(t87ADue).toISOString(),
-  `점=${t87Show(t87A1)} item=${JSON.stringify(t87AItem ?? null)} task=${t87ATitle}`);
+const t94Evening = await api("PUT", "/api/settings/nudge_evening", { value: "22:10" });
+ok("2 ★ 전날 저녁 저장은 종료 안내와 410 · 원문 값 보존",
+  t94Evening.status === 410 && t94Evening.json?.error === T94_MSG && t94RawSetting("nudge_evening") === "19:40");
+const t94Morning = await api("PUT", "/api/settings/nudge_morning", { value: "10:50" });
+const t94Malformed = await api("PUT", "/api/settings/nudge_morning", { value: "잘못된 시각" });
+ok("3 ★ 당일 아침 저장은 종료 안내와 410 · 값 형식과 무관하게 종료 · 원문 값 보존",
+  [t94Morning, t94Malformed].every((r) => r.status === 410 && r.json?.error === T94_MSG)
+  && t94RawSetting("nudge_morning") === "07:20");
+const t94Other = await api("PUT", "/api/settings/guard_ai_verify", { value: "on" });
+const t94Invalid = await api("PUT", "/api/settings/guard_ai_verify", { value: "invalid" });
+const t94Unknown = await api("PUT", "/api/settings/t94_unknown", { value: "on" });
+ok("4 일반 설정 저장·형식 거절·화이트리스트는 유지 · 재촉 신호 없음",
+  t94Other.status === 200 && t94Other.json?.value === "on" && t94NoSignal(t94Other.json)
+  && t94RawSetting("guard_ai_verify") === "on" && t94Invalid.status === 400 && t94Unknown.status === 404);
 
-/* 2 ★ 요청 시점에 지난 점은 빠진다 — 시계를 **1의 응답이 준 점** 바로 뒤로 옮긴다. */
-const t87After = async (ms: number) => t87Ats(await t87Sched(ms + 60_000), t87A.task_id ?? null);
-const t87A2a = t87A1.length === 4 ? await t87After(t87A1[0]!) : [];
-const t87A2b = t87A1.length === 4 ? await t87After(t87A1[2]!) : [];
-ok("2 ★ 요청 시점에 이미 지난 점은 빠진다 (첫 점 뒤 → 셋 · 셋째 점 뒤 → 하나)",
-  t87A1.length === 4
-  && JSON.stringify(t87A2a) === JSON.stringify(t87A1.slice(1))
-  && JSON.stringify(t87A2b) === JSON.stringify(t87A1.slice(3)),
-  `${t87Show(t87A2a)} / ${t87Show(t87A2b)}`);
+const t94Accept = async (uid: string, summary: string, date: string) => {
+  putCollected(uid, summary, date + "T23:59:00" + T94_SFX);
+  const id = (raw.prepare("SELECT id FROM collected_items WHERE uid=?").get(uid) as any)?.id ?? "";
+  return { id, response: await api("POST", "/api/collected/" + id + "/accept") };
+};
+const T94_A_DATE = addDays(D, 3);
+const t94A = await t94Accept("t94-a", "T-94 보존 과제 기한", T94_A_DATE);
+const t94Acc = t94A.response.json;
+const t94Links = () => raw.prepare("SELECT state,event_id,task_id,summary FROM collected_items WHERE id=?").get(t94A.id) as any;
+const t94Task = () => raw.prepare("SELECT * FROM v_task_stats WHERE id=?").get(t94Acc.task_id ?? "") as any;
+const t94Event = () => raw.prepare("SELECT * FROM events WHERE id=?").get(t94Acc.event_id ?? "") as any;
+ok("5 ★ 수락은 event·task·마감일 예정을 만들고 원문 연결을 보존 · 재촉 신호 없음",
+  t94A.response.status === 200 && !!t94Acc.task_id && !!t94Acc.event_id
+  && t94Task()?.title === "T-94 보존 과제" && t94Event()?.date === T94_A_DATE
+  && t94Event()?.time === "23:59" && t94Acc.scheduled_for === T94_A_DATE
+  && t94Links()?.task_id === t94Acc.task_id && t94Links()?.summary === "T-94 보존 과제 기한"
+  && t94NoSignal(t94Acc));
+const t94Dup = await api("POST", "/api/collected/" + t94A.id + "/accept");
+ok("6 수락 재시도는 기존 연결을 돌려준다 · 재촉 신호 없음",
+  t94Dup.status === 200 && t94Dup.json?.duplicate === true
+  && t94Dup.json?.task_id === t94Acc.task_id && t94Dup.json?.event_id === t94Acc.event_id
+  && t94NoSignal(t94Dup.json));
 
-/* 3 ★ 1시간 안의 두 점은 늦은 하나만.
- *   12:00 마감 · 아침 10:30 → 3시간 전 09:00 · **아침 10:30** · 1시간 전 11:00.
- *   10:30 과 11:00 이 30분 거리라 **10:30 이 빠진다.** ⚠️ 아침을 직접 넣는다(기본값에 기대지 않는다). */
-const T87_C_DATE = addDays(D, 4);
-await api("PUT", "/api/settings/nudge_morning", { value: "10:30" });
-const t87C = await t87Accept("t87-c", "T-87 병합 과제 기한", T87_C_DATE, "12:00");
-const t87C3 = t87Ats(await t87Sched(), t87C.task_id ?? null);
-t87SetOff();
-// ★ **이 줄이 곧 T-88 검사 2 다** — *"1시간 미만이면 늦은 쪽 하나"* (ADR-050 ② 개정). `[T-88]` 블록에 다시 세우지 않았다.
-ok("3 (= T-88 2) ★ 1시간 미만의 두 점은 늦은 하나만 (아침 10:30 이 1시간 전 11:00 에 먹힌다)",
-  t87C3.length === 3
-  && t87C3.includes(t87Ms(T87_C_DATE, "09:00")) && t87C3.includes(t87Ms(T87_C_DATE, "11:00"))
-  && !t87C3.includes(t87Ms(T87_C_DATE, "10:30")),
-  `점=${t87Show(t87C3)}`);
+await api("PUT", "/api/events/" + t94Acc.event_id + "/protect",
+  { protect_from: "-1d 00:00", protect_level: 4 });
+const t94S1 = (await api("GET", "/api/guard/schedule")).json;
+const t94Plan = t94S1?.events?.find((e: any) => e.event_id === t94Acc.event_id);
+ok("7 ★ 실제 수락 과제와 옛 설정이 있어도 nudges는 빈 배열 · 보호 예약·wake는 남는다",
+  Array.isArray(t94S1?.nudges) && t94S1.nudges.length === 0
+  && t94Plan?.fires?.length > 0 && t94Plan?.time === "23:59"
+  && t94S1?.wake?.some((p: any) => p.date === T94_A_DATE)
+  && t94Links()?.state === "accepted" && t94Task()?.state === "not_finished");
+t94SeedSettings("22:10", "10:50");
+const t94S2 = (await api("GET", "/api/guard/schedule")).json;
+ok("8 ★ 보존된 옛 설정값을 바꿔도 예약 없음 · 보호 예약·wake 결과 동일",
+  Array.isArray(t94S2?.nudges) && t94S2.nudges.length === 0
+  && JSON.stringify(t94S2?.events) === JSON.stringify(t94S1?.events)
+  && JSON.stringify(t94S2?.wake) === JSON.stringify(t94S1?.wake)
+  && t94RawSetting("nudge_evening") === "22:10" && t94RawSetting("nudge_morning") === "10:50");
 
-/* 4 ★ 같은 시각의 과제 여럿은 한 묶음이다 — 같은 마감 둘이면 묶음 넷에 둘씩. */
-const T87_X_DATE = addDays(D, 5);
-const t87X = await t87Accept("t87-x", "T-87 묶음 과제 하나 기한", T87_X_DATE, "23:59");
-const t87Y = await t87Accept("t87-y", "T-87 묶음 과제 둘 기한", T87_X_DATE, "23:59");
-const t87S4 = await t87Sched();
-const t87XY = ((t87S4?.nudges ?? []) as any[]).filter((b) =>
-  ((b?.items ?? []) as any[]).some((i) => i?.task_id === t87X.task_id || i?.task_id === t87Y.task_id));
-ok("4 ★ 같은 시각의 과제 여럿은 한 묶음이다 (묶음 넷 · 묶음마다 둘 다)",
-  !!t87X.task_id && !!t87Y.task_id && t87XY.length === 4
-  && t87XY.every((b) => (b.items as any[]).some((i) => i?.task_id === t87X.task_id)
-    && (b.items as any[]).some((i) => i?.task_id === t87Y.task_id)),
-  `묶음=${t87XY.length} ${JSON.stringify(t87XY.map((b) => (b.items as any[]).length))}`);
+const t94Defer = await api("POST", "/api/tasks/" + t94Acc.task_id + "/defer",
+  { from: T94_A_DATE, to: addDays(D, 4) });
+ok("9 미루기는 예정만 옮긴다 · 마감·원장 연결 보존 · 재촉 신호 없음",
+  t94Defer.status === 200 && t94NoSignal(t94Defer.json)
+  && t94Event()?.date === T94_A_DATE && t94Event()?.time === "23:59"
+  && !!raw.prepare("SELECT id FROM schedule_entries WHERE task_id=? AND date=? AND deferred_to IS NULL")
+    .get(t94Acc.task_id, addDays(D, 4)));
+const t94Edit = await api("PATCH", "/api/events/" + t94Acc.event_id, { time: "21:00", title: "T-94 고친 마감" });
+ok("10 수집 일정의 시각·제목 수정은 유지 · 보호·task·원장 연결 보존 · 재촉 신호 없음",
+  t94Edit.status === 200 && t94Edit.json?.time === "21:00" && t94Edit.json?.title === "T-94 고친 마감"
+  && t94Event()?.protect_from === "-1d 00:00" && t94Task()?.title === "T-94 보존 과제"
+  && t94Links()?.event_id === t94Acc.event_id && t94NoSignal(t94Edit.json));
 
-/* 7 ★★ 할 일 예정일을 다른 날로 옮겨도 점은 안 바뀐다 — **마감은 일정의 시각이다.**
- *   ⚠️⚠️ **픽스처는 예정일 ≠ 마감일이어야 한다**(티켓 7 ⚠️⚠️). 수락은 예정을 마감일에 넣으므로(T-80)
- *   그대로 두면 *"예정일로 마감을 잡는"* 구현이 초록이 된다 — 그래서 **옮긴 뒤 갈렸는지부터** 단언한다. */
-const T87_P_DATE = addDays(D, 6);
-const T87_P_MOVED = addDays(D, 8);
-const t87P = await t87Accept("t87-p", "T-87 예정 옮긴 과제 기한", T87_P_DATE, "23:59");
-const t87P7a = t87Ats(await t87Sched(), t87P.task_id ?? null);
-const t87PDefer = (await api("POST", `/api/tasks/${t87P.task_id}/defer`, { from: T87_P_DATE, to: T87_P_MOVED })).json;
-const t87PLive = (raw.prepare("SELECT date FROM schedule_entries WHERE task_id=? AND deferred_to IS NULL")
-  .all(t87P.task_id ?? null) as any[]).map((r) => r.date);
-const t87PEv = (raw.prepare("SELECT date FROM events WHERE id=?").get(t87P.event_id ?? null) as any)?.date;
-const t87S7 = await t87Sched();
-const t87P7b = t87Ats(t87S7, t87P.task_id ?? null);
-const t87PDue = (t87Bundles(t87S7, t87P.task_id ?? null)[0]?.items ?? [])
-  .find((i: any) => i?.task_id === t87P.task_id)?.due;
-ok("7 ★★ 할 일 예정일을 다른 날로 옮겨도 점은 안 바뀐다 (픽스처: 예정일 ≠ 마감일)",
-  JSON.stringify(t87PLive) === JSON.stringify([T87_P_MOVED]) && t87PEv === T87_P_DATE    // ★ 픽스처의 계약
-  && t87P7a.length > 0 && JSON.stringify(t87P7b) === JSON.stringify(t87P7a)
-  && t87PDue === new Date(t87Ms(T87_P_DATE, "23:59")).toISOString(),
-  `예정=${JSON.stringify(t87PLive)} 마감일=${t87PEv} 전=${t87Show(t87P7a)} 후=${t87Show(t87P7b)} due=${t87PDue}`);
+const t94Done = await api("POST", "/api/tasks/" + t94Acc.task_id + "/complete");
+ok("11 ★ 완료는 귀속일·진행률을 확정하고 연결을 보존 · 재촉 신호 없음",
+  t94Done.status === 200 && t94Done.json?.finished_on === D && t94Done.json?.rate_applied === true
+  && t94Task()?.state === "finished" && t94Task()?.finished_on === D
+  && (raw.prepare("SELECT rate FROM schedule_entries WHERE task_id=? AND deferred_to IS NULL")
+    .get(t94Acc.task_id) as any)?.rate === 100
+  && t94Links()?.task_id === t94Acc.task_id && t94NoSignal(t94Done.json));
 
-/* 8 ★ 하루 경계를 넘는 마감(새벽)에서 "전날·당일" 이 귀속일로 센다.
- *   `D+7 02:00` 마감의 귀속일은 `D+6` 이다(경계 ${t0.boundary}). 전날 저녁은 `D+5`, 당일 아침은 `D+6`.
- *   ⚠️ 달력으로 세면 당일 아침(`D+7` 아침)이 마감 **뒤**라 사라지고 전날 저녁이 `D+6` 으로 온다 — `D+5` 에 점이 없다.
- *   ⚠️ 저녁·아침 시각은 안 본다 — 기본값이 경계보다 늦다는 것만 전제한다(아니면 그 점은 다음 달력 날로 간다). */
-const T87_N_DAY = addDays(D, 7);
-const t87N = await t87Accept("t87-n", "T-87 새벽 마감 기한", T87_N_DAY, "02:00");
-const t87NDue = t87Ms(T87_N_DAY, "02:00");
-const t87N8 = t87Ats(await t87Sched(), t87N.task_id ?? null);
-ok("8 ★ 하루 경계를 넘는 마감(새벽 2시)에서 \"전날·당일\" 이 귀속일로 센다",
-  t87N8.some((ms) => t87Day(ms) === addDays(D, 5))
-  && t87N8.some((ms) => t87Day(ms) === addDays(D, 6) && ms < t87NDue - 3 * HOUR)
-  && t87N8.includes(t87NDue - 3 * HOUR) && t87N8.includes(t87NDue - HOUR) && t87N8.length === 4,
-  `점=${t87Show(t87N8)}`);
+const t94B = await t94Accept("t94-b", "T-94 취소 보존 과제", addDays(D, 5));
+const t94BId = t94B.response.json?.task_id ?? "";
+const t94BLinksBefore = raw.prepare("SELECT event_id,task_id FROM collected_items WHERE id=?").get(t94B.id);
+const t94Cancel = await api("POST", "/api/tasks/" + t94BId + "/cancel", { reason: "T-94 시험 사유" });
+ok("12 ★ 취소는 열린 예정만 비우고 task·원장 연결을 보존 · 재촉 신호 없음",
+  t94Cancel.status === 200 && t94Cancel.json?.cancel_reason === "T-94 시험 사유"
+  && (raw.prepare("SELECT state FROM v_task_stats WHERE id=?").get(t94BId) as any)?.state === "cancelled"
+  && (raw.prepare("SELECT COUNT(*) AS n FROM schedule_entries WHERE task_id=?").get(t94BId) as any)?.n === 0
+  && JSON.stringify(raw.prepare("SELECT event_id,task_id FROM collected_items WHERE id=?").get(t94B.id)) === JSON.stringify(t94BLinksBefore)
+  && t94NoSignal(t94Cancel.json));
+const t94Undo = await api("POST", "/api/tasks/" + t94BId + "/uncancel");
+ok("13 ★ 취소 해제는 대기로 돌아가며 예정·원장 연결을 바꾸지 않는다 · 재촉 신호 없음",
+  t94Undo.status === 200 && t94Undo.json?.waiting === true && t94Undo.json?.cancelled === false
+  && (raw.prepare("SELECT state FROM v_task_stats WHERE id=?").get(t94BId) as any)?.state === "not_finished"
+  && (raw.prepare("SELECT COUNT(*) AS n FROM schedule_entries WHERE task_id=?").get(t94BId) as any)?.n === 0
+  && JSON.stringify(raw.prepare("SELECT event_id,task_id FROM collected_items WHERE id=?").get(t94B.id)) === JSON.stringify(t94BLinksBefore)
+  && t94NoSignal(t94Undo.json));
 
-/* 9 ★ 손으로 만든 할 일에는 점이 없다 (ADR-050 ① — 마감이 없다). 예정일을 마감 후보로 읽으면 여기서 죽는다. */
-const t87H = (await api("POST", "/api/tasks", { title: "T-87 손으로 만든 할 일", date: addDays(D, 3) })).json;
-ok("9 ★ 손으로 만든 할 일에는 점이 없다",
-  !!t87H.id && t87Bundles(await t87Sched(), t87H.id).length === 0, `task=${t87H.id}`);
+const t94Hand = (await api("POST", "/api/events", { title: "T-94 손 일정", date: addDays(D, 6), time: "15:00" })).json;
+const t94HandEdit = await api("PATCH", "/api/events/" + t94Hand.id, { time: "16:00" });
+const t94HandTask = (await api("POST", "/api/tasks", { title: "T-94 손 할 일" })).json;
+const t94HandDone = await api("POST", "/api/tasks/" + t94HandTask.id + "/complete");
+ok("14 일반 일정 수정·손 할 일 완료는 유지 · false 값도 포함해 재촉 신호 없음",
+  t94HandEdit.status === 200 && t94HandEdit.json?.time === "16:00" && t94NoSignal(t94HandEdit.json)
+  && t94HandDone.status === 200 && t94HandDone.json?.finished_on === D && t94NoSignal(t94HandDone.json));
 
-/* 11 ★ 설정의 저녁·아침 시각을 바꾸면 점이 따라 바뀐다 — **두 번 바꿔** 두 번 따라오는지 본다.
- *   ⚠️ 기본값을 안 적는다(함정 15). 넣는 값은 검사가 지은 것이다. */
-const T87_S_DATE = addDays(D, 9);
-const t87S = await t87Accept("t87-s", "T-87 설정 따라가는 과제 기한", T87_S_DATE, "23:59");
-await api("PUT", "/api/settings/nudge_evening", { value: "19:40" });
-await api("PUT", "/api/settings/nudge_morning", { value: "07:20" });
-const t87S11a = t87Ats(await t87Sched(), t87S.task_id ?? null);
-await api("PUT", "/api/settings/nudge_evening", { value: "22:10" });
-await api("PUT", "/api/settings/nudge_morning", { value: "10:50" });
-const t87S11b = t87Ats(await t87Sched(), t87S.task_id ?? null);
-t87SetOff();
-ok("11 ★ 설정의 저녁·아침 시각을 바꾸면 점이 따라 바뀐다 (두 번 바꿔 두 번 따라온다)",
-  t87S11a.includes(t87Ms(addDays(T87_S_DATE, -1), "19:40")) && t87S11a.includes(t87Ms(T87_S_DATE, "07:20"))
-  && t87S11b.includes(t87Ms(addDays(T87_S_DATE, -1), "22:10")) && t87S11b.includes(t87Ms(T87_S_DATE, "10:50"))
-  && !t87S11b.includes(t87Ms(addDays(T87_S_DATE, -1), "19:40")) && !t87S11b.includes(t87Ms(T87_S_DATE, "07:20")),
-  `${t87Show(t87S11a)} → ${t87Show(t87S11b)}`);
-
-/* 12 ★ 기존 schedule 키들이 그대로다 — **깔린 APK 가 읽는 키를 APK 소스에서 뽑아** 응답에 있는지 본다.
- *   ⚠️ 키 목록을 검사에 적지 않는다(함정 15) — 서버와 검사가 함께 이름을 바꾸면 폰만 깨진다.
- *   ★ 스캐너가 살아 있는가부터(함정 17·18) — `events`·`wake` 를 못 뽑으면 그 자체로 빨간불이다. */
-const t87Kt = ktBare("../android/app/src/main/java/dev/mond1424/personalos/guard/GuardSync.kt");
-const t87Keys = [...new Set([...t87Kt.matchAll(/\broot\.(?:opt\w*|has|get\w*)\("([^"]+)"/g)].map((m) => m[1]!))];
-const t87S12 = await t87Sched();
-ok("12 ★ 기존 schedule 키들이 그대로다 — GuardSync.kt 가 읽는 키가 전부 응답에 있다 (지금 APK 회귀)",
-  t87Keys.includes("events") && t87Keys.includes("wake") && t87Keys.length >= 5
-  && t87Keys.every((k) => !!t87S12 && k in t87S12) && Array.isArray(t87S12?.nudges),
-  `APK 키=${JSON.stringify(t87Keys)} 응답 키=${JSON.stringify(Object.keys(t87S12 ?? {}))}`);
-
-/* + ★ 같은 할 일을 가리키는 수락 행이 둘이어도 한 번만 실린다 (티켓 밖 · `nudgeTargets` 의 `MIN`).
- *   `collected_items.task_id` 엔 UNIQUE 가 없다(T-84 3이 같은 자리를 셀에서 잰다). 그냥 JOIN 하면 **같은 알림이 두 번** 울린다.
- *   위 T-84 3 이 만든 둘째 행(`t84-dup` — 같은 task·event)을 `accepted` 로 올려 쓴다. */
-raw.prepare("UPDATE collected_items SET state='accepted' WHERE uid='t84-dup'").run();
-const t87Dup = t87Bundles(await t87Sched(), t84Acc.task_id ?? null);
-ok("+ ★ 같은 할 일을 가리키는 수락 행이 둘이어도 묶음마다 한 번만 실린다 (티켓 밖)",
-  t87Dup.length > 0 && t87Dup.every((b) => (b.items as any[]).filter((i) => i?.task_id === t84Acc.task_id).length === 1),
-  JSON.stringify(t87Dup.map((b) => (b.items as any[]).filter((i) => i?.task_id === t84Acc.task_id).length)));
-
-/* ① 과목 자르기는 서버 하나다 (T-87 ① — T-74 의 프런트 자르기가 `lib/course.ts` 로 올라왔다).
- *   ★ 들어온 것 목록·밀어 주는 목록이 `course` 를 싣는다 — 원문 `categories` 는 그대로. 과목이 없으면 `null`. */
+/* T-87 ① 유지: 목록 둘 다 표시용 과목을 싣고 원문을 보존한다. */
 putCollected("t87-course", "T-87 과목 자르기", atPlus(2 * DAY));
 raw.prepare("UPDATE collected_items SET categories=? WHERE uid='t87-course'").run("전자기및연습1 (2026-20, 45004_01_U)");
 putCollected("t87-nocourse", "T-87 과목 없는 일정", atPlus(2 * DAY));
 const t87Lists = [(await api("GET", "/api/collected/list")).json, (await api("GET", "/api/collected/pending")).json] as any[][];
-const t87Row = (rows: any[], uid: string) => (rows ?? []).find((r) => r?.id === `2026-t42-${uid}`);
-ok("① ★ 과목은 서버가 자른다 — 목록 둘 다 course 를 싣고 원문 categories 는 그대로 · 없으면 null",
+const t87Row = (rows: any[], uid: string) => (rows ?? []).find((r) => r?.id === "2026-t42-" + uid);
+ok("T-87 ① ★ 과목은 서버가 자른다 — 목록 둘 다 course · 원문 categories 보존 · 없으면 null",
   t87Lists.every((rows) => t87Row(rows, "t87-course")?.course === "전자기및연습1"
     && t87Row(rows, "t87-course")?.categories === "전자기및연습1 (2026-20, 45004_01_U)"
-    && t87Row(rows, "t87-nocourse")?.course === null),
-  JSON.stringify(t87Lists.map((rows) => [t87Row(rows, "t87-course")?.course, t87Row(rows, "t87-nocourse")?.course])));
+    && t87Row(rows, "t87-nocourse")?.course === null));
 
-/* 5 ★★ 할 일을 완료하면 그 과제의 점이 응답에서 사라진다 (ADR-050 ⑤).
- *   ⚠️ 없으면 *"완료해도 재촉이 남는"* 구현이 1을 초록으로 통과한다 — 체크해도 알림이 계속 온다. */
-const t87ADone = (await api("POST", `/api/tasks/${t87A.task_id}/complete`)).json;
-ok("5 ★★ 할 일을 완료하면 그 과제의 점이 응답에서 사라진다",
-  t87A1.length > 0 && t87Bundles(await t87Sched(), t87A.task_id ?? null).length === 0,
-  JSON.stringify(t87ADone));
+/* T-87 12 유지: 서버와 검사에 키 목록을 복사하지 않고 실제 소비 소스와 대조한다. */
+const t87Kt = ktBare("../android/app/src/main/java/dev/mond1424/personalos/guard/GuardSync.kt");
+const t87Keys = [...new Set([...t87Kt.matchAll(/\broot\.(?:opt\w*|has|get\w*)\("([^"]+)"/g)].map((m) => m[1]!))];
+ok("T-87 12 ★ GuardSync.kt가 읽는 키가 전부 실제 schedule 응답에 있다",
+  t87Keys.includes("events") && t87Keys.includes("wake") && t87Keys.length >= 5
+  && t87Keys.every((k) => !!t94S2 && k in t94S2),
+  "APK 키=" + JSON.stringify(t87Keys) + " 응답 키=" + JSON.stringify(Object.keys(t94S2 ?? {})));
+ok("T-87 10 ★ 수락·조회·완료·취소·설정 종료 요청은 guard_events에 기록하지 않는다",
+  t94GuardN() === t94GuardBefore, t94GuardBefore + " → " + t94GuardN());
 
-/* 6 취소해도 사라진다 — 그리고 **되돌리면 돌아온다**(짝 · 티켓 밖 — 취소가 기기를 깨웠으니 되돌리기도 깨운다).
- *   ⚠️ 삭제는 여기서 안 잰다: 수집에서 온 할 일은 `collected_items.task_id` 가 참조해 **이미 409**다(§보고). */
-const t87X6a = t87Ats(await t87Sched(), t87X.task_id ?? null);
-const t87XCancel = (await api("POST", `/api/tasks/${t87X.task_id}/cancel`)).json;
-const t87X6b = t87Ats(await t87Sched(), t87X.task_id ?? null);
-const t87XUndo = (await api("POST", `/api/tasks/${t87X.task_id}/uncancel`)).json;
-const t87X6c = t87Ats(await t87Sched(), t87X.task_id ?? null);
-ok("6 취소하면 사라지고 · 되돌리면 같은 점으로 돌아온다",
-  t87X6a.length > 0 && t87X6b.length === 0 && JSON.stringify(t87X6c) === JSON.stringify(t87X6a),
-  `전=${t87Show(t87X6a)} 취소=${t87Show(t87X6b)} 되돌림=${t87Show(t87X6c)}`);
-
-/* 13 (서버 짝) ★ 응답이 *"재촉이 바뀌었다"* 를 말한다 — 웹은 추측하지 않고 이것만 본다(③).
- *   ★ 짝이 계약이다: 미루기·손 할 일 완료·무관한 설정은 **말하지 않는다**(아니면 모든 동작마다 sync 가 돈다).
- *   웹이 그 깃발로 `Guard.sync()` 를 부르는 것은 front `[T-87]` 13 이 센다. */
-// ⚠️ **9의 할 일을 쓰지 않는다** — 그것(예정일 있는 손 할 일)으로 재면 *"손 할 일에도 점을 건다"* 변이가
-//    9와 이것을 **함께** 죽인다(남의 명제를 업는다). 여기는 대기(예정 없음) 할 일로 *깃발*만 본다.
-const t87W = (await api("POST", "/api/tasks", { title: "T-87 대기 손 할 일" })).json;
-const t87HDone = (await api("POST", `/api/tasks/${t87W.id}/complete`)).json;
-const t87PutN = (await api("PUT", "/api/settings/nudge_evening", { value: "20:20" })).json;
-const t87PutOther = (await api("PUT", "/api/settings/guard_ai_verify", { value: "on" })).json;
-t87SetOff();
-ok("13 (서버 짝) ★ 수락·완료·취소·되돌리기·재촉 설정은 nudge_changed 를 단다 · 미루기·손 할 일·무관한 설정은 안 단다",
-  t87A.nudge_changed === true && t87ADone.nudge_changed === true
-  && t87XCancel.nudge_changed === true && t87XUndo.nudge_changed === true && t87PutN.nudge_changed === true
-  && t87PDefer.nudge_changed !== true && t87HDone.nudge_changed === false && t87PutOther.nudge_changed !== true,
-  JSON.stringify({ acc: t87A.nudge_changed, done: t87ADone.nudge_changed, cancel: t87XCancel.nudge_changed,
-    undo: t87XUndo.nudge_changed, put: t87PutN.nudge_changed, defer: t87PDefer.nudge_changed,
-    hand: t87HDone.nudge_changed, other: t87PutOther.nudge_changed }));
-
-/* 10 ★★ guard_events 에 한 행도 안 생긴다 (ADR-050 ⑥ — 밤 개입의 원장이고 지울 수 없다).
- *   ★ 맨 끝에 센다 — 이 블록의 수락·완료·취소·조회가 **전부** 지난 뒤다. */
-ok("10 ★★ guard_events 에 한 행도 안 생긴다 (이 블록의 수락·조회·완료·취소 전부 뒤)",
-  t87GuardN() === t87GuardBefore, `${t87GuardBefore} → ${t87GuardN()}`);
-
-/* ── T-88 ① · 과제 재촉 서버 보정 셋 (ADR-050 ② ⑤ 개정) ─────────────────────
- *
- * ⚠️ **T-87 블록 뒤에 둔다** — 그 블록의 도우미(`t87Accept`·`t87Sched`·`t87Ats`·`t87Ms`·`t87SetOff`)를 그대로 쓴다.
- * ★ **검사 2(1시간 미만이면 늦은 쪽 하나)는 새로 세우지 않았다** — T-87 3 이 이미 진다(30분 거리 · 라벨에 T-88 2 를 적었다).
- *   다시 세우면 *"1시간 규칙을 뺀다"* 변이 하나가 둘을 죽여 표를 못 읽는다(`AGENT-CHAIN` §8 *"남의 명제를 업는다"*).
- * ⚠️ 아침 시각은 **직접 넣는다**(09:00) — 기본값에 기대지 않는다(함정 15). 블록 끝에 지운다.
- */
-console.log("\n[T-88] ① 과제 재촉 서버 보정 — 1시간 미만 · 마감 뒤 점 · 일정 수정이 기기를 깨운다");
-await api("PUT", "/api/settings/nudge_morning", { value: "09:00" });
-
-/* 1 ★ 정각 1시간 간격의 점은 합치지 않는다 — 11:00 마감의 08:00(3시간 전) · 09:00(아침) · 10:00(1시간 전) 셋 다 남는다.
- *   ⚠️ **이하(≤)로 합치면 사슬로 무너져 10:00 하나만** 남는다(ADR-050 ② 개정). 전날 저녁까지 넷. */
-const T88_A_DATE = addDays(D, 10);
-const t88A = await t87Accept("t88-a", "T-88 정각 간격 과제 기한", T88_A_DATE, "11:00");
-const t88A1 = t87Ats(await t87Sched(), t88A.task_id ?? null);
-ok("1 ★ 정각 1시간 간격의 점은 합치지 않는다 (11:00 마감 → 08·09·10시 셋 다 남는다)",
-  t88A1.length === 4
-  && ["08:00", "09:00", "10:00"].every((hm) => t88A1.includes(t87Ms(T88_A_DATE, hm))),
-  `점=${t87Show(t88A1)}`);
-
-/* 3 ★ 마감 시각 이후·같은 시각의 점은 없다 — 아침 09:00 이 08:00 마감에선 **뒤**, 09:00 마감에선 **같은 시각**이다.
- *   같은 시각이면 *"마감까지 0분"* 이다(ADR-050 ② 개정 — 규칙이 넷이 됐다). 나머지 점은 그대로 있어야 한다(빈 응답이 통과하지 않게). */
-const T88_B_DATE = addDays(D, 11);
-const T88_C_DATE = addDays(D, 12);
-const t88B = await t87Accept("t88-b", "T-88 아침보다 이른 마감 기한", T88_B_DATE, "08:00");
-const t88C = await t87Accept("t88-c", "T-88 아침과 같은 마감 기한", T88_C_DATE, "09:00");
-const t88S3 = await t87Sched();
-const t88B3 = t87Ats(t88S3, t88B.task_id ?? null);
-const t88C3 = t87Ats(t88S3, t88C.task_id ?? null);
-ok("3 ★ 마감 시각 이후·같은 시각의 점은 없다 (08:00 마감의 아침 09:00 · 09:00 마감의 아침 09:00)",
-  t88B3.every((ms) => ms < t87Ms(T88_B_DATE, "08:00")) && !t88B3.includes(t87Ms(T88_B_DATE, "09:00"))
-  && t88B3.includes(t87Ms(T88_B_DATE, "05:00")) && t88B3.includes(t87Ms(T88_B_DATE, "07:00"))
-  && t88C3.every((ms) => ms < t87Ms(T88_C_DATE, "09:00")) && !t88C3.includes(t87Ms(T88_C_DATE, "09:00"))
-  && t88C3.includes(t87Ms(T88_C_DATE, "06:00")) && t88C3.includes(t87Ms(T88_C_DATE, "08:00")),
-  `08:00 마감=${t87Show(t88B3)} · 09:00 마감=${t87Show(t88C3)}`);
-
-/* 4 ★ 수집 일정(마감)의 시각을 고치면 응답이 "바뀌었다" 를 단다 (T-87 §보고 결정 ② → T-88 ①-c).
- *   ★ 고친 뒤 재촉이 **실제로** 새 마감을 따라갔는지도 본다 — 깃발만 달고 계산이 옛 마감을 보면 그건 거짓 깃발이다. */
-const T88_D_DATE = addDays(D, 13);
-const t88D = await t87Accept("t88-d", "T-88 마감 시각 고치는 과제 기한", T88_D_DATE, "23:59");
-const t88DEdit = (await api("PATCH", `/api/events/${t88D.event_id}`, { time: "21:00" })).json;
-const t88DAts = t87Ats(await t87Sched(), t88D.task_id ?? null);
-ok("4 ★ 수집 일정(마감)의 시각을 고치면 nudge_changed 를 단다 — 재촉도 새 마감을 따른다",
-  t88DEdit?.nudge_changed === true
-  && t88DAts.includes(t87Ms(T88_D_DATE, "18:00")) && t88DAts.includes(t87Ms(T88_D_DATE, "20:00"))
-  && !t88DAts.includes(t87Ms(T88_D_DATE, "20:59")),
-  `응답=${JSON.stringify(t88DEdit)} 점=${t87Show(t88DAts)}`);
-
-/* 5 손으로 만든 일정을 고치면 안 단다 — 4의 짝. ⚠️ 없으면 *"모든 일정 수정에 단다"* 가 통과한다(무거운 sync 가 매번 돈다). */
-const t88Hand = (await api("POST", "/api/events", { title: "T-88 손 일정", date: addDays(D, 13), time: "15:00" })).json;
-const t88HandEdit = (await api("PATCH", `/api/events/${t88Hand.id}`, { time: "16:00" })).json;
-ok("5 손으로 만든 일정을 고치면 nudge_changed 를 안 단다 (4의 짝)",
-  !!t88Hand.id && t88HandEdit?.time === "16:00" && t88HandEdit?.nudge_changed !== true,
-  JSON.stringify(t88HandEdit));
-
-/* + ★ 수집 마감이라도 **제목만** 고치면 안 단다 (티켓 밖 · 4·5 사이의 칸).
- *   판정은 *"수집분인가"* 가 아니라 *"재촉이 달라졌는가"* 다 — 재촉이 싣는 이름은 **할 일의** 제목이라 일정 제목은 재촉을 안 바꾼다.
- *   ⚠️ 없으면 *"수집 일정이면 무조건 단다"* 가 4·5 를 둘 다 초록으로 통과한다. */
-const t88DTitle = (await api("PATCH", `/api/events/${t88D.event_id}`, { title: "T-88 마감 일정 제목만 바꿈" })).json;
-ok("+ ★ 수집 마감이라도 제목만 고치면 nudge_changed 를 안 단다 — 재촉이 달라졌는가를 본다 (티켓 밖)",
-  t88DTitle?.title === "T-88 마감 일정 제목만 바꿈" && t88DTitle?.nudge_changed !== true,
-  JSON.stringify(t88DTitle));
-
-t87SetOff();
+ok("15 ★ 종료한 재촉 모듈이 미사용 파일로도 남지 않는다",
+  !readdirSync(join(here, "../src/services")).includes("nudge.ts"));
+const t94Retired = /\b(?:nudgeTargets|collectedTaskOfEvent|hasNudges|nudgeKey|_wakeIfNudgeChanged|nudge_changed)\b|["'][^"']*\/nudge["']|\bnudge\.nudges\s*\(/;
+const t94Probes = ["db.nudgeTargets(env)", "db.collectedTaskOfEvent(env)", "hasNudges(env)", "nudgeKey(env)",
+  "_wakeIfNudgeChanged(json)", "json.nudge_changed", 'import * as nudge from "./nudge"', "nudge.nudges(env)"];
+const t94LiveFiles = ["src/services/guard.ts", "src/services/me.ts", "src/services/tasks.ts", "src/services/collected.ts",
+  "src/services/events.ts", "src/db/index.ts", "public/api.js", "public/app.js", "src/lib/course.ts"];
+const t94Residual = t94LiveFiles.filter((p) => t94Retired.test(readFileSync(join(here, "../" + p), "utf8").replace(/\r\n/g, "\n")));
+ok("16 ★ 재촉 전용 import·질의·호출·응답 신호 잔여 없음 · 삭제 전 예시 8개로 스캐너 확인",
+  t94Probes.every((p) => t94Retired.test(p)) && t94Residual.length === 0, JSON.stringify(t94Residual));
 
 // ── 결과 ─────────────────────────────────────────────────────
 console.log(`\n${"=".repeat(46)}\n통과 ${passN} · 실패 ${fails.length}`);
